@@ -1,0 +1,21 @@
+%% \documentclass[12pt,a4paper,landscape]{article}
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+%% \fontsize{12}{1}
+%% \large
+%% \special{landscape}
+\begin{eqnarray}
+P(C,b_1,\cdots,b_D,I_1,\cdots,I_D) & \equiv & \prod_r^D P(C)P(b_r|C)P(I_r|b_r) \\[6ex]
+P(C|I_1, \cdots, I_D) & \propto \\
+P(C,I_1,\cdots,I_D) & \equiv & \sum_{b_1,\cdots,b_D}^{\{A,C,G,T\}xD } \prod_r^D P(C)P(b_r|C)P(I_r|b_r) \nonumber \\
+& = & \prod_r^D \sum_{b_r}^{A,C,G,T} P(C)P(b_r|C)P(I_r|b_r) \nonumber \\[6ex]
+P(I|b) & \equiv & \frac{P(b|I)P(I)}{\sum_I P(b|I)P(I)} \\[6ex]
+P(I) & & \mbox { taken from raw base / qual counts } \\[6ex]
+P(C,I_1,\cdots,I_D) & \equiv & \prod_r^G {P(C)P(b_r|C)P(I_r|b_r)}^C(G) \\[6ex]
+%% log_2(P(C,b_1,\cdots,b_D,I_1,\cdots,I_D)) & \equiv 
+\end{eqnarray}
+
+\end{document}
+
+
