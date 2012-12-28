@@ -1,0 +1,271 @@
+.TH DEP 1 "Version 1"
+
+.SH NAME
+dep \- diversity estimation probabilistically
+
+.SH SYNOPSIS
+.B "dep comp [options] jpd_priors input.pileup output.comp [output.points]"
+.br
+
+.B "dep discomp [options] jpd_priors input.pileup output.comp"
+.br
+
+.B "dep anomaly [options] jpd_priors input.pileup output.anomaly"
+.br
+
+.B "dep simp jpd_priors sim_comp > output.pileup"
+.br
+
+.B "dep simc basecomp_priors nsim > sim_comp"
+.br
+
+.B "dep bqs input.pileup > counts.bqs"
+.br
+
+.B "dep bqslocus input.pileup label counts.bqs counts.bs counts.s"
+.br
+
+.B "dep bqs2jpd < counts.bqs > jpd_priors"
+.br
+
+
+.SH DESCRIPTION
+
+
+.I dep
+is a collection of programs for analyzing single-base loci, one at a
+time, from an alignment of next-gen sequencing reads.
+
+.IP "dep comp"
+.B "(locus composition)"
+Estimates base composition for each locus in the provided pileup file,
+assuming that any composition in the continuous space of A+C+G+T=1 is
+possible.  This is suitable for analyzing aligned reads from a diverse
+population of related DNA.
+
+.IP "dep discomp"
+.B "(discrete locus composition)"
+Does the same as 
+.B "locus composition"
+but assumes that the original locus composition at any
+given locus can take on one of a number of discrete values as
+specified by the user.  In most cases, this will be used for diploid
+samples, and the user must specify the 10 diploid genotype
+compositions.
+
+.IP "dep anomaly"
+.B "(anomaly detection)"
+Estimates how different the locus data is from what a 'typical' locus
+of the same base composition would be, accounting for subsampling
+noise at low depth
+
+.IP "dep simp"
+.B "(simulate pileup)" 
+Simulates a pileup file according to the bayesian causal model
+parameterized by jpd_priors. The user supplies the list of supposed
+loci compositions and desired sequencing depth in sim_comp.
+
+.IP "dep simc"
+.B "(simulate compositions)"
+Simulates a set of base compositions by sampling from the provided
+discrete distribution
+.B "basecomp_priors"
+.  The output of this command is
+suitable as input for
+.B "dep simp"
+
+.IP "dep bqs" 
+Tallies "bqs" (basecall, quality score, strand) summary counts data
+over the entire pileup file. This file theoretically summarizes the
+characteristics of the sequencing run over all the data. Currently,
+this file may be expended into a pseudo-jpd by invoking the Phred
+definition of quality score to give P(b,s) for each of the four bases
+b.
+
+.IP "dep bqslocus"
+Tallies "bqslocus" (basecall, quality score, strand) summary counts from
+provided pileup file, generating three files: bqs.cts, bs.cts,
+s.cts. These are per locus statistics over (b,q,s), (b,s), or (s).
+
+.SH ARGUMENTS
+
+.IP "data_type" 
+Currently, this must be "base_qual_strand".  It specifies what parser
+will be used to read pileup data and jpd data.  Conceptually, the
+bayesian causal model assumes the sequencing machine produces a
+complex signal associated with each founder base that is then
+processed and classified into discrete data groups.  The (base,
+quality score) paradigm is currently the only one available, and
+together with strand information, forms this data type.  This
+option provides room for further refinement on this concept.
+
+.IP "jpd"
+Specifies a joint probability distribution over the space of data_type
+and the four founder bases.  Format is:
+
+.br
+
+data_group A_count C_count G_count T_count
+.br
+data_group A_count C_count G_count T_count
+.br  \...
+.br
+
+where "data_group" is a single string format compatible with the
+choice of "data_type". For data_type 'base_qual_strand', this format
+is: A_5_+, for basecall 'A', quality score 5, and positive strand.
+Note that the identity of the founder base is not to be confused with
+the basecall. The probabilistic relationship between basecall and
+founder base are related through the counts.  Counts may be integer or
+floating point format.
+
+.IP "pileup"
+A Samtools pileup formatted input file.
+
+.IP "-l label"
+An arbitrary string to be added to each line of output.  Useful for
+identifying output by line rather than by filename, so that it can be
+pooled and batch processed.
+
+.IP "-t num_training_points"
+Number of training points. Default 1000.  This is the number of points
+used in to estimate the mean and mode of the posterior, during
+refinement of the Dirichlet proposal distribution during Metropolis
+Hastings.
+
+.IP "-f number_final_points"
+Number of final points.  Default 10000.  This many sample points will
+be generated from the posterior at each locus, in order to estimate
+quantiles. For example quantiles [0.005, 0.05, 0.5, 0.95, 0.995] mean
+a 90% and 99% confidence interval centered about the median.  For
+this, 1e4 points will be sufficient.  If though, 0.0005 and 0.9995 are
+also desired, 1e5 points should be used.
+
+
+.IP "-a target_autocorrelation_offset"
+Target autocorrelation offset. Default 6.  This is the maximum offset
+for the qualifying autocorrelation of generated sample points to
+have. During the Metropolis Hastings tuning phase, all autocorrelation
+values from 1 to 6 are calculated, and those offsets whose value falls
+below 'mav' (max autocorrelation value) are deemed
+'qualifying offsets'. Larger offsets will yield smaller values in
+general.  And, as tuning continues, autocorrelations will fall
+overall. The tuning phase stops when one of the qualifying offsets is
+less than or equal to 'tao'.
+
+.IP "-i maximum_tuning_iterations"
+Maximum number of tuning iterations.  Default 10. Tuning also stops
+before a qualifying offset is found if number of tuning iterations
+exceeds 'mti'. In this case, the Metropolis-Hastings sampling scheme
+is abandoned and the software falls back to a slower yet more reliable
+Slice Sampling.
+
+.IP "-v maximum_autocorrelation_value"
+Maximum autocorrelation value.  Default 0.6.  The maximum
+autocorrelation to be considered as valid for the purpose of choosing
+an offset for sample point thinning.
+
+.IP "-Q quantiles_file" 
+File containing requested quantiles, whitespace separated, all in one
+single line.  File should have a single newline and yield a '1' when
+processed with 'wc'. If no file provided, defaults to
+.br
+0.005 0.05 0.5 0.95 0.995
+.br
+
+
+.IP "-q minimum_quality"
+Minimum quality score.  Data in each locus falling below this is
+ignored. In output, the original depth and actual depth used are both
+reported, allowing one to know how much of the data was used.
+
+Contains 5 lines per locus,
+one line for each composition estimate of the four nucleotides, plus a
+summary line.  For example:
+Fields are: label algorithm contig locus refbase depth used_depth total_score hypbase 'mean: ' mean 'mode: ' mode quantile1 quantile2 quantile3 ...
+.br
+
+one   MH    Contig1     1861  T     4857  4857  -2022.60604   A     mean: 0.04834925    mode: 0.04820571    0.03812700    0.04070389    0.04329638    0.04831226    0.05353335    0.05685657    0.05876027
+.br
+one   MH    Contig1     1861  T     4857  4857  -2022.60604   C     mean: 0.11027517    mode: 0.11011541    0.09595996    0.09861959    0.10272861    0.11020784    0.11783440    0.12230737    0.12619156
+.br
+one   MH    Contig1     1861  T     4857  4857  -2022.60604   G     mean: 0.19992360    mode: 0.19982296    0.18203439    0.18554042    0.19054274    0.19991675    0.20945128    0.21469562    0.21894643
+.br
+one   MH    Contig1     1861  T     4857  4857  -2022.60604   T     mean: 0.64145197    mode: 0.64185592    0.61934604    0.62384852    0.62983166    0.64143078    0.65285949    0.65926826    0.66369654
+.br
+one   MH    Contig1     1861  T     4857  4857  -2022.60604   +     mean: 1.00000000    mode: 1.00000000    0.93546739    0.94871241    0.96639939    0.99986763    1.03367851    1.05312782    1.06759480
+
+
+.IP "output.points" 
+Optional sample points output file.  Warning: very large file, will
+contain 10000 lines (or whatever -f is set to) for each locus
+processed. Useful for plotting and visualizing the shape of the
+posterior for testing purposes only.
+
+.IP "comp_prior"
+File describing the overall sample locus composition of an N-ploid
+sample, N usually 1 (haploid) or 2 (diploid), not a diverse
+population.  For example, here is a file representing a diploid
+organism with 25% each of A,C,G,T, and with about 1/1000 loci
+heterozygous. This file doubles as the 'eval_points' file for use with
+dep discomp.
+
+.br
+1.0 0.0 0.0 0.0 1000
+.br
+0.5 0.5 0.0 0.0 1
+.br
+0.5 0.0 0.5 0.0 1
+.br
+0.5 0.0 0.0 0.5 1
+.br
+0.0 1.0 0.0 0.0 1000
+.br
+0.0 0.5 0.5 0.0 1
+.br
+0.0 0.5 0.0 0.5 1
+.br
+0.0 0.0 1.0 0.0 1000
+.br
+0.0 0.0 0.5 0.5 1
+.br
+0.0 0.0 0.0 1.0 1000
+
+
+.IP "sim_comp" 
+Simulated locus composition output.  Describes a the base composition
+of a set of loci simulated according to the frequencies in 'comp_prior'.
+Each locus is one line with fields:
+.br
+position prior_index A_comp C_comp G_comp T_comp
+.br
+prior_index denotes which line (numbered from zero) was used in the
+comp_prior file.  For example, here is a simulation of 7 loci using the above
+comp_prior example as the sampling source:
+.br
+
+0    9    0.000000     0.000000     0.000000     1.000000
+.br
+1    4    0.000000     1.000000     0.000000     0.000000
+.br
+2    7    0.000000     0.000000     1.000000     0.000000
+.br
+3    0    1.000000     0.000000     0.000000     0.000000
+.br
+4    4    0.000000     1.000000     0.000000     0.000000
+.br
+5    0    1.000000     0.000000     0.000000     0.000000
+.br
+6    9    0.000000     0.000000     0.000000     1.000000
+.br
+7    7    0.000000     0.000000     1.000000     0.000000
+.br
+
+
+.IP "nsim"
+Number of loci compositions to simulate.
+
+.IP "counts.bqs, counts.bs, counts.s"
+Tallied statistics of the pileup file, with a separate group of counts
+for each locus. Counts are broken down by (basecall, quality, strand),
+(basecall, strand), and (strand).
