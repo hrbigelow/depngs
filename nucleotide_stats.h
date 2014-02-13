@@ -66,6 +66,8 @@ class NucleotideStats {
 
 };
 
+class PileupSummary;
+
 
 class LocusSummary {
 
@@ -75,8 +77,12 @@ class LocusSummary {
                  char _reference_base, size_t _read_depth,
                  std::string const* _index_mapping);
 
+    LocusSummary(std::string const* _index_mapping);
+
     LocusSummary(LocusSummary const&);
     ~LocusSummary();
+
+    void parse(PileupSummary & pileup, size_t min_quality_score);
 
     double * raw_counts;
 

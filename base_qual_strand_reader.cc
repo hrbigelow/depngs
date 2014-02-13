@@ -40,10 +40,29 @@ BaseQualStrandReader::get_datum_from_name(std::string const& name) const
 }
 
 
+size_t BaseQualStrandReader::encode(char basecall, size_t quality, char strand)
+{
+    size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
+    size_t strand_index = strand == '+' ? 0 : 1;
+    
+    return 
+        (basecall_index * BaseQualStrandReader::num_qs) 
+        + (quality * BaseQualStrandReader::num_s) 
+        + strand_index;
+}
+
+void BaseQualStrandReader::decode(size_t code, char * basecall, size_t *quality, char *strand)
+{
+    *basecall = Nucleotide::bases_upper[code / BaseQualStrandReader::num_qs];
+    *quality = (code % BaseQualStrandReader::num_qs) / BaseQualStrandReader::num_s; 
+    *strand = (code % BaseQualStrandReader::num_s) == 0 ? '+' : '-';
+}
+
 //load (base, qual, strand) (ObservedData) tuple data from a locus file,
 // checking it against the prior_jpd data for validity
 // !!! somehow implement a quality filtering that doesn't break polymorphism...
 // ignores N basecalls
+/*
 std::map<std::string, size_t> parse_locus(PileupSummary const& pileup,
                                           size_t min_quality_score)
 {
@@ -64,8 +83,8 @@ std::map<std::string, size_t> parse_locus(PileupSummary const& pileup,
     std::fill(raw_counts_flat, raw_counts_flat + num_bqs, 0);
 
     size_t reads_counted = 0;
-
-    for (size_t r = 0; r < static_cast<size_t>(pileup._read_depth); ++r)
+    size_t rd = static_cast<size_t(pileup._read_depth);
+    for (size_t r = 0; r < rd; ++r)
     {
         size_t quality = pileup.quality(r);
         char basecall = pileup._bases[r];
@@ -90,7 +109,7 @@ std::map<std::string, size_t> parse_locus(PileupSummary const& pileup,
 
     for (size_t flat_index = 0; flat_index != num_bqs; ++flat_index)
     {
-        if (raw_counts_flat[flat_index] > 0)
+        if (raw_counts_flat[flat_index] != 0)
         {
             char basecall = Nucleotide::bases_upper[flat_index / num_qs];
             size_t quality = (flat_index % num_qs) / num_s; 
@@ -113,18 +132,21 @@ std::map<std::string, size_t> parse_locus(PileupSummary const& pileup,
     return counts;
 
 }
+*/
+
 
 
 
 LocusSummary 
 BaseQualStrandReader::get_next_locus(NucleotideStats const& nuc_stats,
+                                     char * line,
                                      void const* extra)
 {
 
     size_t min_quality_score = * static_cast<size_t const*>(extra);
 
     PileupSummary pileup(0);
-    bool succeeded = pileup.load_line(this->fh);
+    bool succeeded = pileup.load_line(line);
     
     if (! succeeded)
     {
@@ -132,43 +154,29 @@ BaseQualStrandReader::get_next_locus(NucleotideStats const& nuc_stats,
         exit(1);
     }
     
-    std::map<std::string, size_t> counts = 
-        parse_locus(pileup, min_quality_score);
+    LocusSummary locus(nuc_stats.index_mapping);
+    locus.parse(pileup, min_quality_score);
 
-
-    std::map<std::string, size_t>::const_iterator prior_iter;
-
-    std::map<std::string, size_t>::const_iterator cit;
-    size_t reads_counted = 0;
-    for (cit = counts.begin(); cit != counts.end(); ++cit)
-    {
-        reads_counted += (*cit).second;
-    }
-
-    LocusSummary locus(counts.size(), pileup._reference, pileup._position,
-                       pileup._reference_base, reads_counted,
-                       nuc_stats.index_mapping);
-    
     //check for presence in name_map
-    size_t raw_index;
-    for (cit = counts.begin(), raw_index = 0; 
-         cit != counts.end(); 
-         ++cit, ++raw_index)
-    {
-        prior_iter = nuc_stats.name_mapping.find((*cit).first);
-        if (prior_iter == nuc_stats.name_mapping.end())
-        {
-            //this should never happen
-            fprintf(stderr, "BaseQualStrandReader::get_next_locus: "
-                    "found datum %s not appearing in prior data.\n",
-                    (*cit).first.c_str());
+    // size_t raw_index;
+    // for (cit = counts.begin(), raw_index = 0; 
+    //      cit != counts.end(); 
+    //      ++cit, ++raw_index)
+    // {
+    //     prior_iter = nuc_stats.name_mapping.find((*cit).first);
+    //     if (prior_iter == nuc_stats.name_mapping.end())
+    //     {
+    //         //this should never happen
+    //         fprintf(stderr, "BaseQualStrandReader::get_next_locus: "
+    //                 "found datum %s not appearing in prior data.\n",
+    //                 (*cit).first.c_str());
 
-            exit(10);
-        }
-        size_t stat_index = (*prior_iter).second;
-        locus.raw_counts[raw_index] = (*cit).second;
-        locus.stats_index[raw_index] = stat_index;
-    }    
+    //         exit(10);
+    //     }
+    //     size_t stat_index = (*prior_iter).second;
+    //     locus.raw_counts[raw_index] = (*cit).second;
+    //     locus.stats_index[raw_index] = stat_index;
+    // }    
 
     return locus;
 

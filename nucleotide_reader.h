@@ -23,7 +23,7 @@ public:
     NucleotideStats read_from_rdb(char const* rdb_file);
 
     virtual LocusSummary 
-        get_next_locus(NucleotideStats const& nuc_stats, void const* extra) = 0;
+        get_next_locus(NucleotideStats const& nuc_stats, char * line, void const* extra) = 0;
     
     virtual void
         compute_strand_marginal(JPD_DATA const& counts_map, 

@@ -58,7 +58,7 @@ public:
         }
     }
 
-    bool load_line(FILE * file);
+    bool load_line(char * line);
 
     char _reference[100];
     int _position;
@@ -77,7 +77,10 @@ public:
 
     size_t quality(size_t read_num) const;
 
-    FastqType FastqFileType(char const* pileup_file);
+    FastqType FastqFileType(char const* pileup_file,
+                            char * chunk_buffer_in,
+                            size_t chunk_size);
+
     static void SetFtype(FastqType _fastq_type);
 };
 

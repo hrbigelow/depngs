@@ -9,6 +9,10 @@ namespace Usage
     char const* label_string = 
         "label tagging output lines, "
         "useful for merging separate runs [\"comp\"]";
+
+    char const* mode_label_string = 
+        "label tagging output lines, "
+        "useful for merging separate runs [\"mode\"]";
     
     char const* quality_string =
         "minimum quality score. data below this are ignored. [5]";

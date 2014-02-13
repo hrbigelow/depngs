@@ -8,6 +8,14 @@ class BaseQualStrandReader : public NucleotideReader
 {
  public:
 
+    static size_t const highest_quality = 50;
+    static size_t const num_s = 2;
+    static size_t const num_qs = num_s * (highest_quality + 1);
+    static size_t const num_bqs = 4 * num_qs;
+
+    static size_t encode(char basecall, size_t quality, char strand);
+    static void decode(size_t code, char * basecall, size_t *quality, char *strand);
+
     struct Datum {
         char called_base;
         size_t quality;
@@ -21,7 +29,7 @@ class BaseQualStrandReader : public NucleotideReader
 
 
     BaseQualStrandReader() : NucleotideReader() { }
-        LocusSummary get_next_locus(NucleotideStats const& nuc_stats, void const* extra);
+    LocusSummary get_next_locus(NucleotideStats const& nuc_stats, char * line, void const* extra);
 
     Datum get_datum_from_name(std::string const& name) const;
     void compute_strand_marginal(JPD_DATA const& counts_map, 

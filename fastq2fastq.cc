@@ -17,6 +17,7 @@ int main(int argc, char ** argv){
                 "  ..........................XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX......................\n"
                 "  ...............................IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII......................\n"
                 "  .................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ......................\n"
+                "  ..LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL....................................................\n"
                 "  !\"#$%%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\n"
                 "  |                         |    |        |                              |                     |\n"
                 " 33                        59   64       73                            104                   126\n"
@@ -25,6 +26,7 @@ int main(int argc, char ** argv){
                 " X - Solexa        Solexa+64, raw reads typically (-5, 40)\n"
                 " I - Illumina 1.3+ Phred+64,  raw reads typically (0, 40)\n"
                 " J - Illumina 1.5+ Phred+64,  raw reads typically (3, 40)\n"
+                " L - Illumina 1.8+ Phred+33,  raw reads typically (0, 41)\n"
                 "\n");
         return 0;
 

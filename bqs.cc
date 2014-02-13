@@ -4,6 +4,7 @@
 #include "pileup_tools.h"
 #include "base_qual_strand_reader.h"
 #include "nucleotide_stats.h"
+#include "samutil/file_utils.h"
 
 int bqs_usage()
 {
@@ -30,7 +31,11 @@ int main_bqs(int argc, char ** argv)
 
     //initialize fastq_type;
     PileupSummary pileup(0);
-    FastqType ftype = pileup.FastqFileType(pileup_input_file);
+
+    size_t chunk_size = 1024 * 1024;
+    char * chunk_buffer_in = new char[chunk_size + 1];
+
+    FastqType ftype = pileup.FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size);
 
     if (ftype == None)
     {
@@ -42,8 +47,9 @@ int main_bqs(int argc, char ** argv)
     PileupSummary::SetFtype(ftype);
     
     BaseQualStrandReader reader;
-    reader.initialize(pileup_input_file);
+    // reader.initialize(pileup_input_file);
 
+    FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
     FILE * bqs_output_fh = open_if_present(bqs_output_file, "w");
     
     double fake_nuc_frequency[] = { 1, 1, 1, 1 };
@@ -73,18 +79,40 @@ int main_bqs(int argc, char ** argv)
     double * all_counts = new double[fake_jpd.size()];
     std::fill(all_counts, all_counts + fake_jpd.size(), 0.0);
 
-    while (reader.more_loci())
+    size_t nbytes_read, nbytes_unused = 0;
+    char * last_fragment;
+    char * read_pointer = chunk_buffer_in;
+
+    while (! feof(pileup_input_fh))
     {
-        LocusSummary locus = 
-            reader.get_next_locus(fake_stats, static_cast<void const*>(& min_quality_score));
+        nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
 
-        for (size_t raw_index = 0; raw_index != locus.num_distinct_data; ++raw_index)
+        std::vector<char *> pileup_lines =
+            FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
+
+        std::vector<char *>::iterator pit;
+        read_pointer[nbytes_read] = '\0';
+
+        //for (size_t l = 0; l != pileup_lines.size(); ++l)
+        for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
-            size_t data_index = locus.stats_index[raw_index];
-            all_counts[data_index] += locus.raw_counts[raw_index];
+            LocusSummary locus = 
+                reader.get_next_locus(fake_stats, (*pit),
+                                      static_cast<void const*>(& min_quality_score));
+            
+            for (size_t raw_index = 0; raw_index != locus.num_distinct_data; ++raw_index)
+            {
+                size_t data_index = locus.stats_index[raw_index];
+                all_counts[data_index] += locus.raw_counts[raw_index];
+            }
         }
+        nbytes_unused = strlen(last_fragment);
+        memmove(chunk_buffer_in, last_fragment, nbytes_unused);
+        read_pointer = chunk_buffer_in + nbytes_unused;
     }
+    fclose(pileup_input_fh);
 
+    delete chunk_buffer_in;
 
     size_t max_quality_present = 0;
 

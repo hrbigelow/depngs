@@ -150,12 +150,12 @@ FastqType get_fastq_type(char const* quality_codes)
     char const* qual;
 
     //try to eliminate other files by finding
-    bool file_types[] = { true, true, true, true };
-    char const* min_qualcodes = "!;@B";
-    char const* bound_qualcodes = "Jiii";
+    bool file_types[] = { true, true, true, true, true };
+    char const* min_qualcodes = "!;@B#";
+    char const* bound_qualcodes = "JiiiK";
 
-    bool legal_values[4][256];
-    for (size_t st = 0; st != 4; ++st)
+    bool legal_values[5][256];
+    for (size_t st = 0; st != 5; ++st)
     {
         for (size_t vt = 0; vt != 256; ++vt)
         {
@@ -175,13 +175,18 @@ FastqType get_fastq_type(char const* quality_codes)
                 file_types[qc] && legal_values[qc][static_cast<size_t>(*qual)];
         }
     }
-    if (file_types[0] && ! (file_types[1] || file_types[2] || file_types[3]))
+    if (file_types[0] && ! (file_types[1] || file_types[2] || file_types[3] || file_types[4]))
     {
         file_type = Sanger;
     }
-    else if ((file_types[1] || file_types[2] || file_types[3]) && ! file_types[0])
+    else if ((file_types[1] || file_types[2] || file_types[3]) && 
+             ! (file_types[0] || file_types[4]))
     {
         file_type = Solexa;
+    }
+    else if (file_types[4])
+    {
+        file_type = Sanger;
     }
     else
     {

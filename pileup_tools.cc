@@ -1,6 +1,7 @@
 #include "pileup_tools.h"
 #include "tools.h"
 #include "nucleotide_stats.h"
+#include "samutil/file_utils.h"
 
 #include <cassert>
 #include <set>
@@ -57,33 +58,33 @@ FastqType PileupSummary::fastq_type;
 
 //load and parse a single line.  Assumes the line has all required fields.
 //consumes the current line including newline character.
-bool PileupSummary::load_line(FILE * file)
+bool PileupSummary::load_line(char * read_pointer)
 {
 
     size_t total_read_depth;
+    int read_pos;
 
     int scanned_fields =
-        fscanf(file, "%s\t%i\t%c\t%zi\t", this->_reference, 
+        sscanf(read_pointer, "%s\t%i\t%c\t%zi\t%n", this->_reference, 
                &this->_position, &this->_reference_base, 
-               &total_read_depth);
+               &total_read_depth, &read_pos);
 
     
     if (scanned_fields != 4)
     {
-        if (! feof(file))
-        {
-            fprintf(stderr, "PileupSummary::load_line: Warning: badly formatted line\n");
-        }
+        fprintf(stderr, "PileupSummary::load_line: Warning: badly formatted line\n");
         return false;
     }
 
-    if (_quality_codes != NULL &&
-        _bases != NULL &&
-        _bases_upper != NULL)
+    read_pointer += read_pos;
+
+    if (this->_quality_codes != NULL &&
+        this->_bases != NULL &&
+        this->_bases_upper != NULL)
     {
-        delete _quality_codes;
-        delete _bases;
-        delete _bases_upper;
+        delete this->_quality_codes;
+        delete this->_bases;
+        delete this->_bases_upper;
     }
 
     this->_quality_codes = new char[total_read_depth + 1];
@@ -100,19 +101,15 @@ bool PileupSummary::load_line(FILE * file)
     int current_read = 0;
     //int deletion_read = 0;
 
-    while(fscanf(file, "%c", &pileup_ccode) != 0)
+    while(*read_pointer != '\0')
     {
-        
+        pileup_ccode = *read_pointer;
+        ++read_pointer;
+
         //reduce the pileup code
         int pileup_code = pileup_ccode;
         char pileup_redux = PileupSummary::code_to_redux[pileup_code];
 
-        if (pileup_redux == '\n' || pileup_redux == EOF)
-        {
-            //end of the line or file
-            break;
-        }
-            
         indel_size = 0;
         pileup_value = Nucleotide::base_to_index[pileup_code];
             
@@ -152,9 +149,16 @@ bool PileupSummary::load_line(FILE * file)
             else 
             {
                 //indel
-                fscanf(file, "%i", &indel_size);
-                fgets(indel_sequence, indel_size + 1, file);
-                for (int i = 0; i != indel_size + 1; ++i)
+                sscanf(read_pointer, "%i%n", &indel_size, &read_pos);
+                read_pointer += read_pos;
+
+                memcpy(indel_sequence, read_pointer, indel_size);
+                read_pointer += indel_size;
+
+                indel_sequence[indel_size] = '\0';
+
+                // fgets(indel_sequence, indel_size + 1, file);
+                for (int i = 0; i != indel_size; ++i)
                 {
                     indel_sequence[i] = toupper(indel_sequence[i]);
                 }
@@ -179,7 +183,8 @@ bool PileupSummary::load_line(FILE * file)
         {
             //beginning of a read
             //ignore the next one character (a character-encoded mapping quality)
-            fscanf(file, "%*c");
+            // sscanf(read_pointer, "%*c");
+            ++read_pointer;
         }
         else if (pileup_redux == '$')
         {
@@ -195,8 +200,14 @@ bool PileupSummary::load_line(FILE * file)
                  pileup_redux == ' ')
         {
             //end of read_string, get the qual string
-            fscanf(file, " "); //eat white space
-            fgets(this->_quality_codes, total_read_depth + 1, file);
+            sscanf(read_pointer, " %n", & read_pos); //eat white space
+            read_pointer += read_pos;
+
+            memcpy(this->_quality_codes, read_pointer, total_read_depth);
+            read_pointer += total_read_depth;
+
+            this->_quality_codes[total_read_depth] = '\0';
+            // fgets(this->_quality_codes, total_read_depth + 1, file);
 
         }
         else 
@@ -241,19 +252,38 @@ size_t PileupSummary::quality(size_t read_num) const
 }
 
 
-FastqType PileupSummary::FastqFileType(char const* pileup_file)
+FastqType PileupSummary::FastqFileType(char const* pileup_file,
+                                       char * chunk_buffer_in,
+                                       size_t chunk_size)
 {
     FILE * pileup_input_fh = open_if_present(pileup_file, "r");
     char seen_codes_flags[256];
     std::fill(seen_codes_flags, seen_codes_flags + 256, 0);
 
-    while (this->load_line(pileup_input_fh))
+    size_t nbytes_read, nbytes_unused = 0;
+    char * last_fragment;
+    char * read_pointer = chunk_buffer_in;
+
+    while (! feof(pileup_input_fh))
     {
-        for (size_t rd = 0; rd != this->_read_depth; ++rd)
+        nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
+        
+        std::vector<char *> lines =
+            FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
+        
+        read_pointer[nbytes_read] = '\0';
+        
+        for (size_t l = 0; l != lines.size(); ++l)
         {
-            seen_codes_flags[static_cast<size_t>(this->_quality_codes[rd])] = 1;
+            this->load_line(lines[l]);
+            for (size_t rd = 0; rd != this->_read_depth; ++rd)
+            {
+                seen_codes_flags[static_cast<size_t>(this->_quality_codes[rd])] = 1;
+            }
         }
-            
+        nbytes_unused = strlen(last_fragment);
+        memmove(chunk_buffer_in, last_fragment, nbytes_unused);
+        read_pointer = chunk_buffer_in + nbytes_unused;
     }
     fclose(pileup_input_fh);
 

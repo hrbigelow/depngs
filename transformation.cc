@@ -8,6 +8,7 @@
 #include <gsl/gsl_sf_log.h>
 #include <gsl/gsl_complex_math.h>
 #include <gsl/gsl_math.h>
+#include <gsl/gsl_randist.h>
 
 namespace Transformation
 {
@@ -35,7 +36,7 @@ namespace Transformation
     void sigmoid_value_and_gradient(double const x[3],
                                     Transformation::SigmoidVals sg[3])
     {
-        double enegx[3];
+        double enegx;
 
         double const epsilon = sigmoid_truncation_epsilon;
         double const epsilon_inv = 1.0 - epsilon;
@@ -47,62 +48,65 @@ namespace Transformation
         //partial approaches a positive constant towards infinity.
         //but, for purposes of handling the dirichlet prior, we
         //make this correction.
+        Transformation::SigmoidVals * sgp;
         
         for (size_t d = 0; d != 3; ++d)
         {
             gsl_error_handler_t * original_handler = gsl_set_error_handler_off();
-            enegx[d] = gsl_sf_exp(- x[d]);
-
+            enegx = gsl_sf_exp(- x[d]);
             gsl_set_error_handler(original_handler);
 
-            sg[d].p = 1.0 / (1.0 + enegx[d]);
+            sgp = & sg[d];
 
-            if (sg[d].p < epsilon)
+            sgp->p = 1.0 / (1.0 + enegx);
+
+            if (sgp->p < epsilon)
             {
-                sg[d].p = epsilon;
-                sg[d].pgrad = 0.0;
-                sg[d].pgrad_over_p = 0.0;
-                sg[d].log_p = gsl_sf_log(epsilon);
+                sgp->p = epsilon;
+                sgp->pgrad = 0.0;
+                sgp->pgrad_over_p = 0.0;
+                sgp->log_p = gsl_sf_log(epsilon);
 
-                sg[d].q = epsilon_inv;
-                sg[d].qgrad = 0.0;
-                sg[d].qgrad_over_q = 0.0;
-                sg[d].log_q = gsl_sf_log(epsilon_inv);
+                sgp->q = epsilon_inv;
+                sgp->qgrad = 0.0;
+                sgp->qgrad_over_q = 0.0;
+                sgp->log_q = gsl_sf_log(epsilon_inv);
             }
-            else if (sg[d].p > epsilon_inv)
+            else if (sgp->p > epsilon_inv)
             {
-                sg[d].p = epsilon_inv;
-                sg[d].pgrad = 0.0;
-                sg[d].pgrad_over_p = 0.0;
-                sg[d].log_p = gsl_sf_log(epsilon_inv);
+                sgp->p = epsilon_inv;
+                sgp->pgrad = 0.0;
+                sgp->pgrad_over_p = 0.0;
+                sgp->log_p = gsl_sf_log(epsilon_inv);
 
-                sg[d].q = epsilon;
-                sg[d].qgrad = 0.0;
-                sg[d].qgrad_over_q = 0.0;
-                sg[d].log_q = gsl_sf_log(epsilon);
+                sgp->q = epsilon;
+                sgp->qgrad = 0.0;
+                sgp->qgrad_over_q = 0.0;
+                sgp->log_q = gsl_sf_log(epsilon);
             }
             else 
             {
-                sg[d].q = 1.0 - sg[d].p;
-                sg[d].pgrad = (gsl_isinf(enegx[d]) == 1) ? 0.0 : enegx[d] / gsl_pow_2(1.0 + enegx[d]);
-                sg[d].qgrad = - sg[d].pgrad;
+                sgp->q = 1.0 - sgp->p;
+                sgp->pgrad = (gsl_isinf(enegx) == 1) ? 0.0 : enegx / gsl_pow_2(1.0 + enegx);
+                // sgp->pgrad = gsl_ran_logistic_pdf(x[d], 1.0);
+                sgp->qgrad = - sgp->pgrad;
                 
-                double log_1plus_enegx = gsl_sf_log_1plusx(enegx[d]);
-                sg[d].log_p = -log_1plus_enegx;
-                sg[d].log_q = - x[d] - log_1plus_enegx;
+                double log_1plus_enegx = gsl_sf_log_1plusx(enegx);
+                sgp->log_p = -log_1plus_enegx;
+                sgp->log_q = - x[d] - log_1plus_enegx;
                 
-                sg[d].pgrad_over_p = sg[d].q;
-                sg[d].qgrad_over_q = - sg[d].p;
+                sgp->pgrad_over_p = sgp->q;
+                sgp->qgrad_over_q = - sgp->p;
             }
 
-            assert(! isnan(sg[d].p));
-            assert(! isnan(sg[d].q));
-            assert(! isnan(sg[d].pgrad_over_p));
-            assert(! isnan(sg[d].qgrad_over_q));
-            assert(! isnan(sg[d].pgrad));
-            assert(! isnan(sg[d].qgrad));
-            assert(! isnan(sg[d].log_p));
-            assert(! isnan(sg[d].log_q));
+            assert(! isnan(sgp->p));
+            assert(! isnan(sgp->q));
+            assert(! isnan(sgp->pgrad_over_p));
+            assert(! isnan(sgp->qgrad_over_q));
+            assert(! isnan(sgp->pgrad));
+            assert(! isnan(sgp->qgrad));
+            assert(! isnan(sgp->log_p));
+            assert(! isnan(sgp->log_q));
             
         }
 
@@ -290,8 +294,8 @@ namespace Transformation
 
         sigmoid_composition(sigmoid_vals, comp);
 
-        //if (eval_type & Transformation::VALUE)
-        if (1)
+        if (eval_type & Transformation::VALUE)
+         //if (1)
         {
             log_likelihood = pp->error_estimate->log_likelihood(comp) - pp->current_mode;
             log_prior = 
@@ -301,8 +305,8 @@ namespace Transformation
             *neg_log_value = -1.0 * (log_likelihood + log_prior);
         }
 
-        //if (eval_type & Transformation::GRADIENT)
-        if (1)
+        if (eval_type & Transformation::GRADIENT)
+        // if (1)
         {
             sigmoid_gradient(sigmoid_vals, comp_gradient);
             sigmoid_log_dirichlet_gradient(pp->error_estimate->composition_prior_alphas,

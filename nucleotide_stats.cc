@@ -1,5 +1,6 @@
 #include "nucleotide_stats.h"
 #include "stats_tools.h"
+#include "pileup_tools.h"
 
 #include <cstring>
 #include <cassert>
@@ -88,7 +89,7 @@ void NucleotideStats::initialize(JPD_DATA const& counts_map)
             std::accumulate(this->complete_jpd[b],
                             this->complete_jpd[b] + D, 0.0);
     }
-
+    
     for (size_t b = 0; b != 4; ++b)
     {
         for (size_t di = 0; di != D; ++di)
@@ -98,7 +99,7 @@ void NucleotideStats::initialize(JPD_DATA const& counts_map)
                 / this->founder_base_marginal[b];
         }
     }
-
+    
 }
 
 
@@ -166,6 +167,12 @@ LocusSummary::LocusSummary(size_t _num_distinct_data,
 }
 
 
+LocusSummary::LocusSummary(std::string const* _index_mapping)
+    : index_mapping(_index_mapping)
+{
+}
+
+
 LocusSummary::LocusSummary(LocusSummary const& ls)
     : num_distinct_data(ls.num_distinct_data),
       position(ls.position),
@@ -181,8 +188,68 @@ LocusSummary::LocusSummary(LocusSummary const& ls)
 }
 
 
-LocusSummary::~LocusSummary()
+// 1. encode the basecall, quality, strand combination as an integer
+void LocusSummary::parse(PileupSummary & p, size_t min_quality_score)
 {
-    delete raw_counts;
-    delete stats_index;
-}
+    this->position = p._position;
+    this->reference_base = p._reference_base;
+    this->read_depth = p._read_depth;
+    strcpy(this->reference, p._reference);
+    
+    // populate raw_counts_flat with a sparse set of counts
+    double * raw_counts_flat = new double[num_bqs];
+    std::fill(raw_counts_flat, raw_counts_flat + num_bqs, 0);
+    
+    size_t rd = static_cast<size_t>(p._read_depth);
+    size_t nd = 0;
+    double *rc_tmp = new double[num_bqs];
+    size_t *rc_ind_tmp = new size_t[num_bqs];
+    size_t effective_read_depth = 0;
+
+    for (size_t r = 0; r < rd; ++r)
+        {
+            
+            size_t quality = p.quality(r);
+            char basecall = p._bases[r];
+            size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
+            if (basecall_index >= 4)
+            {
+                //since 'N' is common in pileup, but meaningless, we ignore it silently
+                continue;
+            }
+            if (quality < min_quality_score)
+            {
+                continue;
+            }
+            char strand = isupper(basecall) ? '+' : '-';
+            size_t flat_index = BaseQualStrandReader::encode(basecall, quality, strand);
+            raw_counts_flat[flat_index]++;
+        }
+             for (size_t flat_index = 0; flat_index != num_bqs; ++flat_index)
+             {
+                 if (raw_counts_flat[flat_index] != 0)
+                 {
+                     effective_read_depth += raw_counts_flat[flat_index];
+                     rc_tmp[nd] = raw_counts_flat[flat_index];
+                     rc_ind_tmp[nd] = flat_index;
+                     ++nd;
+                 }
+             }
+
+             this->num_distinct_data = nd;
+         this->raw_counts = new double[nd];
+         this->stats_index = new size_t[nd];
+         this->read_depth = effective_read_depth;
+         std::copy(rc_tmp, rc_tmp + nd, this->raw_counts);
+         std::copy(rc_ind_tmp, rc_ind_tmp + nd, this->stats_index);
+
+         delete raw_counts_flat;
+         delete rc_tmp;
+         delete rc_ind_tmp;
+         }
+
+    LocusSummary::~LocusSummary()
+    {
+        delete raw_counts;
+        delete stats_index;
+    }

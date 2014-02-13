@@ -5,6 +5,7 @@ namespace Usage
 {
     extern char const* data_adaptor;
     extern char const* label_string;
+    extern char const* mode_label_string;
     extern char const* quality_string;
 };
 

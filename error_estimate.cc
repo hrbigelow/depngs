@@ -427,47 +427,52 @@ size_t ErrorEstimate::find_mode_point(double min_step_size,
 
     //shirk the initial point.  Just start in one of the four
     //quadrants that gets the highest value.
-    double majority_comp = 0.6;
-    double minority_comp = (1.0 - majority_comp) / 3.0;
-    double test_comp[4][4];
+    // double majority_comp = 0.9;
+    // double minority_comp = 0.0333333;
+    // double test_comp[4][4];
     double test_values[4];
-    double test_r3_point[sphere_ndim];
-    double best_initial_point[4];
+    // double test_r3_point[sphere_ndim];
+    // double best_initial_point[4];
 
+    // precomputed sigmoid values representing 90%, 3.33%, 3.33%, 3.33% base composition.
+    double test_r3_point[4][3] = {
+        {2.6390567939010965, -0, 3.2958378660048289},
+        {2.6390567939010965, -0, -3.2958378660048289},
+        {-2.6390584010443274, 3.2958378660048289, -0},
+        {-2.6390584010443274, -3.2958378660048289, -0}
+    };
     
     for (size_t d = 0; d != 4; ++d)
     {
-        std::fill(test_comp[d], test_comp[d] + 4, minority_comp);
-        test_comp[d][d] = majority_comp;
-        Transformation::composition_to_r3_sigmoid(test_comp[d], 
-                                                  test_r3_point);
+        // std::fill(test_comp[d], test_comp[d] + 4, minority_comp);
+        // test_comp[d][d] = majority_comp;
+        // Transformation::composition_to_r3_sigmoid(test_comp[d], 
+        //                                           test_r3_point);
 
         gsl_vector *test_r3_vec = gsl_vector_alloc(sphere_ndim);
-        gsl_vector_set(test_r3_vec, 0, test_r3_point[0]);
-        gsl_vector_set(test_r3_vec, 1, test_r3_point[1]);
-        gsl_vector_set(test_r3_vec, 2, test_r3_point[2]);
+        gsl_vector_set(test_r3_vec, 0, test_r3_point[d][0]);
+        gsl_vector_set(test_r3_vec, 1, test_r3_point[d][1]);
+        gsl_vector_set(test_r3_vec, 2, test_r3_point[d][2]);
 
         test_values[d] = 
-            Transformation::log_neg_posterior_value
-            (test_r3_vec, 
-             static_cast<void *>(&passing_params));
+            Transformation::log_neg_posterior_value(test_r3_vec, static_cast<void *>(&passing_params));
 
         gsl_vector_free(test_r3_vec);
     }
-    size_t min_test_value_ind = 
+    size_t best_ind = 
         std::distance(test_values, std::min_element(test_values, test_values + 4));
 
-    std::copy(test_comp[min_test_value_ind], 
-              test_comp[min_test_value_ind] + 4, 
-              best_initial_point);
+    // std::copy(test_comp[min_test_value_ind], 
+    //           test_comp[min_test_value_ind] + 4, 
+    //           best_initial_point);
 
-    double initial_r3_point[sphere_ndim];
-    Transformation::composition_to_r3_sigmoid(best_initial_point, initial_r3_point);
+    // double initial_r3_point[sphere_ndim];
+    // Transformation::composition_to_r3_sigmoid(best_initial_point, initial_r3_point);
 
     x = gsl_vector_alloc(sphere_ndim);
-    gsl_vector_set(x, 0, initial_r3_point[0]);
-    gsl_vector_set(x, 1, initial_r3_point[1]);
-    gsl_vector_set(x, 2, initial_r3_point[2]);
+    gsl_vector_set(x, 0, test_r3_point[best_ind][0]);
+    gsl_vector_set(x, 1, test_r3_point[best_ind][1]);
+    gsl_vector_set(x, 2, test_r3_point[best_ind][2]);
 
 
     //gsl_vector * numerical_gradient = gsl_vector_alloc(sphere_ndim);
@@ -495,42 +500,37 @@ size_t ErrorEstimate::find_mode_point(double min_step_size,
         //take a step
         gsl_multimin_fdfminimizer_iterate(first_minimizer);
 
-        //print current stats
         gsl_vector * gradient = gsl_multimin_fdfminimizer_gradient(first_minimizer);
 
-        if (multimin_iteration % 1 == 0)
-            //if (false)
+        double x[3];
+        x[0] = gsl_vector_get(first_minimizer->x, 0);
+        x[1] = gsl_vector_get(first_minimizer->x, 1);
+        x[2] = gsl_vector_get(first_minimizer->x, 2);
+        
+        Transformation::sigmoid_value_and_gradient(x, sigmoid_vals);
+        
+        if (verbose)
         {
-
-            double x[3];
-            x[0] = gsl_vector_get(first_minimizer->x, 0);
-            x[1] = gsl_vector_get(first_minimizer->x, 1);
-            x[2] = gsl_vector_get(first_minimizer->x, 2);
-
-            Transformation::sigmoid_value_and_gradient(x, sigmoid_vals);
+            //print current stats
+            
             Transformation::sigmoid_composition(sigmoid_vals, mode_point);
-
-            if (verbose)
-            {
-                printf(
-                       "gslfdf1: iter: %Zu, log_neg: %10.8f\t" 
-                       "gradient: (%10.8f, %10.8f, %10.8f)\t"
-                       "cur_mode: (%10.8f, %10.8f, %10.8f, %10.8f)\t"
-                       "r3_point: (%10.8f, %10.8f, %10.8f)\n"
-                       ,
-                       multimin_iteration,
-                       Transformation::log_neg_posterior_value(first_minimizer->x, & passing_params),
-                       gsl_vector_get(gradient, 0),
-                       gsl_vector_get(gradient, 1),
-                       gsl_vector_get(gradient, 2),
-                       mode_point[0], mode_point[1], mode_point[2], mode_point[3],
-                       gsl_vector_get(first_minimizer->x, 0),
-                       gsl_vector_get(first_minimizer->x, 1),
-                       gsl_vector_get(first_minimizer->x, 2)
-                       );
-            }
+            printf(
+                   "gslfdf1: iter: %Zu, log_neg: %10.8f\t" 
+                   "gradient: (%10.8f, %10.8f, %10.8f)\t"
+                   "cur_mode: (%10.8f, %10.8f, %10.8f, %10.8f)\t"
+                   "r3_point: (%10.8f, %10.8f, %10.8f)\n"
+                   ,
+                   multimin_iteration,
+                   Transformation::log_neg_posterior_value(first_minimizer->x, & passing_params),
+                   gsl_vector_get(gradient, 0),
+                   gsl_vector_get(gradient, 1),
+                   gsl_vector_get(gradient, 2),
+                   mode_point[0], mode_point[1], mode_point[2], mode_point[3],
+                   gsl_vector_get(first_minimizer->x, 0),
+                   gsl_vector_get(first_minimizer->x, 1),
+                   gsl_vector_get(first_minimizer->x, 2)
+                   );
         }
-
         
         //check if step is small enough
         gsl_vector_memcpy(point_delta, last_point);
@@ -547,92 +547,10 @@ size_t ErrorEstimate::find_mode_point(double min_step_size,
 
     }
 
+    Transformation::sigmoid_composition(sigmoid_vals, mode_point);
     Transformation::boundary_point(sigmoid_vals, on_zero_boundary);
 
     gsl_vector_free(last_point);
     gsl_vector_free(point_delta);
-    //gsl_vector_free(numerical_gradient);
-
-
-    //now do gradient minimization
-    //newton's formula x_1 = x_0 - (alpha * grad(x_0))
-    
-//     gsl_vector * r3_point = gsl_vector_alloc(sphere_ndim);
-//     gsl_vector * gradient = gsl_vector_alloc(sphere_ndim);
-//     gsl_vector * update_step = gsl_vector_alloc(sphere_ndim);
-
-
-//     gsl_vector_memcpy(r3_point, first_minimizer->x);
-//     double first_estimated_min = 
-//         Transformation::log_neg_posterior_value(r3_point, & passing_params);
-
-//     double step_size;
-//     double alpha = 1e-5;
-//     double second_estimated_min = first_estimated_min;
-//     double last_estimated_min = 0;
-
-//     double max_step_size = 1e-6;
-
-    //while (0)
-    //for (size_t i = 0; i != 10000; ++i)
-//     {
-//         Transformation::log_neg_posterior_gradient(r3_point, & passing_params,
-//                                                     gradient);
-//         //double norm = gsl_blas_dnrm2(gradient);
-//         if (gsl_blas_dnrm2(gradient) < 1e-10)
-//         {
-//             break;
-//         }
-
-//         if (i < 100 || i % 1000 == 0)
-//             //if (false)
-//         {
-//             printf(
-//                    "%Zu: " "%20.18f\t" "%20.18f\t" "%20.18f\t" "%20.18f\t" "%20.18f\n"
-//                    ,
-//                    i,
-//                    second_estimated_min,
-//                    first_estimated_min - second_estimated_min,
-//                    gsl_vector_get(gradient, 0),
-//                    gsl_vector_get(gradient, 1),
-//                    gsl_vector_get(gradient, 2)
-//                    );
-//         }
-
-//         gsl_vector_memcpy(update_step, gradient);
-//         gsl_vector_scale(update_step, - alpha);
-
-//         step_size = gsl_blas_dnrm2(update_step);
-//         if (step_size > max_step_size)
-//         {
-//             gsl_vector_scale(update_step, max_step_size / step_size);
-//         }
-
-//         gsl_vector_add(r3_point, update_step);
-
-//         last_estimated_min = second_estimated_min;
-//         second_estimated_min = Transformation::log_neg_posterior_value(r3_point, & passing_params);
-
-
-//     }
-    
-    
-    //     printf("First min - second min: %10.8f\n",
-    //            first_estimated_min - second_estimated_min);
-    
-//     double enegx[3];
-//     enegx[0] = gsl_sf_exp(- gsl_vector_get(r3_point, 0));
-//     enegx[1] = gsl_sf_exp(- gsl_vector_get(r3_point, 1));
-//     enegx[2] = gsl_sf_exp(- gsl_vector_get(r3_point, 2));
-    
-//     Transformation::r3_to_composition_sigmoid(enegx,
-//                                               Transformation::VALUE |
-//                                               Transformation::GRADIENT,
-//                                               mode_point, mode_gradient);
-
-//     gsl_vector_free(r3_point);
-//     gsl_vector_free(gradient);
-//     gsl_vector_free(update_step);
-
     return multimin_iteration;
 }

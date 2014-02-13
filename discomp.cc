@@ -7,13 +7,14 @@
 #include "nucleotide_reader.h"
 #include "nucleotide_stats.h"
 #include "base_qual_strand_reader.h"
+#include "samutil/file_utils.h"
 
 #include "usage_strings.h"
 
 int discomp_usage()
 {
     fprintf(stderr, 
-            "Usage: dep discomp [options] jpd_paramss input.pileup output.comp\n" 
+            "Usage: dep discomp [options] jpd_params input.pileup output.comp\n" 
             "Options:\n\n"
             "-d STRING   %s\n"
             "-l STRING   %s\n"
@@ -109,7 +110,11 @@ int main_discomp(int argc, char ** argv)
         exit(5);
     }
 
-    data_reader->initialize(pileup_input_file);
+    size_t chunk_size = 1024 * 1024;
+    char * chunk_buffer_in = new char[chunk_size + 1];
+    FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
+
+    // data_reader->initialize(pileup_input_file);
     NucleotideStats global_params = data_reader->read_from_rdb(jpd_data_params_file);
     
     //we are integrating the actual posterior
@@ -129,55 +134,76 @@ int main_discomp(int argc, char ** argv)
     double * posterior_values = new double[num_evaluation_points];
     double * log_posterior_values = new double[num_evaluation_points];
 
-    while (data_reader->more_loci())
+    size_t nbytes_read, nbytes_unused = 0;
+    char * last_fragment;
+    char * read_pointer = chunk_buffer_in;
+
+    while (! feof(pileup_input_fh))
     {
-        LocusSummary locus = 
-            data_reader->get_next_locus(global_params, 
-                                        static_cast<void const*>(& min_quality_score));
+        nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
 
-        //set default model posterior
-        default_model.set_locus_data(& locus);
+        std::vector<char *> pileup_lines =
+            FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
 
-        effective_depth = locus.read_depth;
+        std::vector<char *>::iterator pit;
+        read_pointer[nbytes_read] = '\0';
 
-        //evaluate posterior at all points consistent with ploidy
-        double * evaluation_point;
-        for (size_t p = 0; p != num_evaluation_points; ++p)
+        for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
-            evaluation_point = evaluation_points + (p * 4);
-            log_posterior_values[p] = 
-                default_model.log_likelihood(evaluation_point)
-                + default_model.log_dirichlet_prior(evaluation_point);
-        }
 
-        double * max_val = std::max_element(log_posterior_values, 
-                                            log_posterior_values + num_evaluation_points);
-        size_t max_elem = std::distance(log_posterior_values, max_val);
+            LocusSummary locus = 
+                data_reader->get_next_locus(global_params, 
+                                            (*pit),
+                                            static_cast<void const*>(& min_quality_score));
 
-        for (size_t p = 0; p != num_evaluation_points; ++p)
-        {
-            posterior_values[p] = exp(log_posterior_values[p] - *max_val);
-        }
+            //set default model posterior
+            default_model.set_locus_data(& locus);
 
-        fprintf(posterior_output_fh, "%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%Zu", 
-                label_string, locus.reference, 
-                locus.position, locus.reference_base, 
-                locus.read_depth, effective_depth,
-                max_elem);
+            effective_depth = locus.read_depth;
+
+            //evaluate posterior at all points consistent with ploidy
+            double * evaluation_point;
+            for (size_t p = 0; p != num_evaluation_points; ++p)
+            {
+                evaluation_point = evaluation_points + (p * 4);
+                log_posterior_values[p] = 
+                    default_model.log_likelihood(evaluation_point)
+                    + default_model.log_dirichlet_prior(evaluation_point);
+            }
+
+            double * max_val = std::max_element(log_posterior_values, 
+                                                log_posterior_values + num_evaluation_points);
+            size_t max_elem = std::distance(log_posterior_values, max_val);
+
+            for (size_t p = 0; p != num_evaluation_points; ++p)
+            {
+                posterior_values[p] = exp(log_posterior_values[p] - *max_val);
+            }
+
+            fprintf(posterior_output_fh, "%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%Zu", 
+                    label_string, locus.reference, 
+                    locus.position, locus.reference_base, 
+                    locus.read_depth, effective_depth,
+                    max_elem);
         
-        normalize(posterior_values, num_evaluation_points, posterior_values);
+            normalize(posterior_values, num_evaluation_points, posterior_values);
 
-        //adjust values, normalize
-        for (size_t p = 0; p != num_evaluation_points; ++p)
-        {
-            fprintf(posterior_output_fh, "\t%g", posterior_values[p]);
+            //adjust values, normalize
+            for (size_t p = 0; p != num_evaluation_points; ++p)
+            {
+                fprintf(posterior_output_fh, "\t%g", posterior_values[p]);
+            }
+
+            fprintf(posterior_output_fh, "\n");
         }
-
-        fprintf(posterior_output_fh, "\n");
-
+        nbytes_unused = strlen(last_fragment);
+        memmove(chunk_buffer_in, last_fragment, nbytes_unused);
+        read_pointer = chunk_buffer_in + nbytes_unused;
     }
     fclose(posterior_output_fh);
+    fclose(pileup_input_fh);
 
+    delete chunk_buffer_in;
     delete data_reader;
     delete numbers_buffer;
 

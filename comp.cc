@@ -24,7 +24,7 @@
 #include "simulation.h"
 #include "anomaly_tools.h"
 #include "transformation.h"
-
+#include "samutil/file_utils.h"
 
 #include "usage_strings.h"
 
@@ -204,10 +204,14 @@ int main_comp(int argc, char ** argv)
         exit(5);
     }
 
-    data_reader->initialize(pileup_input_file);
+    FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
+    // data_reader->initialize(pileup_input_file);
 
     PileupSummary pileup(0);
-    FastqType ftype = pileup.FastqFileType(pileup_input_file);
+    size_t chunk_size = 1024 * 1024;
+    char * chunk_buffer_in = new char[chunk_size + 1];
+
+    FastqType ftype = pileup.FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size);
 
     if (ftype == None)
     {
@@ -251,291 +255,308 @@ int main_comp(int argc, char ** argv)
     //4. Construct posterior
     Posterior posterior(&model, may_underflow, full_ndim);
 
-
-    while (data_reader->more_loci())
+    size_t nbytes_read, nbytes_unused = 0;
+    char * last_fragment;
+    char * read_pointer = chunk_buffer_in;
+    
+    while (! feof(pileup_input_fh))
     {
-        //1. get entire locus data
-        LocusSummary locus = 
-            data_reader->get_next_locus(params, static_cast<void const*>(& min_quality_score));
+        nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
 
-        //divide locus data to plus and minus-strand data
-        double pos_anomaly_score =
-            strand_locus_anomaly_score(posterior, global_counts,
-                                       locus, data_reader, '+', verbose);
-        
-        double neg_anomaly_score =
-            strand_locus_anomaly_score(posterior, global_counts,
-                                       locus, data_reader, '-', verbose);
-        
+        std::vector<char *> pileup_lines =
+            FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
 
-        // double full_anomaly_score =
-        //     locus_anomaly_score(posterior, global_counts,
-        //                         locus, data_reader, verbose);
+        std::vector<char *>::iterator pit;
+        read_pointer[nbytes_read] = '\0';
 
-
-
-        effective_depth = locus.read_depth;
-
-        Dirichlet dirichlet(full_ndim, may_underflow);
-
-        posterior.model()->set_locus_data(&locus);
-        posterior.model()->get_model_params()->initialize(global_counts);
-
-        posterior.initialize(mode_tolerance, max_modefinding_iterations, 
-                             initial_point, verbose);
-
-        //double full_anomaly_score = 0.0;
-        double full_anomaly_score =
-            relative_entropy_anomaly(global_counts, locus, posterior.mode_point);
-        
-
-
-        Metropolis metropolis(&posterior, &dirichlet, full_ndim, 
-                              use_independence_chain_mh, final_num_points);
-
-
-        double autocor_max_offset = 6;
-
-        metropolis.set_current_point(posterior.mode_point);
-        
-        double estimated_mean[full_ndim];
-
-        size_t initial_autocor_offset = 30;
-
-        size_t best_autocor_offset = initial_autocor_offset;
-
-        dirichlet.set_alpha0(locus.read_depth + prior_alpha0);
-
-        if (dirichlet.get_alpha0() > 1)
+        for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
-            dirichlet.set_alphas_from_mode_or_bound
-                (posterior.mode_point,
-                 posterior.ee->composition_prior_alphas,
-                 posterior.zero_boundary);
-        }
-        else
-        {
-            dirichlet.update(posterior.ee->composition_prior_alphas);
-        }
 
-        //metropolis hastings
-        double proposal_mean, proposal_variance;
+            LocusSummary locus = 
+                data_reader->get_next_locus(params, (*pit), static_cast<void const*>(& min_quality_score));
+            
+            //divide locus data to plus and minus-strand data
+            double pos_anomaly_score =
+                strand_locus_anomaly_score(posterior, global_counts,
+                                           locus, data_reader, '+', verbose);
+            
+            double neg_anomaly_score =
+                strand_locus_anomaly_score(posterior, global_counts,
+                                           locus, data_reader, '-', verbose);
+            
+            
+            // double full_anomaly_score =
+            //     locus_anomaly_score(posterior, global_counts,
+            //                         locus, data_reader, verbose);
+            
+            
 
-        size_t cumul_autocor_offset;
-        for (size_t iter = 0; iter != max_tuning_iterations; ++iter)
-        {
-            cumul_autocor_offset = 1;
-            size_t current_autocor_offset = 1;
-            for (size_t i = 0; i != 3; ++i)
+            effective_depth = locus.read_depth;
+
+            Dirichlet dirichlet(full_ndim, may_underflow);
+
+            posterior.model()->set_locus_data(&locus);
+
+            posterior.initialize(mode_tolerance, max_modefinding_iterations, 
+                                 initial_point, verbose);
+
+            //double full_anomaly_score = 0.0;
+            double full_anomaly_score =
+                relative_entropy_anomaly(global_counts, locus, posterior.mode_point);
+        
+
+
+            Metropolis metropolis(&posterior, &dirichlet, full_ndim, 
+                                  use_independence_chain_mh, final_num_points);
+
+
+            double autocor_max_offset = 6;
+
+            metropolis.set_current_point(posterior.mode_point);
+        
+            double estimated_mean[full_ndim];
+
+            size_t initial_autocor_offset = 30;
+
+            size_t best_autocor_offset = initial_autocor_offset;
+
+            dirichlet.set_alpha0(locus.read_depth + prior_alpha0);
+
+            if (dirichlet.get_alpha0() > 1)
             {
-                //sample more and more thinly, starting from every 1'th
-                metropolis.sample(tuning_num_points, 0, cumul_autocor_offset,
-                                  &proposal_mean, &proposal_variance);
-                
-                current_autocor_offset =
-                    best_autocorrelation_offset(metropolis.get_samples(),
-                                                full_ndim, tuning_num_points,
-                                                autocor_max_offset, autocor_max_value);
+                dirichlet.set_alphas_from_mode_or_bound
+                    (posterior.mode_point,
+                     posterior.ee->composition_prior_alphas,
+                     posterior.zero_boundary);
+            }
+            else
+            {
+                dirichlet.update(posterior.ee->composition_prior_alphas);
+            }
 
-                if (current_autocor_offset == 1)
+            //metropolis hastings
+            double proposal_mean, proposal_variance;
+
+            size_t cumul_autocor_offset;
+            for (size_t iter = 0; iter != max_tuning_iterations; ++iter)
+            {
+                cumul_autocor_offset = 1;
+                size_t current_autocor_offset = 1;
+                for (size_t i = 0; i != 3; ++i)
+                {
+                    //sample more and more thinly, starting from every 1'th
+                    metropolis.sample(tuning_num_points, 0, cumul_autocor_offset,
+                                      &proposal_mean, &proposal_variance);
+                
+                    current_autocor_offset =
+                        best_autocorrelation_offset(metropolis.get_samples(),
+                                                    full_ndim, tuning_num_points,
+                                                    autocor_max_offset, autocor_max_value);
+
+                    if (current_autocor_offset == 1)
+                    {
+                        break;
+                    }
+
+                    cumul_autocor_offset *= current_autocor_offset;
+                    if (verbose)
+                    {
+                        fprintf(stdout, "MH: current: %Zu, cumulative: %Zu, position: %Zu\n", 
+                                current_autocor_offset, cumul_autocor_offset, 
+                                locus.position);
+                        fflush(stdout);
+                    }
+                }
+
+                //here it doesn't make sense to take all of the samples if
+                //the best_autoocr offset isn't 1
+                multivariate_mean(metropolis.get_samples(), full_ndim,
+                                  tuning_num_points, estimated_mean);
+
+                if (verbose)
+                {
+                    fprintf(stdout, "MH: %Zu, position: %Zu, proposal mean: %g, "
+                            "proposal variance: %g", cumul_autocor_offset,
+                            locus.position, proposal_mean, proposal_variance);
+                    fprintf(stdout, ", estimated mean:");
+                    for (size_t d = 0; d != full_ndim; ++d)
+                    {
+                        fprintf(stdout, "\t%g", estimated_mean[d]);
+                    }
+                    fprintf(stdout, "\n");
+                    fflush(stdout);
+                }
+
+                if (cumul_autocor_offset <= target_autocor_offset)
                 {
                     break;
                 }
 
-                cumul_autocor_offset *= current_autocor_offset;
-                if (verbose)
-                {
-                    fprintf(stdout, "MH: current: %Zu, cumulative: %Zu, position: %Zu\n", 
-                            current_autocor_offset, cumul_autocor_offset, 
-                            locus.position);
-                    fflush(stdout);
-                }
+                dirichlet.set_alphas_from_mean_or_bound(estimated_mean,
+                                                        posterior.ee->composition_prior_alphas);
+
+            
             }
 
-            //here it doesn't make sense to take all of the samples if
-            //the best_autoocr offset isn't 1
-            multivariate_mean(metropolis.get_samples(), full_ndim,
-                              tuning_num_points, estimated_mean);
-
-            if (verbose)
-            {
-                fprintf(stdout, "MH: %Zu, position: %Zu, proposal mean: %g, "
-                        "proposal variance: %g", cumul_autocor_offset,
-                        locus.position, proposal_mean, proposal_variance);
-                fprintf(stdout, ", estimated mean:");
-                for (size_t d = 0; d != full_ndim; ++d)
-                {
-                    fprintf(stdout, "\t%g", estimated_mean[d]);
-                }
-                fprintf(stdout, "\n");
-                fflush(stdout);
-            }
 
             if (cumul_autocor_offset <= target_autocor_offset)
             {
-                break;
-            }
+                //metropolis hastings succeeded
+                metropolis.sample(final_num_points, 0, cumul_autocor_offset,
+                                  &proposal_mean, &proposal_variance);
 
-            dirichlet.set_alphas_from_mean_or_bound(estimated_mean,
-                                                    posterior.ee->composition_prior_alphas);
+                sprintf(line_label, "%s\t%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%5.5lf\t%5.5lf\t%5.5lf",
+                        label_string, 
+                        "MH", locus.reference, 
+                        locus.position, 
+                        locus.reference_base, 
+                        locus.read_depth, effective_depth,
+                        full_anomaly_score,
+                        pos_anomaly_score,
+                        neg_anomaly_score);
 
+                double * sample_points_buf = new double[final_num_points * 4];
+                std::vector<double *> sample_points_sortable(final_num_points);
+
+                for (size_t i = 0; i != final_num_points; ++i)
+                {
+                    sample_points_sortable[i] = metropolis.get_samples() + (i * full_ndim);
+                }
             
-        }
+                //             //approximate marginal modes (expensive!)
+                //             std::fill(marginal_modes, marginal_modes + 4, -1.0);
+                //             if (marginal_mode_num_points > 0)
+                //             {
+                //                 for (size_t d = 0; d != full_ndim; ++d)
+                //                 {
+                //                     marginal_modes[d] = 
+                //                         window_averaged_mode(& sample_points_sortable, d, 
+                //                                              marginal_mode_num_points);
+                //                 }
+                //             }
 
+                print_quantiles(posterior_output_fh, & sample_points_sortable, 
+                                posterior.mode_point,
+                                line_label, dimension_labels, "+", quantiles,
+                                num_quantiles, full_ndim);
 
-        if (cumul_autocor_offset <= target_autocor_offset)
-        {
-            //metropolis hastings succeeded
-            metropolis.sample(final_num_points, 0, cumul_autocor_offset,
-                              &proposal_mean, &proposal_variance);
+                if (cdfs_output_fh != NULL)
+                {
+                    print_numerical_cdfs(cdfs_output_fh, line_label, & sample_points_sortable, full_ndim);
+                }
 
-            sprintf(line_label, "%s\t%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%5.5lf\t%5.5lf\t%5.5lf",
-                    label_string, 
-                    "MH", locus.reference, 
-                    locus.position, 
-                    locus.reference_base, 
-                    locus.read_depth, effective_depth,
-                    full_anomaly_score,
-                    pos_anomaly_score,
-                    neg_anomaly_score);
+                fflush(posterior_output_fh);
+                delete sample_points_buf;
 
-            double * sample_points_buf = new double[final_num_points * 4];
-            std::vector<double *> sample_points_sortable(final_num_points);
+                continue;
 
-            for (size_t i = 0; i != final_num_points; ++i)
-            {
-                sample_points_sortable[i] = metropolis.get_samples() + (i * full_ndim);
-            }
-            
-//             //approximate marginal modes (expensive!)
-//             std::fill(marginal_modes, marginal_modes + 4, -1.0);
-//             if (marginal_mode_num_points > 0)
-//             {
-//                 for (size_t d = 0; d != full_ndim; ++d)
-//                 {
-//                     marginal_modes[d] = 
-//                         window_averaged_mode(& sample_points_sortable, d, 
-//                                              marginal_mode_num_points);
-//                 }
-//             }
-
-            print_quantiles(posterior_output_fh, & sample_points_sortable, 
-                            posterior.mode_point,
-                            line_label, dimension_labels, "+", quantiles,
-                            num_quantiles, full_ndim);
-
-            if (cdfs_output_fh != NULL)
-            {
-                print_numerical_cdfs(cdfs_output_fh, line_label, & sample_points_sortable, full_ndim);
             }
 
-            fflush(posterior_output_fh);
-            delete sample_points_buf;
+            if (verbose)
+            {
+                fprintf(stderr, 
+                        "%s %Zu (depth %Zu) locus skipped"
+                        ", Metropolis Hastings failed.\n",
+                        locus.reference, locus.position, effective_depth);
+            }
 
             continue;
 
-        }
 
-        if (verbose)
-        {
-            fprintf(stderr, 
-                    "%s %Zu (depth %Zu) locus skipped"
-                    ", Metropolis Hastings failed.\n",
-                    locus.reference, locus.position, effective_depth);
-        }
+            //metropolis hastings failed.  try slice sampling
+            size_t num_bits_per_dim = 62;
+            bool is_log_integrand = true;
 
-        continue;
+            size_t initial_sampling_range = 62 * truncated_ndim;
 
+            SliceSampling slice_sampler(truncated_ndim, num_bits_per_dim, is_log_integrand, 1);
 
-        //metropolis hastings failed.  try slice sampling
-        size_t num_bits_per_dim = 62;
-        bool is_log_integrand = true;
+            double * tuning_sample_points = new double[tuning_num_points * truncated_ndim];
 
-        size_t initial_sampling_range = 62 * truncated_ndim;
-
-        SliceSampling slice_sampler(truncated_ndim, num_bits_per_dim, is_log_integrand, 1);
-
-        double * tuning_sample_points = new double[tuning_num_points * truncated_ndim];
-
-        slice_sampler.Initialize();
-
-        slice_sampler.sample(&posterior, posterior.mode_point,
-                             initial_sampling_range, 1, tuning_sample_points,
-                             tuning_num_points);
-        
-        best_autocor_offset =
-            best_autocorrelation_offset(tuning_sample_points, truncated_ndim, 
-                                        tuning_num_points, autocor_max_offset, 
-                                        autocor_max_value);
-        if (verbose)
-        {
-            fprintf(stdout, "SS: %Zu, position: %Zu\n", 
-                    best_autocor_offset, locus.position);
-        }
-        
-        delete tuning_sample_points;
-
-
-        if (best_autocor_offset <= target_autocor_offset)
-        {
-            //slice sampling succeeded
-            double * slice_sample_points = new double[final_num_points * truncated_ndim];
-            double * sample_points_buf = new double[final_num_points * 4];
-            std::vector<double *> sample_points_sortable(final_num_points);
+            slice_sampler.Initialize();
 
             slice_sampler.sample(&posterior, posterior.mode_point,
-                                 initial_sampling_range, 
-                                 best_autocor_offset,
-                                 slice_sample_points,
-                                 final_num_points);
-
-            add_normalized_dimension(slice_sample_points, truncated_ndim,
-                                     final_num_points, sample_points_buf,
-                                     &sample_points_sortable);
-            
-            sprintf(line_label, "%s\t%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%5.5lf\t%5.5lf\t%5.5lf",
-                    label_string, 
-                    "SS", locus.reference, 
-                    locus.position, 
-                    locus.reference_base, 
-                    locus.read_depth, effective_depth,
-                    full_anomaly_score,
-                    pos_anomaly_score, neg_anomaly_score);
-            
-            //approximate marginal modes (expensive!)
-//             std::fill(marginal_modes, marginal_modes + 4, -1.0);
-//             if (marginal_mode_num_points > 0)
-//             {
-//                 for (size_t d = 0; d != full_ndim; ++d)
-//                 {
-//                     marginal_modes[d] = 
-//                         window_averaged_mode(& sample_points_sortable, d, 
-//                                              marginal_mode_num_points);
-//                 }
-//             }
-            
-            print_quantiles(posterior_output_fh, & sample_points_sortable, 
-                            posterior.mode_point, line_label, 
-                            dimension_labels, "+", quantiles, num_quantiles,
-                            truncated_ndim + 1);
-
-
-            if (cdfs_output_fh != NULL)
+                                 initial_sampling_range, 1, tuning_sample_points,
+                                 tuning_num_points);
+        
+            best_autocor_offset =
+                best_autocorrelation_offset(tuning_sample_points, truncated_ndim, 
+                                            tuning_num_points, autocor_max_offset, 
+                                            autocor_max_value);
+            if (verbose)
             {
-                print_numerical_cdfs(cdfs_output_fh, line_label, & sample_points_sortable, full_ndim);
+                fprintf(stdout, "SS: %Zu, position: %Zu\n", 
+                        best_autocor_offset, locus.position);
             }
+        
+            delete tuning_sample_points;
 
-            fflush(posterior_output_fh);
-            delete sample_points_buf;
-            delete slice_sample_points;
 
-            continue;
+            if (best_autocor_offset <= target_autocor_offset)
+            {
+                //slice sampling succeeded
+                double * slice_sample_points = new double[final_num_points * truncated_ndim];
+                double * sample_points_buf = new double[final_num_points * 4];
+                std::vector<double *> sample_points_sortable(final_num_points);
+
+                slice_sampler.sample(&posterior, posterior.mode_point,
+                                     initial_sampling_range, 
+                                     best_autocor_offset,
+                                     slice_sample_points,
+                                     final_num_points);
+
+                add_normalized_dimension(slice_sample_points, truncated_ndim,
+                                         final_num_points, sample_points_buf,
+                                         &sample_points_sortable);
+            
+                sprintf(line_label, "%s\t%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%5.5lf\t%5.5lf\t%5.5lf",
+                        label_string, 
+                        "SS", locus.reference, 
+                        locus.position, 
+                        locus.reference_base, 
+                        locus.read_depth, effective_depth,
+                        full_anomaly_score,
+                        pos_anomaly_score, neg_anomaly_score);
+            
+                //approximate marginal modes (expensive!)
+                //             std::fill(marginal_modes, marginal_modes + 4, -1.0);
+                //             if (marginal_mode_num_points > 0)
+                //             {
+                //                 for (size_t d = 0; d != full_ndim; ++d)
+                //                 {
+                //                     marginal_modes[d] = 
+                //                         window_averaged_mode(& sample_points_sortable, d, 
+                //                                              marginal_mode_num_points);
+                //                 }
+                //             }
+            
+                print_quantiles(posterior_output_fh, & sample_points_sortable, 
+                                posterior.mode_point, line_label, 
+                                dimension_labels, "+", quantiles, num_quantiles,
+                                truncated_ndim + 1);
+
+
+                if (cdfs_output_fh != NULL)
+                {
+                    print_numerical_cdfs(cdfs_output_fh, line_label, & sample_points_sortable, full_ndim);
+                }
+
+                fflush(posterior_output_fh);
+                delete sample_points_buf;
+                delete slice_sample_points;
+
+                continue;
+            }
         }
-
+        nbytes_unused = strlen(last_fragment);
+        memmove(chunk_buffer_in, last_fragment, nbytes_unused);
+        read_pointer = chunk_buffer_in + nbytes_unused;
 
         //nothing else worked.
     }
-    
+    fclose(pileup_input_fh);
+    delete chunk_buffer_in;
+
     fclose(posterior_output_fh);
     if (cdfs_output_fh != NULL)
     {
