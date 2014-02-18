@@ -9,9 +9,20 @@ namespace Nucleotide
     //transforms ACGT and acgt to 0123, everything else to 4
     extern int const base_to_index[];
     extern char const* bases_upper;
+    extern char const* strands;
+    extern size_t const highest_quality;
+    extern size_t const num_s;
+    extern size_t const num_qs;
+    extern size_t const num_bqs;
+    extern size_t const PLUS_STRAND;
+    extern size_t const MINUS_STRAND;
+
+    extern size_t encode(char basecall, size_t quality, size_t strand);
+    extern void decode(size_t code, char * basecall, size_t *quality, size_t *strand);
+
 };
 
-
+/*
 struct nuc_frequency
 {
     double data[4];
@@ -37,67 +48,52 @@ struct nuc_frequency
         data[3] *= factor;
     }
 };
-    
+*/    
 
-typedef std::map<std::string, nuc_frequency> JPD_DATA;
 
-class LocusSummary;
+// typedef std::map<std::string, nuc_frequency> JPD_DATA;
+
+// this structure holds a summary of all raw base calls at a given locus
+// the values in stats_index can be decoded into (basecall, quality, strand) triplets
+// using Nucleotide::decode
+struct packed_counts
+{
+    double * raw_counts;
+    size_t * stats_index;
+    double * fbqs_cpd; // founder base likelihood in f,b,q,s order
+    size_t num_data;
+};
+
+
+class PileupSummary;
 
 
 /* 
  */
 class NucleotideStats {
 
+ public:
+    // P(founder_base, basecall, quality, strand).  Order is F,B,Q,S
     double * jpd_buffer;
+
+    // P(basecall, quality, strand | founder_base).  Order is F,B,Q,S
     double * cpd_buffer;
 
- public:
     double founder_base_marginal[4];
     double * complete_jpd[4];
     double * founder_base_likelihood[4];
     size_t num_distinct_data;
-    std::map<std::string, size_t> name_mapping;
-    std::string * index_mapping;
+    /* std::map<std::string, size_t> name_mapping; */
+    /* std::string * index_mapping; */
 
-    NucleotideStats(size_t num_distinct_data_types);
+    NucleotideStats();
     ~NucleotideStats();
-    void initialize(JPD_DATA const& counts_map);
-    JPD_DATA make_per_locus_stats(LocusSummary const& locus);
+    /* void initialize(JPD_DATA const& counts_map); */
+    void initialize(char const* rdb_file);
+    // JPD_DATA make_per_locus_stats(PileupSummary const& locus);
 
+    void pack(packed_counts * c);
 };
 
-class PileupSummary;
-
-
-class LocusSummary {
-
- public:
-    LocusSummary(size_t _num_distinct_data,
-                 char const* _reference, size_t _position,
-                 char _reference_base, size_t _read_depth,
-                 std::string const* _index_mapping);
-
-    LocusSummary(std::string const* _index_mapping);
-
-    LocusSummary(LocusSummary const&);
-    ~LocusSummary();
-
-    void parse(PileupSummary & pileup, size_t min_quality_score);
-
-    double * raw_counts;
-
-    //maps index in LocusSummary::raw_counts to index in
-    //NucleotideStats::founder_base_likelihood
-    size_t * stats_index;
-
-    size_t num_distinct_data;
-    char reference[100];
-    size_t position;
-    char reference_base;
-    size_t read_depth;
-
-    //points to the index_mapping in NucleotideStats.  not owned here
-    std::string const* index_mapping;
-};
 
 #endif // _NUCLEOTIDE_STATS_H

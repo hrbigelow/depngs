@@ -18,9 +18,7 @@
 #include "dirichlet.h"
 #include "slice_sampling.h"
 #include "stats_tools.h"
-#include "nucleotide_reader.h"
 #include "nucleotide_stats.h"
-#include "base_qual_strand_reader.h"
 #include "simulation.h"
 #include "anomaly_tools.h"
 #include "transformation.h"
@@ -33,7 +31,6 @@ int mode_usage()
     fprintf(stderr, 
             "\nUsage: dep mode [options] input.jpd input.pileup output.mode\n" 
             "Options:\n\n"
-            "-d STRING   %s\n"
             "-l STRING   %s\n"
             "-p FILE     alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-q INT      %s\n"
@@ -44,7 +41,7 @@ int mode_usage()
             "label_string reference position reference_base "
             "read_depth effective_depth full_anomaly_score pos_strand_anomaly_score "
             "neg_strand_anomaly_score modeA modeC modeG modeT\n",
-            Usage::data_adaptor, Usage::mode_label_string, Usage::quality_string
+            Usage::mode_label_string, Usage::quality_string
             );
     return 1;
 }
@@ -56,9 +53,6 @@ extern int optind;
 
 int main_mode(int argc, char ** argv)
 {
-
-    char input_data_type[100];
-    strcpy(input_data_type, "base_qual_strand");
 
     char label_string[100];
     strcpy(label_string, "mode");
@@ -83,7 +77,6 @@ int main_mode(int argc, char ** argv)
     {
         switch(c)
         {
-        case 'd': strcpy(input_data_type, optarg); break;
         case 'l': strcpy(label_string, optarg); break;
         case 'p': strcpy(prior_alphas_file, optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
@@ -129,22 +122,7 @@ int main_mode(int argc, char ** argv)
                 posterior_output_file);
     }
 
-    NucleotideReader * data_reader;
-
-    if (strcmp(input_data_type, "base_qual_strand") == 0)
-    {
-        data_reader = new BaseQualStrandReader;
-    }
-    //insert other data handlers here
-    else
-    {
-        fprintf(stderr,
-                "Currently only 'base_qual_strand' data is supported\n");
-        exit(5);
-    }
-
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
-    // data_reader->initialize(pileup_input_file);
 
     PileupSummary pileup(0);
     size_t chunk_size = max_mem;
@@ -175,15 +153,12 @@ int main_mode(int argc, char ** argv)
     ErrorEstimate model;
     model.set_composition_prior_alphas(prior_alphas);
     
-    //1. Compile JPD_DATA from counts file
-    JPD_DATA global_counts = parse_jpd_rdb_file(jpd_data_params_file);
-    
-    //2. initialize NucleotideStats from JPD_DATA
-    NucleotideStats params(global_counts.size());
-    params.initialize(global_counts);
+    //1. initialize NucleotideStats from JPD_DATA
+    NucleotideStats params;
+    params.initialize(jpd_data_params_file);
 
     //3. Set model parameters
-    model.set_model_params(&params);
+    model.model_params = & params;
 
     //4. Construct posterior
     Posterior posterior(&model, may_underflow, full_ndim);
@@ -205,21 +180,23 @@ int main_mode(int argc, char ** argv)
         for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
 
-            LocusSummary locus = 
-                data_reader->get_next_locus(params, (*pit), static_cast<void const*>(& min_quality_score));
+            PileupSummary locus(0);
+            locus.load_line((*pit));
+            locus.parse(min_quality_score);
+            params.pack(& locus.counts);
             
             //divide locus data to plus and minus-strand data
             
             effective_depth = locus.read_depth;
 
-            posterior.model()->set_locus_data(&locus);
+            posterior.model()->locus_data = & locus.counts;
 
             posterior.initialize(mode_tolerance, max_modefinding_iterations, 
                                  initial_point, verbose);
 
         
             fprintf(posterior_output_fh, 
-                    "%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%5.5f\t%5.5f\t%5.5f\t%5.5f",
+                    "%s\t%s\t%i\t%c\t%Zu\t%Zu\t%5.5f\t%5.5f\t%5.5f\t%5.5f",
                     label_string, 
                     locus.reference, 
                     locus.position, 
@@ -234,21 +211,21 @@ int main_mode(int argc, char ** argv)
 
             if (compute_anomaly)
             {
-                double pos_anomaly_score =
-                    strand_locus_anomaly_score(posterior, global_counts,
-                                               locus, data_reader, '+', verbose);
+                // double pos_anomaly_score =
+                //     strand_locus_anomaly_score(posterior, global_counts,
+                //                                locus, data_reader, '+', verbose);
                 
-                double neg_anomaly_score =
-                    strand_locus_anomaly_score(posterior, global_counts,
-                                               locus, data_reader, '-', verbose);
+                // double neg_anomaly_score =
+                //     strand_locus_anomaly_score(posterior, global_counts,
+                //                                locus, data_reader, '-', verbose);
                 double full_anomaly_score =
-                    relative_entropy_anomaly(global_counts, locus, posterior.mode_point);
+                    relative_entropy_anomaly(params.cpd_buffer, & locus.counts, posterior.mode_point);
 
-                fprintf(posterior_output_fh,
-                        "\t%5.5lf\t%5.5lf\t%5.5lf\n",
-                        full_anomaly_score,
-                        pos_anomaly_score,
-                        neg_anomaly_score);
+                // fprintf(posterior_output_fh,
+                //         "\t%5.5lf\t%5.5lf\t%5.5lf\n",
+                //         full_anomaly_score,
+                //         pos_anomaly_score,
+                //         neg_anomaly_score);
             }
             else
             {
@@ -271,6 +248,5 @@ int main_mode(int argc, char ** argv)
     gsl_rng_free(rand_gen);
     
     delete prior_alphas;
-    delete data_reader;
     return 0;
 }

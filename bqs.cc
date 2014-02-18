@@ -2,7 +2,6 @@
 #include <cstdlib>
 
 #include "pileup_tools.h"
-#include "base_qual_strand_reader.h"
 #include "nucleotide_stats.h"
 #include "samutil/file_utils.h"
 
@@ -24,10 +23,7 @@ int main_bqs(int argc, char ** argv)
 
     char * pileup_input_file = argv[1];
     char * bqs_output_file = argv[2];
-    size_t const MAX_QUALITY = 255;
     size_t min_quality_score = 0;
-
-    char const* strands = "+-";
 
     //initialize fastq_type;
     PileupSummary pileup(0);
@@ -46,42 +42,15 @@ int main_bqs(int argc, char ** argv)
 
     PileupSummary::SetFtype(ftype);
     
-    BaseQualStrandReader reader;
-    // reader.initialize(pileup_input_file);
-
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
     FILE * bqs_output_fh = open_if_present(bqs_output_file, "w");
     
-    double fake_nuc_frequency[] = { 1, 1, 1, 1 };
-
-    //all we need is a name mapping.
-    size_t datum_index = 0;
-
-    JPD_DATA fake_jpd;
-    for (size_t b = 0; b != 4; ++b)
-    {
-        for (size_t q = 0; q <= MAX_QUALITY; ++q)
-        {
-            for (size_t s = 0; s != 2; ++s)
-            {
-                BaseQualStrandReader::Datum datum = 
-                    { Nucleotide::bases_upper[b], q, strands[s], datum_index, 0 };
-
-                fake_jpd.insert(std::make_pair(datum.name(),nuc_frequency(fake_nuc_frequency)));
-                ++datum_index;
-            }
-        }
-    }
-
-    NucleotideStats fake_stats(fake_jpd.size());
-    fake_stats.initialize(fake_jpd);
-
-    double * all_counts = new double[fake_jpd.size()];
-    std::fill(all_counts, all_counts + fake_jpd.size(), 0.0);
-
     size_t nbytes_read, nbytes_unused = 0;
     char * last_fragment;
     char * read_pointer = chunk_buffer_in;
+
+    size_t * counts = new size_t[Nucleotide::num_bqs];
+    std::fill(counts, counts + Nucleotide::num_bqs, 0);
 
     while (! feof(pileup_input_fh))
     {
@@ -96,14 +65,13 @@ int main_bqs(int argc, char ** argv)
         //for (size_t l = 0; l != pileup_lines.size(); ++l)
         for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
-            LocusSummary locus = 
-                reader.get_next_locus(fake_stats, (*pit),
-                                      static_cast<void const*>(& min_quality_score));
-            
-            for (size_t raw_index = 0; raw_index != locus.num_distinct_data; ++raw_index)
+            PileupSummary locus(0);
+            locus.load_line((*pit));
+            locus.parse(min_quality_score);
+
+            for (size_t c = 0; c != locus.counts.num_data; ++c)
             {
-                size_t data_index = locus.stats_index[raw_index];
-                all_counts[data_index] += locus.raw_counts[raw_index];
+                counts[locus.counts.stats_index[c]] += locus.counts.raw_counts[c];
             }
         }
         nbytes_unused = strlen(last_fragment);
@@ -114,9 +82,27 @@ int main_bqs(int argc, char ** argv)
 
     delete chunk_buffer_in;
 
+    char basecall;
+    size_t quality;
+    size_t strand;
+    for (size_t i = 0; i != Nucleotide::num_bqs; ++i)
+    {
+        Nucleotide::decode(i, &basecall, &quality, &strand);
+        fprintf(bqs_output_fh,
+                "%c\t%Zu\t%c\t%Zu\n",
+                basecall,
+                quality,
+                (strand == Nucleotide::PLUS_STRAND) ? '+' : '-',
+                counts[i]);
+    }
+
+    delete counts;
+
+
+    /*
     size_t max_quality_present = 0;
 
-    std::map<std::string, size_t>::const_iterator datum_iter;
+max_   std::map<std::string, size_t>::const_iterator datum_iter;
 
     //find the maximum nonzero quality present
     for (datum_iter = fake_stats.name_mapping.begin();
@@ -153,6 +139,7 @@ int main_bqs(int argc, char ** argv)
     }
     
     delete all_counts;
+    */
     close_if_present(bqs_output_fh);
 
     return 0;

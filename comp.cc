@@ -17,10 +17,7 @@
 #include "stats_tools.h"
 #include "dirichlet.h"
 #include "slice_sampling.h"
-#include "stats_tools.h"
-#include "nucleotide_reader.h"
 #include "nucleotide_stats.h"
-#include "base_qual_strand_reader.h"
 #include "simulation.h"
 #include "anomaly_tools.h"
 #include "transformation.h"
@@ -33,7 +30,6 @@ int comp_usage()
     fprintf(stderr, 
             "\nUsage: dep comp [options] input.jpd input.pileup output.comp [output.points]\n" 
             "Options:\n\n"
-            "-d STRING   %s\n"
             "-l STRING   %s\n"
             "-t INT      number of sample points used for tuning proposal distribution [1000]\n"
             "-f INT      number of sample points used for final quantiles estimation [10000]\n"
@@ -51,7 +47,7 @@ int comp_usage()
             "read_depth effective_depth full_anomaly_score pos_strand_anomaly_score "
             "neg_strand_anomaly_score inferred_base rank_order mean mode [quantiles]\n",
 
-            Usage::data_adaptor, Usage::label_string, Usage::quality_string
+            Usage::label_string, Usage::quality_string
             );
     return 1;
 }
@@ -63,9 +59,6 @@ extern int optind;
 
 int main_comp(int argc, char ** argv)
 {
-
-    char input_data_type[100];
-    strcpy(input_data_type, "base_qual_strand");
 
     char label_string[100];
     strcpy(label_string, "comp");
@@ -98,11 +91,10 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:l:t:f:a:s:i:m:Q:p:q:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:f:a:s:i:m:Q:p:q:v")) >= 0)
     {
         switch(c)
         {
-        case 'd': strcpy(input_data_type, optarg); break;
         case 'l': strcpy(label_string, optarg); break;
         case 't': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
@@ -190,22 +182,7 @@ int main_comp(int argc, char ** argv)
         }
     }
 
-    NucleotideReader * data_reader;
-
-    if (strcmp(input_data_type, "base_qual_strand") == 0)
-    {
-        data_reader = new BaseQualStrandReader;
-    }
-    //insert other data handlers here
-    else
-    {
-        fprintf(stderr,
-                "Currently only 'base_qual_strand' data is supported\n");
-        exit(5);
-    }
-
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
-    // data_reader->initialize(pileup_input_file);
 
     PileupSummary pileup(0);
     size_t chunk_size = 1024 * 1024;
@@ -242,15 +219,16 @@ int main_comp(int argc, char ** argv)
     ErrorEstimate model;
     model.set_composition_prior_alphas(prior_alphas);
     
-    //1. Compile JPD_DATA from counts file
-    JPD_DATA global_counts = parse_jpd_rdb_file(jpd_data_params_file);
-    
-    //2. initialize NucleotideStats from JPD_DATA
-    NucleotideStats params(global_counts.size());
-    params.initialize(global_counts);
+    //1. initialize NucleotideStats
+    NucleotideStats params;
+    params.initialize(jpd_data_params_file);
+
+    // Create strand-marginal model parameters for use with the anomaly scoring
+    // double * pos_strand_marginal_params = new double[Nucleotide::num_bqs * 4];
+    // double * neg_strand_marginal_params = new double[Nucleotide::num_bqs * 4];
 
     //3. Set model parameters
-    model.set_model_params(&params);
+    model.model_params = & params;
 
     //4. Construct posterior
     Posterior posterior(&model, may_underflow, full_ndim);
@@ -272,17 +250,18 @@ int main_comp(int argc, char ** argv)
         for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
 
-            LocusSummary locus = 
-                data_reader->get_next_locus(params, (*pit), static_cast<void const*>(& min_quality_score));
+            PileupSummary locus(0);
+            locus.load_line((*pit));
+            locus.parse(min_quality_score);
             
             //divide locus data to plus and minus-strand data
-            double pos_anomaly_score =
-                strand_locus_anomaly_score(posterior, global_counts,
-                                           locus, data_reader, '+', verbose);
+            // double pos_anomaly_score =
+            //     strand_locus_anomaly_score(posterior, params.,
+            //                                locus, data_reader, '+', verbose);
             
-            double neg_anomaly_score =
-                strand_locus_anomaly_score(posterior, global_counts,
-                                           locus, data_reader, '-', verbose);
+            // double neg_anomaly_score =
+            //     strand_locus_anomaly_score(posterior, global_counts,
+            //                                locus, data_reader, '-', verbose);
             
             
             // double full_anomaly_score =
@@ -295,14 +274,14 @@ int main_comp(int argc, char ** argv)
 
             Dirichlet dirichlet(full_ndim, may_underflow);
 
-            posterior.model()->set_locus_data(&locus);
+            posterior.model()->locus_data = & locus.counts;
 
             posterior.initialize(mode_tolerance, max_modefinding_iterations, 
                                  initial_point, verbose);
 
             //double full_anomaly_score = 0.0;
-            double full_anomaly_score =
-                relative_entropy_anomaly(global_counts, locus, posterior.mode_point);
+            // double full_anomaly_score =
+            //     relative_entropy_anomaly(params.cpd_buffer, & locus.counts, posterior.mode_point);
         
 
 
@@ -361,7 +340,7 @@ int main_comp(int argc, char ** argv)
                     cumul_autocor_offset *= current_autocor_offset;
                     if (verbose)
                     {
-                        fprintf(stdout, "MH: current: %Zu, cumulative: %Zu, position: %Zu\n", 
+                        fprintf(stdout, "MH: current: %Zu, cumulative: %Zu, position: %i\n", 
                                 current_autocor_offset, cumul_autocor_offset, 
                                 locus.position);
                         fflush(stdout);
@@ -375,7 +354,7 @@ int main_comp(int argc, char ** argv)
 
                 if (verbose)
                 {
-                    fprintf(stdout, "MH: %Zu, position: %Zu, proposal mean: %g, "
+                    fprintf(stdout, "MH: %Zu, position: %i, proposal mean: %g, "
                             "proposal variance: %g", cumul_autocor_offset,
                             locus.position, proposal_mean, proposal_variance);
                     fprintf(stdout, ", estimated mean:");
@@ -405,15 +384,20 @@ int main_comp(int argc, char ** argv)
                 metropolis.sample(final_num_points, 0, cumul_autocor_offset,
                                   &proposal_mean, &proposal_variance);
 
-                sprintf(line_label, "%s\t%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%5.5lf\t%5.5lf\t%5.5lf",
+                sprintf(line_label, "%s\t%s\t%s\t%i\t%c\t%Zu\t%Zu"
+                        // "\t%5.5lf\t%5.5lf\t%5.5lf"
+                        ,
                         label_string, 
                         "MH", locus.reference, 
                         locus.position, 
                         locus.reference_base, 
-                        locus.read_depth, effective_depth,
-                        full_anomaly_score,
-                        pos_anomaly_score,
-                        neg_anomaly_score);
+                        locus.read_depth, 
+                        effective_depth
+                        // ,
+                        // full_anomaly_score,
+                        // pos_anomaly_score,
+                        // neg_anomaly_score
+                        );
 
                 double * sample_points_buf = new double[final_num_points * 4];
                 std::vector<double *> sample_points_sortable(final_num_points);
@@ -455,7 +439,7 @@ int main_comp(int argc, char ** argv)
             if (verbose)
             {
                 fprintf(stderr, 
-                        "%s %Zu (depth %Zu) locus skipped"
+                        "%s %i (depth %Zu) locus skipped"
                         ", Metropolis Hastings failed.\n",
                         locus.reference, locus.position, effective_depth);
             }
@@ -485,7 +469,7 @@ int main_comp(int argc, char ** argv)
                                             autocor_max_value);
             if (verbose)
             {
-                fprintf(stdout, "SS: %Zu, position: %Zu\n", 
+                fprintf(stdout, "SS: %Zu, position: %i\n", 
                         best_autocor_offset, locus.position);
             }
         
@@ -509,14 +493,20 @@ int main_comp(int argc, char ** argv)
                                          final_num_points, sample_points_buf,
                                          &sample_points_sortable);
             
-                sprintf(line_label, "%s\t%s\t%s\t%Zu\t%c\t%Zu\t%Zu\t%5.5lf\t%5.5lf\t%5.5lf",
+                sprintf(line_label, "%s\t%s\t%s\t%i\t%c\t%Zu\t%Zu"
+                        // "\t%5.5lf\t%5.5lf\t%5.5lf"
+                        ,
                         label_string, 
                         "SS", locus.reference, 
                         locus.position, 
                         locus.reference_base, 
-                        locus.read_depth, effective_depth,
-                        full_anomaly_score,
-                        pos_anomaly_score, neg_anomaly_score);
+                        locus.read_depth, 
+                        effective_depth
+                        // ,
+                        // full_anomaly_score,
+                        // pos_anomaly_score, 
+                        // neg_anomaly_score
+                        );
             
                 //approximate marginal modes (expensive!)
                 //             std::fill(marginal_modes, marginal_modes + 4, -1.0);
@@ -567,7 +557,7 @@ int main_comp(int argc, char ** argv)
 
     delete prior_alphas;
     delete quantiles;
-    delete data_reader;
+
     return 0;
 
 }

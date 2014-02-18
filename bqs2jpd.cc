@@ -5,7 +5,7 @@
 int bqs2jpd_usage()
 {
     fprintf(stderr,
-            "\nCompute joint probability distsribution P(basecall, quality score, strand) from a set of .bqs counts\n"
+            "\nCompute joint probability distribution P(basecall, quality score, strand) from a set of .bqs counts\n"
             "\nUsage: dep bqs2jpd sample.bqs sample.jpd\n\n");
     return 1;
 }

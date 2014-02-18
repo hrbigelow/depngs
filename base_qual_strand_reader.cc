@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <numeric>
 
-
+/*
 bool BaseQualStrandReader::Datum::operator<(BaseQualStrandReader::Datum const& b) const
 {
     return 
@@ -21,16 +21,17 @@ bool BaseQualStrandReader::Datum::operator<(BaseQualStrandReader::Datum const& b
                 || (this->quality == b.quality
                     && (this->strand < b.strand))));
 }
+*/
+
+// std::string BaseQualStrandReader::Datum::name() const
+// {
+//     char dname[50];
+//     sprintf(dname, "%c_%zi_%c", this->called_base, this->quality, this->strand);
+//     return std::string(dname);
+// }
 
 
-std::string BaseQualStrandReader::Datum::name() const
-{
-    char dname[50];
-    sprintf(dname, "%c_%zi_%c", this->called_base, this->quality, this->strand);
-    return std::string(dname);
-}
-
-
+/*
 BaseQualStrandReader::Datum 
 BaseQualStrandReader::get_datum_from_name(std::string const& name) const
 {
@@ -38,25 +39,8 @@ BaseQualStrandReader::get_datum_from_name(std::string const& name) const
     sscanf(name.c_str(), "%c_%zi_%c", &d.called_base, &d.quality, &d.strand);
     return d;
 }
+*/
 
-
-size_t BaseQualStrandReader::encode(char basecall, size_t quality, char strand)
-{
-    size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
-    size_t strand_index = strand == '+' ? 0 : 1;
-    
-    return 
-        (basecall_index * BaseQualStrandReader::num_qs) 
-        + (quality * BaseQualStrandReader::num_s) 
-        + strand_index;
-}
-
-void BaseQualStrandReader::decode(size_t code, char * basecall, size_t *quality, char *strand)
-{
-    *basecall = Nucleotide::bases_upper[code / BaseQualStrandReader::num_qs];
-    *quality = (code % BaseQualStrandReader::num_qs) / BaseQualStrandReader::num_s; 
-    *strand = (code % BaseQualStrandReader::num_s) == 0 ? '+' : '-';
-}
 
 //load (base, qual, strand) (ObservedData) tuple data from a locus file,
 // checking it against the prior_jpd data for validity
@@ -136,7 +120,7 @@ std::map<std::string, size_t> parse_locus(PileupSummary const& pileup,
 
 
 
-
+ /*
 LocusSummary 
 BaseQualStrandReader::get_next_locus(NucleotideStats const& nuc_stats,
                                      char * line,
@@ -181,8 +165,12 @@ BaseQualStrandReader::get_next_locus(NucleotideStats const& nuc_stats,
     return locus;
 
 }
+ */
 
-
+  // this should not be a member function
+  // Given P(basecall, quality, strand | founder_base) distribution,
+  // compute P(strand)
+  /*
 void
 BaseQualStrandReader::compute_strand_marginal(JPD_DATA const& counts_map,
                                               double * pos_strand_counts,
@@ -201,10 +189,12 @@ BaseQualStrandReader::compute_strand_marginal(JPD_DATA const& counts_map,
         counts += (*cit).second.total();
     }
 }
+  */
 
-
-//return a new JPD such that the strand marginals become those specified
-//total mass remain the same as original counts
+/*
+// this should not be a member function return a new JPD such that the
+//strand marginals become those specified total mass remain the same
+//as original counts
 JPD_DATA
 BaseQualStrandReader::normalize_strand_marginal(double const* desired_strand_marginal,
                                                 JPD_DATA const& counts_map) const
@@ -255,16 +245,20 @@ BaseQualStrandReader::normalize_strand_marginal(double const* desired_strand_mar
 
     return new_counts_map;
 }
+*/
+
+
 
 
 //make a LocusSummary identical to the one from full_locus, but zero
 //out all counts for the other strand.
-LocusSummary 
-BaseQualStrandReader::locus_data_by_strand(LocusSummary const& full_locus, 
+/*
+PileupSummary 
+BaseQualStrandReader::locus_data_by_strand(PileupSummary const& full_locus, 
                                            char strand) const
 {
     //make an identical copy
-    LocusSummary strand_locus(full_locus);
+    PileupSummary strand_locus(full_locus);
 
     for (size_t raw_index = 0; raw_index != strand_locus.num_distinct_data; 
          ++raw_index)
@@ -280,3 +274,4 @@ BaseQualStrandReader::locus_data_by_strand(LocusSummary const& full_locus,
     }
     return strand_locus;
 }
+*/

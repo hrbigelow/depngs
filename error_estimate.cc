@@ -72,18 +72,6 @@ ErrorEstimate::ErrorEstimate()
 }
 
 
-void ErrorEstimate::set_locus_data(LocusSummary const* _locus_data) 
-{
-    locus_data = _locus_data;
-}
-
-
-void ErrorEstimate::set_model_params(NucleotideStats * _model_params) 
-{
-    model_params = _model_params;
-}
-
-
 void ErrorEstimate::set_composition_prior_alphas(double const* alphas)
 {
     std::copy(alphas, alphas + 4, this->composition_prior_alphas);
@@ -127,6 +115,7 @@ ErrorEstimate::~ErrorEstimate()
 
 //calculates P(Obs,sample_comp) as sum_fb { P(sample_comp)P(fb|sample_comp)P(Obs|fb) }
 //can never be zero
+// !!! Note:  This can be optimized as a vectorized dot product
 double ErrorEstimate::single_observation(double const* sample_comp,
                                          size_t di) const
 {
@@ -149,7 +138,9 @@ double ErrorEstimate::single_observation(double const* sample_comp,
 }
 
 
-//calculates d/dC P(I_b,C) as sum_b { P(C)P(b|C)P(I|b) }
+// calculates d/dC P(I_b,C) as sum_b { P(C)P(b|C)P(I|b) }
+// What?!  This doesn't seem to depend on the actual sample composition
+// 
 double ErrorEstimate::single_observation_gradient(double const* sample_composition,
                                                   size_t datum_index,
                                                   size_t deriv_dimension) const
@@ -162,6 +153,7 @@ double ErrorEstimate::single_observation_gradient(double const* sample_compositi
 
 //calculate d/dC ( log P(C,I_1,...,I_D) )
 
+/*
 void ErrorEstimate::log_likelihood_gradient(double const* sample_composition,
                                             double * gradient) const
 {
@@ -186,7 +178,33 @@ void ErrorEstimate::log_likelihood_gradient(double const* sample_composition,
                 / this->single_observation(sample_composition, datum_index);
         }
 //         gradient[d] /= M_LOG2E;
-//         gradient[d] += log_composition_prior_gradient(sample_composition, d);
+//         gradient[d] += log_comp_prior_gradient(sample_composition, d);
+    }
+}
+*/
+
+void ErrorEstimate::log_likelihood_gradient(double const* comp,
+                                            double * gradient) const
+{
+
+    std::fill(gradient, gradient + 4, 0.0);
+
+    double * l = this->locus_data->fbqs_cpd;
+    double * l_end = l + this->locus_data->num_data;
+    double * lc = this->locus_data->raw_counts;
+
+    //sum_g(frac{1}{ln(2)P(I|C)} P(b|C))
+
+    // iterate over each bqs category
+    for (; l != l_end; l += 4, lc++)
+    {
+        double so =
+            (*l) * comp[0] + (*(l+1)) * comp[1] + (*(l+2)) * comp[2] + (*(l+3)) * comp[3];
+    
+        gradient[0] += (*lc) * (*l) / so;
+        gradient[1] += (*lc) * (*(l+1)) / so;
+        gradient[2] += (*lc) * (*(l+2)) / so;
+        gradient[3] += (*lc) * (*(l+3)) / so;
     }
 }
 
@@ -234,7 +252,7 @@ double ErrorEstimate::log_dirichlet_prior(double const* sample_composition) cons
 //     return (isnan(retval) || isinf(retval)) ? FLT_MAX : retval;
 // }
 
-
+/*
 REAL ErrorEstimate::log_likelihood(double const* sample_composition) const
 {
     
@@ -267,6 +285,39 @@ REAL ErrorEstimate::log_likelihood(double const* sample_composition) const
     }
     return sum_log_factors;
 }
+*/
+
+ // In this new formulation, we use the subset of the model that is packed into
+ // the locus itself.  Also, we inline the 'single_observation' function
+double ErrorEstimate::log_likelihood(double const* comp) const
+{
+    
+    // !!! This can be taken out at some point
+    if (! (normalized(comp, 4, 1e-10) && all_positive(comp, 4)))
+    {
+        fprintf(stderr, "log_likelihood: invalid input.\n");
+        exit(2);
+    }
+                
+    double sum_log_factors = 0.0;
+
+    double * l = this->locus_data->fbqs_cpd;
+    double * l_end = l + this->locus_data->num_data;
+    double * lc = this->locus_data->raw_counts;
+
+    // iterate over each BQS category
+    for (; l != l_end; l += 4, lc++)
+    {
+        sum_log_factors += (*lc)
+            * gsl_sf_log((*l) * comp[0]
+                         + (*(l+1)) * comp[1]
+                         + (*(l+2)) * comp[2]
+                         + (*(l+3)) * comp[3]);
+    }   
+    return sum_log_factors;
+}
+
+
 
 
 //     double comp_prior;

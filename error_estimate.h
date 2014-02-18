@@ -10,6 +10,7 @@
 
 #include "tools.h"
 #include "sampling.h"
+#include "nucleotide_stats.h"
 
 
 /*
@@ -52,9 +53,6 @@ class ErrorEstimate {
 
     PriorType prior_type;
 
-    LocusSummary const* locus_data;
-    NucleotideStats * model_params;
-
     bool uniform_prior;
 
     size_t num_discrete_priors;
@@ -73,12 +71,11 @@ class ErrorEstimate {
     ErrorEstimate();
     ~ErrorEstimate();
 
+    packed_counts * locus_data;
+    NucleotideStats * model_params;
+
     double composition_prior_alphas[4];
     
-    void set_locus_data(LocusSummary const* _locus_data);
-    void set_model_params(NucleotideStats * _model_params);
-    NucleotideStats * get_model_params() { return this->model_params; }
-
     void set_composition_prior_alphas(double const* alphas);
 
     void set_discrete_prior_dist(double const* prior_points_flat,

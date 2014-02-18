@@ -17,7 +17,6 @@
 #include "tools.h"
 #include "simulation.h"
 #include "nucleotide_stats.h"
-#include "base_qual_strand_reader.h"
 #include "stats_tools.h"
 
 #include "usage_strings.h"
@@ -75,8 +74,8 @@ int main_simp(int argc, char ** argv)
     ftime(& millitime);
     gsl_rng_set(rand_gen, millitime.millitm);
 
-    BaseQualStrandReader reader;
-    NucleotideStats model_params = reader.read_from_rdb(base_qual_params_file);
+    NucleotideStats model_params;
+    model_params.initialize(base_qual_params_file);
 
     size_t position = 0;
     size_t sample_size;
@@ -119,6 +118,10 @@ int main_simp(int argc, char ** argv)
         
         char fake_reference_base = Nucleotide::bases_upper[majority_base_index];
 
+        char basecall;
+        size_t quality;
+        size_t strand;
+
         for (size_t read_index = 0; read_index != sample_size; ++read_index)
         {
             size_t fbase_index =
@@ -132,17 +135,18 @@ int main_simp(int argc, char ** argv)
                                            model_params.founder_base_likelihood[fbase_index],
                                            1.0);
 
-            std::string const& datum_name = model_params.index_mapping[datum_index];
-            BaseQualStrandReader::Datum datum = reader.get_datum_from_name(datum_name);
+            Nucleotide::decode(datum_index, &basecall, &quality, &strand);
 
 
             //founder_bases[read_index] = Nucleotide::bases_upper[fbase_index];
-            called_bases[read_index] = datum.strand == '+' ? datum.called_base : tolower(datum.called_base);
-            measured_quality[read_index] = datum.quality;
+            called_bases[read_index] = 
+                strand == Nucleotide::PLUS_STRAND ? toupper(basecall) : tolower(basecall);
+
+            measured_quality[read_index] = quality;
 
             if (toupper(called_bases[read_index]) == fake_reference_base)
             {
-                called_bases_printed[read_index] = datum.strand == '+' ? '.' : ',';
+                called_bases_printed[read_index] = strand == Nucleotide::PLUS_STRAND ? '.' : ',';
             }
             else
             {

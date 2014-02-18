@@ -89,38 +89,39 @@ double * parse_basecomp_prior_file(char const* basecomp_prior_file,
 
 //random sample from a stats object to a specified depth, and from
 //a specified composition, creating a new nucleotide stats object
-LocusSummary sample_locus_from_stats(gsl_rng * rand_gen,
-                                     NucleotideStats const& source_stats,
-                                     double const* locus_base_comp,
-                                     size_t depth)
+void sample_locus_from_stats(gsl_rng * rand_gen,
+                             NucleotideStats const* source_stats,
+                             double const* locus_base_comp,
+                             size_t depth,
+                             packed_counts * sample)
 {
-    LocusSummary sampled_locus(source_stats.num_distinct_data, 
-                               "", 0, 'A', depth,
-                               source_stats.index_mapping);
+
+    size_t D = Nucleotide::num_bqs;
+    sample->num_data = D;
+    sample->raw_counts = new double[D];
+    sample->stats_index = new size_t[D];
+    sample->fbqs_cpd = new double[D];
 
     //since we don't know ahead of time how many different instances of
     //data we will sample, there is no opportunity for compressing them
     //so, initialize stats index to be 1-to-1 with raw index
-    for (size_t ri = 0; ri != sampled_locus.num_distinct_data; ++ri)
+    for (size_t ri = 0; ri != D; ++ri)
     {
-        sampled_locus.stats_index[ri] = ri;
+        sample->stats_index[ri] = ri;
     }
 
     for (size_t d = 0; d != depth; ++d)
     {
-
         size_t fbase_index =
             SampleDiscreteDistribution(rand_gen, locus_base_comp, 1.0);
 
         size_t datum_index =
             SampleDiscreteDistribution
             (rand_gen, 
-             source_stats.founder_base_likelihood[fbase_index],
+             source_stats->founder_base_likelihood[fbase_index],
              1.0);
         size_t raw_index = datum_index; // because it's 1-to-1 mapping
         
-        sampled_locus.raw_counts[raw_index]++;
+        sample->raw_counts[raw_index]++;
     }
-    
-    return sampled_locus;
 }
