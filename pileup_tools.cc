@@ -58,7 +58,7 @@ FastqType PileupSummary::fastq_type;
 
 //load and parse a single line.  Assumes the line has all required fields.
 //consumes the current line including newline character.
-void PileupSummary::load_line(char * read_pointer)
+void PileupSummary::load_line(char const* read_pointer)
 {
 
     size_t total_read_depth;
@@ -255,12 +255,12 @@ void PileupSummary::parse(size_t min_quality_score)
 {
     
     // populate raw_counts_flat with a sparse set of counts
-    double * raw_counts_flat = new double[Nucleotide::num_bqs];
+    unsigned long * raw_counts_flat = new unsigned long[Nucleotide::num_bqs];
     std::fill(raw_counts_flat, raw_counts_flat + Nucleotide::num_bqs, 0);
     
     size_t rd = static_cast<size_t>(this->read_depth);
     size_t nd = 0;
-    double *rc_tmp = new double[Nucleotide::num_bqs];
+    unsigned long *rc_tmp = new unsigned long[Nucleotide::num_bqs];
     size_t *rc_ind_tmp = new size_t[Nucleotide::num_bqs];
     size_t effective_read_depth = 0;
 
@@ -279,7 +279,7 @@ void PileupSummary::parse(size_t min_quality_score)
         {
             continue;
         }
-        char strand = isupper(basecall) ? '+' : '-';
+        size_t strand = isupper(basecall) ? Nucleotide::PLUS_STRAND : Nucleotide::MINUS_STRAND;
         size_t flat_index = Nucleotide::encode(basecall, quality, strand);
         raw_counts_flat[flat_index]++;
     }
@@ -295,8 +295,9 @@ void PileupSummary::parse(size_t min_quality_score)
     }
 
     this->counts.num_data = nd;
-    this->counts.raw_counts = new double[nd];
+    this->counts.raw_counts = new unsigned long[nd];
     this->counts.stats_index = new size_t[nd];
+    this->counts.fbqs_cpd = new double[nd * 4];
     this->read_depth = effective_read_depth;
     std::copy(rc_tmp, rc_tmp + nd, this->counts.raw_counts);
     std::copy(rc_ind_tmp, rc_ind_tmp + nd, this->counts.stats_index);
@@ -323,7 +324,7 @@ FastqType PileupSummary::FastqFileType(char const* pileup_file,
     while (! feof(pileup_input_fh))
     {
         nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
-        
+
         std::vector<char *> lines =
             FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
         

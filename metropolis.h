@@ -18,10 +18,10 @@ class Metropolis
     //proposals independent of z_tau
     bool is_independence_chain_mh;
     double * current_point;
-    double * sample_points;
 
  public:
 
+    double * sample_points;
     size_t num_points;
 
     Metropolis(Integrand * _integrand,
@@ -32,7 +32,6 @@ class Metropolis
 
     ~Metropolis();
 
-    double * get_samples() const;
     void set_current_point(double const* point);
     double * get_current_point() const;
 

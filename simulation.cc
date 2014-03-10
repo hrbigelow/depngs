@@ -98,7 +98,7 @@ void sample_locus_from_stats(gsl_rng * rand_gen,
 
     size_t D = Nucleotide::num_bqs;
     sample->num_data = D;
-    sample->raw_counts = new double[D];
+    sample->raw_counts = new unsigned long[D];
     sample->stats_index = new size_t[D];
     sample->fbqs_cpd = new double[D];
 

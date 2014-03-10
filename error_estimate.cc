@@ -18,6 +18,7 @@
 #include <gsl/gsl_blas.h>
 #include <gsl/gsl_sf_log.h>
 #include <gsl/gsl_sf_exp.h>
+#include <gmp.h>
 
 #include "hilbert.h"
 #include "dirichlet.h"
@@ -116,6 +117,7 @@ ErrorEstimate::~ErrorEstimate()
 //calculates P(Obs,sample_comp) as sum_fb { P(sample_comp)P(fb|sample_comp)P(Obs|fb) }
 //can never be zero
 // !!! Note:  This can be optimized as a vectorized dot product
+/*
 double ErrorEstimate::single_observation(double const* sample_comp,
                                          size_t di) const
 {
@@ -136,19 +138,21 @@ double ErrorEstimate::single_observation(double const* sample_comp,
     return return_val;
 
 }
+*/
 
 
 // calculates d/dC P(I_b,C) as sum_b { P(C)P(b|C)P(I|b) }
 // What?!  This doesn't seem to depend on the actual sample composition
 // 
+ /*
 double ErrorEstimate::single_observation_gradient(double const* sample_composition,
                                                   size_t datum_index,
                                                   size_t deriv_dimension) const
 {
-    assert(datum_index < this->model_params->num_distinct_data);
+    // assert(datum_index < this->model_params->num_distinct_data);
     return this->model_params->founder_base_likelihood[deriv_dimension][datum_index];
 }
-
+ */
 
 
 //calculate d/dC ( log P(C,I_1,...,I_D) )
@@ -183,6 +187,7 @@ void ErrorEstimate::log_likelihood_gradient(double const* sample_composition,
 }
 */
 
+//calculate d/dC ( log P(C,I_1,...,I_D) )
 void ErrorEstimate::log_likelihood_gradient(double const* comp,
                                             double * gradient) const
 {
@@ -190,8 +195,8 @@ void ErrorEstimate::log_likelihood_gradient(double const* comp,
     std::fill(gradient, gradient + 4, 0.0);
 
     double * l = this->locus_data->fbqs_cpd;
-    double * l_end = l + this->locus_data->num_data;
-    double * lc = this->locus_data->raw_counts;
+    double * l_end = l + (this->locus_data->num_data * 4);
+    unsigned long * lc = this->locus_data->raw_counts;
 
     //sum_g(frac{1}{ln(2)P(I|C)} P(b|C))
 
@@ -293,17 +298,17 @@ double ErrorEstimate::log_likelihood(double const* comp) const
 {
     
     // !!! This can be taken out at some point
-    if (! (normalized(comp, 4, 1e-10) && all_positive(comp, 4)))
-    {
-        fprintf(stderr, "log_likelihood: invalid input.\n");
-        exit(2);
-    }
+    // if (! (normalized(comp, 4, 1e-10) && all_positive(comp, 4)))
+    // {
+    //     fprintf(stderr, "log_likelihood: invalid input.\n");
+    //     exit(2);
+    // }
                 
     double sum_log_factors = 0.0;
 
     double * l = this->locus_data->fbqs_cpd;
-    double * l_end = l + this->locus_data->num_data;
-    double * lc = this->locus_data->raw_counts;
+    double * l_end = l + (this->locus_data->num_data * 4);
+    unsigned long * lc = this->locus_data->raw_counts;
 
     // iterate over each BQS category
     for (; l != l_end; l += 4, lc++)
@@ -314,6 +319,36 @@ double ErrorEstimate::log_likelihood(double const* comp) const
                          + (*(l+2)) * comp[2]
                          + (*(l+3)) * comp[3]);
     }   
+
+    // mpf_t term, pterm, prod;
+    // mpf_init(term);
+    // mpf_init(pterm);
+    // mpf_init_set_ui(prod, 1);
+
+    // for (; l != l_end; l += 4, lc++)
+    // {
+    //     mpf_set_d(term, 
+    //               (*l) * comp[0]
+    //               + (*(l+1)) * comp[1]
+    //               + (*(l+2)) * comp[2]
+    //               + (*(l+3)) * comp[3]);
+
+    //     mpf_pow_ui(pterm, term, (*lc));
+    //     mpf_mul(prod, prod, pterm);
+    // }   
+    // long int exp;
+    // double mant = mpf_get_d_2exp(&exp, prod);
+    // sum_log_factors = gsl_sf_log(mant) + exp * M_LN2;
+    // mpf_clear(term);
+    // mpf_clear(pterm);
+    // mpf_clear(prod);
+
+    // if (sum_log_factors != 0)
+    // {
+    //     assert(sum_log_factors / sum_log_factors_mpf < 1.000000001);
+    //     assert(sum_log_factors_mpf / sum_log_factors < 1.000000001);
+    // }
+
     return sum_log_factors;
 }
 

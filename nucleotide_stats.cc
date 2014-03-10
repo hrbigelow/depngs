@@ -310,12 +310,13 @@ void NucleotideStats::pack(packed_counts * c)
 {
     double * buf = c->fbqs_cpd;
     size_t D = c->num_data;
-
+    size_t code;
     for (size_t i = 0; i != D; ++i)
     {
+        code = c->stats_index[i];
         for (size_t f = 0; f != 4; ++f)
         {
-            (*buf) = this->founder_base_likelihood[f][i];
+            (*buf) = this->founder_base_likelihood[f][code];
             ++buf;
         }
     }

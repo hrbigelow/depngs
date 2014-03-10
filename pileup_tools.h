@@ -25,6 +25,9 @@ public:
  PileupSummary(int indel_histo_size) : indel_histo_size(indel_histo_size),
         bases(NULL), bases_upper(NULL), quality_codes(NULL)
     {
+        counts.raw_counts = NULL;
+        counts.stats_index = NULL;
+        counts.fbqs_cpd = NULL;
         memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
         memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
         indel_counts = new int[indel_histo_size * 2 + 1];
@@ -38,6 +41,8 @@ public:
         }
         sum_of_counts = 0;
     }
+
+
     ~PileupSummary()
     {
         delete &indel_counts[-indel_histo_size];
@@ -69,7 +74,7 @@ public:
         }
     }
 
-    void load_line(char * line);
+    void load_line(char const* line);
 
     char reference[100];
     int position;

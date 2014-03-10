@@ -17,6 +17,8 @@ namespace Transformation
     double const sigmoid_truncation_epsilon = 1e-10;
     double const sigmoid_truncation_epsilon_inv = 
         1.0 - sigmoid_truncation_epsilon;
+    double const log_epsilon = gsl_sf_log(sigmoid_truncation_epsilon);
+    double const log_epsilon_inv = gsl_sf_log(sigmoid_truncation_epsilon_inv);
 
     /*
       filipe's iterative transformation: take a pair of additive inverses in one variable, and
@@ -65,24 +67,24 @@ namespace Transformation
                 sgp->p = epsilon;
                 sgp->pgrad = 0.0;
                 sgp->pgrad_over_p = 0.0;
-                sgp->log_p = gsl_sf_log(epsilon);
+                sgp->log_p = log_epsilon;
 
                 sgp->q = epsilon_inv;
                 sgp->qgrad = 0.0;
                 sgp->qgrad_over_q = 0.0;
-                sgp->log_q = gsl_sf_log(epsilon_inv);
+                sgp->log_q = log_epsilon_inv;
             }
             else if (sgp->p > epsilon_inv)
             {
                 sgp->p = epsilon_inv;
                 sgp->pgrad = 0.0;
                 sgp->pgrad_over_p = 0.0;
-                sgp->log_p = gsl_sf_log(epsilon_inv);
+                sgp->log_p = log_epsilon_inv;
 
                 sgp->q = epsilon;
                 sgp->qgrad = 0.0;
                 sgp->qgrad_over_q = 0.0;
-                sgp->log_q = gsl_sf_log(epsilon);
+                sgp->log_q = log_epsilon;
             }
             else 
             {
@@ -120,11 +122,12 @@ namespace Transformation
         comp[2] = sg[1].p * sg[0].q;
         comp[3] = sg[1].q * sg[0].q;
 
-        if (! (normalized(comp, 4, 1e-10) && all_positive(comp, 4)))
-        {
-            fprintf(stderr, "r3_to_composition_sigmoid: invalid composition\n");
-            exit(2);
-        }
+        // !!! might be a mistake to comment this out...
+        // if (! (normalized(comp, 4, 1e-10) && all_positive(comp, 4)))
+        // {
+        //     fprintf(stderr, "r3_to_composition_sigmoid: invalid composition\n");
+        //     exit(2);
+        // }
         
     }
 
@@ -251,11 +254,25 @@ namespace Transformation
     double log_dirichlet(double const alpha[4],
                          double const x[4])
     {
-        return
+        double ld =
             + (alpha[0] - 1.0) * gsl_sf_log(x[0])
             + (alpha[1] - 1.0) * gsl_sf_log(x[1])
             + (alpha[2] - 1.0) * gsl_sf_log(x[2])
             + (alpha[3] - 1.0) * gsl_sf_log(x[3]);
+        
+        // double ld =
+        //     gsl_sf_log(
+        //                pow(x[0], alpha[0] - 1.0)
+        //                * pow(x[1], alpha[1] - 1.0)
+        //                * pow(x[2], alpha[2] - 1.0)
+        //                * pow(x[3], alpha[3] - 1.0));
+
+        // if (ld != 0)
+        // {
+        //     assert(ld / ld2 < 1.00001);
+        //     assert(ld2 / ld < 1.00001);
+        // }
+        return ld;
     }
 
 

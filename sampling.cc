@@ -145,7 +145,38 @@ public:
 
 
 
+void find_integral_bounds(double * sample_points,
+                          size_t num_points,
+                          size_t sort_dimension,
+                          double const* quantiles,
+                          size_t num_quantiles,
+                          double * quantile_values)
+{
+    // copy appropriate dimension
+    double * dim_points = new double[num_points];
+    double * start = dim_points;
+    double * end = start + num_points;
+    double * cut;
 
+    double * ps = sample_points + sort_dimension;
+    double * p = dim_points;
+    for ( ; p != end; ++p, ps += 4)
+    {
+        *p = *ps;
+    }
+
+    for (size_t f = 0; f != num_quantiles; ++f)
+    {
+        cut = dim_points + static_cast<size_t>(std::round(quantiles[f] * num_points));
+        std::nth_element(start, cut, end);
+        quantile_values[f] = cut == end ? 0.0 : *cut;
+        start = cut;
+    }
+    delete dim_points;
+
+}
+
+/*
 void find_integral_bounds(std::vector<double *> * points,
                           size_t sort_dimension,
                           double const* quantiles,
@@ -183,13 +214,15 @@ void find_integral_bounds(std::vector<double *> * points,
 
     }
 }
+*/
 
 
 
 
 void print_cdf_comparison(FILE * out_fh, 
                           AnalyticalIntegrand const* integrand,
-                          std::vector<double *> * points,
+                          double * sample_points,
+                          size_t num_points,
                           double const* quantiles,
                           size_t const num_quantiles,
                           size_t const num_dimensions)
@@ -201,7 +234,8 @@ void print_cdf_comparison(FILE * out_fh,
     for (size_t d = 0; d != num_dimensions; ++d)
     {
         quantile_values[d] = quantile_buffer + (d * num_quantiles);
-        find_integral_bounds(points, d, quantiles, 
+        find_integral_bounds(sample_points, num_points, 
+                             d, quantiles, 
                              num_quantiles, quantile_values[d]);
     }
 
@@ -279,8 +313,9 @@ double window_averaged_mode(std::vector<double *> * points,
 }
 
 
-void print_quantiles(FILE * out_fh, 
-                     std::vector<double *> * points,
+void print_quantiles(char * out_buf, 
+                     double * sample_points,
+                     size_t num_points,
                      double const* mode_point,
                      char const* line_label,
                      char const** dimension_labels,
@@ -302,14 +337,19 @@ void print_quantiles(FILE * out_fh,
     std::multimap<double, size_t, std::greater<double> > dim_to_mean;
 
     //calculate mean
+    double * point = sample_points;
+    size_t p = 0;
+    std::fill(mean, mean + num_dimensions, 0.0);
+    for ( ; p != num_points; ++p, point += num_dimensions)
+    {
+        for (size_t d = 0; d != num_dimensions; ++d)
+        {
+            mean[d] += point[d];
+        }
+    }
     for (size_t d = 0; d != num_dimensions; ++d)
     {
-        mean[d] = 0.0;
-        for (size_t p = 0; p != (*points).size(); ++p)
-        {
-            mean[d] += (*points)[p][d];
-        }
-        mean[d] /= (*points).size();
+        mean[d] /= num_points;
         dim_to_mean.insert(std::make_pair(mean[d], d));
         mean_sum += mean[d];
     }
@@ -328,29 +368,29 @@ void print_quantiles(FILE * out_fh,
 
     for (size_t d = 0; d != num_dimensions; ++d)
     {
-        fprintf(out_fh, "%s\t%s\t%Zu", line_label, dimension_labels[d], mean_rank_order[d]);
-        find_integral_bounds(points, d, quantiles, num_quantiles, quantile_values);
+        out_buf += sprintf(out_buf, "%s\t%s\t%Zu", line_label, dimension_labels[d], mean_rank_order[d]);
+        find_integral_bounds(sample_points, num_points, d, quantiles, num_quantiles, quantile_values);
 
         mode_point_sum += mode_point[d];
 
-        fprintf(out_fh, "\t%10.8f\t%10.8f", mean[d], mode_point[d]);
+        out_buf += sprintf(out_buf, "\t%10.8f\t%10.8f", mean[d], mode_point[d]);
 
         for (size_t q = 0; q != num_quantiles; ++q)
         {
-            fprintf(out_fh, "\t%10.8f", quantile_values[q]);
+            out_buf += sprintf(out_buf, "\t%10.8f", quantile_values[q]);
             quantile_sums[q] += quantile_values[q];
         }
-        fprintf(out_fh, "\n");
+        out_buf += sprintf(out_buf, "\n");
     }
 
-    fprintf(out_fh, "%s\t%s\t%s", line_label, sums_label, sums_label);
-    fprintf(out_fh, "\t%10.8f\t%10.8f", mean_sum, mode_point_sum);
+    out_buf += sprintf(out_buf, "%s\t%s\t%s", line_label, sums_label, sums_label);
+    out_buf += sprintf(out_buf, "\t%10.8f\t%10.8f", mean_sum, mode_point_sum);
 
     for (size_t q = 0; q != num_quantiles; ++q)
     {
-        fprintf(out_fh, "\t%10.8f", quantile_sums[q]);
+        out_buf += sprintf(out_buf, "\t%10.8f", quantile_sums[q]);
     }
-    fprintf(out_fh, "\n");
+    out_buf += sprintf(out_buf, "\n");
     
     delete mean_rank_order;
     delete mean;
@@ -359,10 +399,67 @@ void print_quantiles(FILE * out_fh,
 
 }
 
+struct less_ptr
+{
+    bool operator()(double *a, double *b)
+    {
+        return (*a) < (*b);
+    }
+};
 
 
+// transform a list of unordered tuples of (a,c,g,t) composition,
+// and output their component-wise ranks as:
+// i a_i, c_i, g_i, t_i, ra_i, rc_i, rg_i, rt_i
 void print_numerical_cdfs(FILE * out_fh, 
                           char const* label,
+                          double * sample_points,
+                          size_t num_points,
+                          size_t ndim)
+{
+    // reshape sample_points so each dimension is held together
+    double ** dim_points = new double*[num_points * ndim];
+    double ** end = dim_points + (num_points * ndim);
+    double ** p = dim_points;
+    for (size_t d = 0; d != ndim; ++d)
+    {
+        double * ps = sample_points + d;
+        for ( ; p != end; ++p, ps += 4)
+        {
+            *p = ps;
+        }
+    }
+
+    p = dim_points;
+    less_ptr lp;
+    for (size_t d = 0; d != ndim; ++d, p += num_points)
+    {
+        std::sort(p, p + num_points, lp);
+    }
+
+    for (size_t pi = 0; pi != num_points; ++pi)
+    {
+        fprintf(out_fh, "%Zu\t%s\n", pi, label);
+        for (size_t d = 0; d != ndim; ++d)
+        {
+            fprintf(out_fh, "\t%20.18f", sample_points[num_points * d + pi]);
+        }
+        for (size_t d = 0; d != ndim; ++d)
+        {
+            fprintf(out_fh, "\t%Zu", std::distance(sample_points + (num_points * d) + pi,
+                                                   p[num_points * d + pi]));
+        }
+        fprintf(out_fh, "\n");
+    }
+    delete dim_points;
+}
+
+
+/*
+void print_numerical_cdfs(FILE * out_fh, 
+                          char const* label,
+                          double * sample_points,
+                          size_t num_points,
                           std::vector<double *> * points,
                           size_t ndim)
 {
@@ -371,7 +468,8 @@ void print_numerical_cdfs(FILE * out_fh,
     size_t stride = ndim * 2;
     double * data_buf = new double[(*points).size() * stride];
     double ** ppoints = new double *[(*points).size()];
-    
+
+   
     for (size_t p = 0; p != (*points).size(); ++p)
     {
         ppoints[p] = data_buf + (p * stride);
@@ -403,21 +501,4 @@ void print_numerical_cdfs(FILE * out_fh,
     delete data_buf;
     delete ppoints;
 }
-
-
-
-void add_normalized_dimension(double const* points, size_t ndim,
-                              size_t num_points,
-                              double * augmented_points_buf,
-                              std::vector<double *> * augmented_points)
-{
-    for (size_t i = 0; i != num_points; ++i)
-    {
-        double const* point1 = points + (i * ndim);
-        double * point2 = augmented_points_buf + (i * (ndim + 1));
-
-        std::copy(point1, point1 + ndim, point2);
-        point2[ndim] = 1.0 - std::accumulate(point2, point2 + ndim, 0.0);
-        (*augmented_points)[i] = point2;
-    }
-}
+*/

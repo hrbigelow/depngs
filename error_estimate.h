@@ -85,12 +85,12 @@ class ErrorEstimate {
     double data_probability(size_t datum_index,
                             size_t founder_base_index) const;
     
-    double single_observation(double const* sample_composition,
-                              size_t datum_index) const;
+    /* double single_observation(double const* sample_composition, */
+    /*                           size_t datum_index) const; */
     
-    double single_observation_gradient(double const* sample_composition,
-                                       size_t datum_index,
-                                       size_t deriv_dimension) const;
+    /* double single_observation_gradient(double const* sample_composition, */
+    /*                                    size_t datum_index, */
+    /*                                    size_t deriv_dimension) const; */
         
     void log_likelihood_gradient(double const* sample_composition,
                                  double * gradient) const;

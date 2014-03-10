@@ -22,43 +22,12 @@ namespace Nucleotide
 
 };
 
-/*
-struct nuc_frequency
-{
-    double data[4];
-    nuc_frequency(double const _data[4])
-    {
-        std::copy(_data, _data + 4, this->data);
-    }
-
-    nuc_frequency(nuc_frequency const& a)
-    {
-        std::copy(a.data, a.data + 4, this->data);
-    }
-
-    double total() const
-    {
-        return data[0] + data[1] + data[2] + data[3];
-    }
-    void multiply(double factor)
-    {
-        data[0] *= factor;
-        data[1] *= factor;
-        data[2] *= factor;
-        data[3] *= factor;
-    }
-};
-*/    
-
-
-// typedef std::map<std::string, nuc_frequency> JPD_DATA;
-
 // this structure holds a summary of all raw base calls at a given locus
 // the values in stats_index can be decoded into (basecall, quality, strand) triplets
 // using Nucleotide::decode
 struct packed_counts
 {
-    double * raw_counts;
+    unsigned long * raw_counts;
     size_t * stats_index;
     double * fbqs_cpd; // founder base likelihood in f,b,q,s order
     size_t num_data;
@@ -82,15 +51,10 @@ class NucleotideStats {
     double founder_base_marginal[4];
     double * complete_jpd[4];
     double * founder_base_likelihood[4];
-    size_t num_distinct_data;
-    /* std::map<std::string, size_t> name_mapping; */
-    /* std::string * index_mapping; */
 
     NucleotideStats();
     ~NucleotideStats();
-    /* void initialize(JPD_DATA const& counts_map); */
     void initialize(char const* rdb_file);
-    // JPD_DATA make_per_locus_stats(PileupSummary const& locus);
 
     void pack(packed_counts * c);
 };

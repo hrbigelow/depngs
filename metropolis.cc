@@ -86,12 +86,6 @@ double Metropolis::accept(double const* z_star, double const* z_tau)
 
 
 
-double * Metropolis::get_samples() const
-{
-    return sample_points;
-}
-
-
 void Metropolis::set_current_point(double const* point)
 {
     std::copy(point, point + this->ndim, current_point);
@@ -359,7 +353,7 @@ Metropolis::sample(size_t num_samples_to_take,
 
         if (step_count > burn_in && step_count % every_nth == 0)
         {
-            std::copy(z_tau, z_tau + this->ndim, this->get_samples() 
+            std::copy(z_tau, z_tau + this->ndim, this->sample_points 
                       + (sample_count * this->ndim));
             ++sample_count;
         }

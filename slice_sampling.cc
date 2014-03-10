@@ -1,4 +1,5 @@
 #include <climits>
+#include <numeric>
 
 #include <gsl/gsl_sf_log.h>
 
@@ -315,6 +316,10 @@ REAL SliceSampling::choose_auxiliary_coord(Integrand * integrand,
 /* xprime and yprime are the proposed new point for slice sampling they
    are only accepted if yprime < y.  once accepted, the slice sampling
    continues, using (xprime, yprime) as the new (x, y)
+
+   In order to conform to sampling::print_quantiles, sample_points_flat
+   shall be populated with 4-tuples of normalized points, rather than 3.
+   The 4th is just auto-filled in
 */
 void SliceSampling::sample(Integrand * integrand,
                            double const* starting_x,
@@ -349,6 +354,8 @@ void SliceSampling::sample(Integrand * integrand,
 
     size_t sample_count = 0;
 
+    double * point = sample_points_flat;
+    size_t full_dim = this->ndim + 1;
     for (size_t si = 0; si != num_samples * every_nth; ++si)
     {
         current_range = initial_range;
@@ -363,9 +370,10 @@ void SliceSampling::sample(Integrand * integrand,
 
         if (si % every_nth == 0)
         {
-            std::copy(xrp, xrp + this->ndim, 
-                      sample_points_flat + (sample_count * this->ndim));
+            std::copy(xrp, xrp + this->ndim, point);
+            point[full_dim - 1] = 1.0 - std::accumulate(xrp, xrp + this->ndim, 0.0);
             ++sample_count;
+            point += full_dim;
         }
 
         //update markov chain

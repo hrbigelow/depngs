@@ -12,7 +12,7 @@ int usage()
             "dep comp       Estimate per-locus base composition of diverse population\n"
             "dep mode       Estimate most probable per-locus base composition\n"
             "dep discomp    Estimate per-locus discrete genotype of clonal population\n"
-            "dep anomaly    Scores the degree of data anomaly\n"
+            // "dep anomaly    Scores the degree of data anomaly\n"
             "dep simp       Simulate pileup file\n"
             "dep simc       Simulate loci compositions\n"
             "dep bqslocus   Tally {basecall, quality score, strand} counts per locus\n"
@@ -42,10 +42,10 @@ int main(int argc, char *argv[])
     {
         return main_discomp(argc - 1, argv + 1);
     }
-    else if (strcmp(argv[1], "anomaly") == 0)
-    {
-        return main_anomaly(argc - 1, argv + 1);
-    }
+    // else if (strcmp(argv[1], "anomaly") == 0)
+    // {
+    //     return main_anomaly(argc - 1, argv + 1);
+    // }
     else if (strcmp(argv[1], "simp") == 0)
     {
         return main_simp(argc - 1, argv + 1);

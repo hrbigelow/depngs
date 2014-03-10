@@ -73,7 +73,7 @@ double williams_moment_match_ratio(NucleotideStats const& stats,
     
     double sum_pi = 0.0;
     double sum_pi_reciprocal = 0.0;
-    for (size_t i = 0; i != stats.num_distinct_data; ++i)
+    for (size_t i = 0; i != Nucleotide::num_bqs; ++i)
     {
         double const* mp = evaluation_point;
             

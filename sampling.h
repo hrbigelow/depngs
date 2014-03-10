@@ -39,7 +39,8 @@ struct WeightedSample
 typedef std::map<WeightedSample, WeightedSample> WEIGHTED_SAMPLE_MAP;
 
 
-void find_integral_bounds(std::vector<double *> * points,
+void find_integral_bounds(double * sample_points,
+                          size_t num_points,
                           size_t sort_dimension,
                           double const* quantiles,
                           size_t num_quantiles,
@@ -59,8 +60,9 @@ double window_averaged_mode(std::vector<double *> * points,
                             size_t window_size);
 
 
-void print_quantiles(FILE * out_fh, 
-                     std::vector<double *> * points,
+void print_quantiles(char * out_buf,
+                     double * sample_points,
+                     size_t num_points,
                      double const* mode_point,
                      char const* line_label,
                      char const** dimension_labels,
@@ -71,7 +73,8 @@ void print_quantiles(FILE * out_fh,
 
 void print_numerical_cdfs(FILE * out_fh, 
                           char const* label,
-                          std::vector<double *> * points,
+                          double * sample_points,
+                          size_t num_points,
                           size_t dim);
 
 
