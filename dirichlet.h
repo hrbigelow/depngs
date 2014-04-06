@@ -1,6 +1,10 @@
-#include "integrands.h"
+#ifndef _DIRICHLET_H
+#define _DIRICHLET_H
 
-class Dirichlet : public SamplingFunction
+#include <cstddef>
+#include <gsl/gsl_rng.h>
+
+class Dirichlet
 {
     gsl_rng * seed;
     double * alpha;
@@ -8,7 +12,11 @@ class Dirichlet : public SamplingFunction
     double alpha0; // sum of alphas
 
 public:
-    Dirichlet(size_t _ndim, bool _may_underflow);
+
+    size_t ndim;
+    bool may_underflow;
+
+    Dirichlet(size_t ndim, bool may_underflow);
     ~Dirichlet();
 
     void update(double const* _alpha);
@@ -40,3 +48,5 @@ public:
 double
 ran_dirichlet_lnpdf(const size_t K,
                     const double alpha[], const double theta[]);
+
+#endif // _DIRICHLET_H

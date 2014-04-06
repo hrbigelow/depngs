@@ -167,9 +167,8 @@ template <typename InputContainer, typename OutputContainer, typename Accumulato
 //a map of sample points (x,y) along a function
 
 //a map of sample points (x,y) along a function
-typedef double REAL;
 
-typedef std::map<REAL, REAL> SAMPLE;
+typedef std::map<double, double> SAMPLE;
 
 //a single sample point from a SAMPLE (see above)
 typedef SAMPLE::value_type SAMPLE_POINT;

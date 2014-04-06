@@ -10,8 +10,8 @@
 
  */
 
-class Gaussian;
-class AnalyticalIntegrand;
+// class Gaussian;
+// class AnalyticalIntegrand;
 
 
 
@@ -19,12 +19,12 @@ class AnalyticalIntegrand;
 struct WeightedSample
 {
     size_t ndim;
-    REAL *x;
-    REAL *cdf; //uninitialized
-    REAL val;
-    REAL weight;
+    double *x;
+    double *cdf; //uninitialized
+    double val;
+    double weight;
 
-    WeightedSample(size_t const _ndim, REAL const * _x, REAL const _val, REAL const _weight);
+    WeightedSample(size_t const _ndim, double const * _x, double const _val, double const _weight);
     ~WeightedSample();
     WeightedSample(WeightedSample const& w);
     WeightedSample & operator=(WeightedSample const& w);
@@ -47,12 +47,12 @@ void find_integral_bounds(double * sample_points,
                           double * quantile_values);
 
 
-void print_cdf_comparison(FILE * out_fh, 
-                          AnalyticalIntegrand const* integrand,
-                          std::vector<double *> * points,
-                          double const* quantiles,
-                          size_t const num_quantiles,
-                          size_t const num_dimensions);
+// void print_cdf_comparison(FILE * out_fh,
+//                           AnalyticalIntegrand const* integrand,
+//                           std::vector<double *> * points,
+//                           double const* quantiles,
+//                           size_t const num_quantiles,
+//                           size_t const num_dimensions);
 
 
 double window_averaged_mode(std::vector<double *> * points,

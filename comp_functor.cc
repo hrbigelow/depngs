@@ -1,24 +1,21 @@
-#include <cstddef>
+#include "comp_functor.h"
+
+#include <cstring>
 #include <numeric>
 #include <gsl/gsl_sf_exp.h>
 
 #include "nucleotide_stats.h"
 #include "error_estimate.h"
 #include "dirichlet.h"
+#include "posterior.h"
 #include "metropolis.h"
 #include "pileup_tools.h"
 #include "stats_tools.h"
 #include "slice_sampling.h"
-#include "sampling.h"
+#include "error_estimate.h"
 
-#include "comp_functor.h"
-
-/*
-  input: the null-terminated pileup line
-  side-effects: populate the appropriate line buffer with the output
- */
-
-
+// input: the null-terminated pileup line
+// side-effects: populate the appropriate line buffer with the output
 
 posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
                                      double * prior_alphas,
@@ -71,12 +68,6 @@ posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
                                    this->use_independence_chain_mh, this->final_num_points);
     this->slice_sampler = new SliceSampling(truncated_ndim, this->num_bits_per_dim,
                                             this->is_log_integrand, 1);
-    // this->sample_points_sortable.resize(this->final_num_points);
-    // for (size_t i = 0; i != this->final_num_points; ++i)
-    // {
-    //     this->sample_points_sortable[i] = this->sampler->sample_points + (i * full_ndim);
-    // }
-
 }
 
 
@@ -102,7 +93,7 @@ posterior_wrapper::~posterior_wrapper()
 size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_buf)
 {
 
-    this->posterior->model()->locus_data = & locus->counts;
+    this->posterior->ee->locus_data = & locus->counts;
     this->posterior->initialize(this->mode_tolerance, 
                                 this->max_modefinding_iterations, 
                                 this->initial_point, 
@@ -262,7 +253,7 @@ void posterior_wrapper::values(double * points, size_t num_points,
 
     for (; point != end; point += 4, ++val)
     {
-        *val = this->posterior->log_pdf_4d(point);
+        *val = log2_likelihood(this->posterior->ee, point);
         assert(! isinf(*val));
         assert(! isnan(*val));
     }
@@ -462,7 +453,7 @@ char * posterior_wrapper::process_line_mode(char const* pileup_line,
 
 
     size_t effective_depth = locus.read_depth;
-    this->posterior->model()->locus_data = & locus.counts;
+    this->posterior->ee->locus_data = & locus.counts;
     this->posterior->initialize(this->mode_tolerance, this->max_modefinding_iterations, 
                                 initial_point, verbose);
 

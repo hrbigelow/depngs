@@ -32,10 +32,6 @@ class NucleotideStats;
 class LocusSummary;
 
 
-/* class Discrete { */
-    
-/* }; */
-
 class ErrorEstimate {
 
  public:
@@ -60,10 +56,10 @@ class ErrorEstimate {
     std::map<double const*, size_t> discrete_prior_index;
 
     //for expanding to the unit hypercube
-    REAL expansion_rows[3][3];
+    double expansion_rows[3][3];
 
     //for contracting from the unit hypercube
-    REAL contraction_rows[3][3];
+    double contraction_rows[3][3];
 
 
  public:
@@ -82,16 +78,6 @@ class ErrorEstimate {
                                  double const* prior_dist, 
                                  size_t num_priors);
 
-    double data_probability(size_t datum_index,
-                            size_t founder_base_index) const;
-    
-    /* double single_observation(double const* sample_composition, */
-    /*                           size_t datum_index) const; */
-    
-    /* double single_observation_gradient(double const* sample_composition, */
-    /*                                    size_t datum_index, */
-    /*                                    size_t deriv_dimension) const; */
-        
     void log_likelihood_gradient(double const* sample_composition,
                                  double * gradient) const;
     
@@ -99,20 +85,17 @@ class ErrorEstimate {
 
     double log_dirichlet_prior(double const* sample_composition) const;
 
-    double log_composition_prior_gradient(double const* sample_composition,
-                                           size_t deriv_dimension) const;
-    
-    REAL log_likelihood(double const* sample_composition) const;
+    double log_likelihood(double const* sample_composition) const;
 
         
-    REAL ScaledPosterior(double const* sample_composition,
-                         REAL log_scaling_factor) const;
+    double ScaledPosterior(double const* sample_composition,
+                           double log_scaling_factor) const;
         
 
     void expand_to_hypercube(double const x[3], double * expanded) const;
     void contract_from_hypercube(double const x[3], double * condensed) const;
 
-    size_t find_mode_point(double min_step_size, 
+    size_t find_mode_point(double min_step_size,
                            size_t max_iterations,
                            double const* initial_point,
                            bool * on_zero_boundary,
@@ -122,7 +105,7 @@ class ErrorEstimate {
         
 };
 
-double log_likelihood(ErrorEstimate * ee, double const* comp);
+double log2_likelihood(ErrorEstimate * ee, double const* comp);
 
 //tells whether x is within the unit hypercube
 bool within_hypercube(double const x[3]);

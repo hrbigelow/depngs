@@ -30,10 +30,9 @@ defined by y.  Generating an independent point drawn uniformly from S
 may still be difficult, in which case we can substitute some update
 for x that leaves the uniform distribution over S invariant.
 
-
  */
-class Integrand;
 
+class Posterior;
 
 class SliceSampling
 {
@@ -53,7 +52,7 @@ class SliceSampling
     uint64_t * xcoord_grid;
     double * xcoord;
     int * coord_chunks;
-    REAL yprime;
+    double yprime;
 
 
     bool initialized;
@@ -71,26 +70,26 @@ class SliceSampling
                    uint64_t const* xg,
                    uint64_t * xgprime);
     
-    int step_in(Integrand * integrand,
+    int step_in(Posterior * integrand,
                 uint64_t const* xg,
-                REAL y,
+                double y,
                 int initial_range,
                 uint64_t * xgp);
 
-    int step_out(Integrand * integrand, 
+    int step_out(Posterior * integrand, 
                  uint64_t const* xg,
-                 REAL const y,
+                 double const y,
                  int const initial_range);
     
     void initialize_starting_point(double const* starting_x, 
                                    size_t const ndim);
     
 
-    REAL choose_auxiliary_coord(Integrand * integrand,
+    double choose_auxiliary_coord(Posterior * integrand,
                                 double const* x, 
                                 size_t const ndim);
 
-    void sample(Integrand * integrand,
+    void sample(Posterior * integrand,
                 double const* starting_x,
                 int const initial_range,
                 size_t every_nth,
@@ -101,7 +100,7 @@ class SliceSampling
 
 
 
-//typedef std::binary_function<double *, size_t, REAL> Integrand;
+//typedef std::binary_function<double *, size_t, double> Integrand;
 
 //linearly scale ndim [0,1] (double) cube coords into (uint64_t)
 //[0,max_64bit_int] grid_coords

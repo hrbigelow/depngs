@@ -32,27 +32,18 @@
 #include "nucleotide_stats.h"
 
 
-/*
-  In the future, we will be extending the Posterior analysis to the
-more general case of the data being not a (base, qual) pair, but a set
-of four estimated probabilities of the underlying 'picked' base p,
-P(p).  These will be based on the image evidence which we summarize as
-P(p|i).  
- */
-
-
 const int ErrorEstimate::NBASES;
 
-REAL expansion_rows_global[3][3] = { 
+double expansion_rows_global[3][3] = { 
     { 1., 1., 1. }, 
     { 0., 2., 1. }, 
     { 0., 0., 3. } 
 };
 
-REAL const expansion_determinant = 6.0;
-REAL const contraction_determinint = 1.0 / 6.0;
+double const expansion_determinant = 6.0;
+double const contraction_determinint = 1.0 / 6.0;
 
-REAL contraction_rows_global[3][3] = { 
+double contraction_rows_global[3][3] = { 
     { 1., -0.5, -1.0/6.0 }, 
     { 0., 0.5, -1.0/6.0 }, 
     { 0., 0., 1.0/3.0 } 
@@ -69,8 +60,8 @@ ErrorEstimate::ErrorEstimate()
     this->log_discrete_prior_dist = NULL;
     this->prior_type = ErrorEstimate::CONTINUOUS;
 
-    memcpy(expansion_rows, expansion_rows_global, 9 * sizeof(REAL));
-    memcpy(contraction_rows, contraction_rows_global, 9 * sizeof(REAL));
+    memcpy(expansion_rows, expansion_rows_global, 9 * sizeof(double));
+    memcpy(contraction_rows, contraction_rows_global, 9 * sizeof(double));
 }
 
 
@@ -115,78 +106,6 @@ ErrorEstimate::~ErrorEstimate()
 }
 
 
-//calculates P(Obs,sample_comp) as sum_fb { P(sample_comp)P(fb|sample_comp)P(Obs|fb) }
-//can never be zero
-// !!! Note:  This can be optimized as a vectorized dot product
-/*
-double ErrorEstimate::single_observation(double const* sample_comp,
-                                         size_t di) const
-{
-    assert(di < this->model_params->num_distinct_data);
-
-    double return_val = 
-        sample_comp[0] * this->model_params->founder_base_likelihood[0][di]
-        + sample_comp[1] * this->model_params->founder_base_likelihood[1][di]
-        + sample_comp[2] * this->model_params->founder_base_likelihood[2][di]
-        + sample_comp[3] * this->model_params->founder_base_likelihood[3][di];
-    
-    if (isnan(return_val))
-    {
-        assert(! isnan(return_val));
-        assert(! isinf(return_val));
-    }
-    //assert(return_val > 0.0); //could be 0 if we have a case of infinite quality
-    return return_val;
-
-}
-*/
-
-
-// calculates d/dC P(I_b,C) as sum_b { P(C)P(b|C)P(I|b) }
-// What?!  This doesn't seem to depend on the actual sample composition
-// 
- /*
-double ErrorEstimate::single_observation_gradient(double const* sample_composition,
-                                                  size_t datum_index,
-                                                  size_t deriv_dimension) const
-{
-    // assert(datum_index < this->model_params->num_distinct_data);
-    return this->model_params->founder_base_likelihood[deriv_dimension][datum_index];
-}
- */
-
-
-//calculate d/dC ( log P(C,I_1,...,I_D) )
-
-/*
-void ErrorEstimate::log_likelihood_gradient(double const* sample_composition,
-                                            double * gradient) const
-{
-
-    size_t ndim = 4;
-
-    std::fill(gradient, gradient + ndim, 0.0);
-    for (size_t d = 0; d != ndim; ++d)
-    {
-        //sum_g(frac{1}{ln(2)P(I|C)} P(b|C))
-        for (size_t raw_idx = 0; 
-             raw_idx != this->locus_data->num_distinct_data; ++raw_idx)
-        {
-            size_t datum_index = this->locus_data->stats_index[raw_idx];
-            double count = this->locus_data->raw_counts[raw_idx];
-            if (count == 0)
-            {
-                continue;
-            }
-            gradient[d] +=
-                (count * this->single_observation_gradient(sample_composition, datum_index, d))
-                / this->single_observation(sample_composition, datum_index);
-        }
-//         gradient[d] /= M_LOG2E;
-//         gradient[d] += log_comp_prior_gradient(sample_composition, d);
-    }
-}
-*/
 
 //calculate d/dC ( log P(C,I_1,...,I_D) )
 void ErrorEstimate::log_likelihood_gradient(double const* comp,
@@ -240,61 +159,9 @@ double ErrorEstimate::log_dirichlet_prior(double const* sample_composition) cons
 }
 
 
-/*
-  Derivation:
-  d/dC_i[log(~Dir(C))] 
-  = d/dC_i[log(e) ln(~Dir(C))]
-  = log(e) 1/~Dir(C) d/dC_i[~Dir(C)]
-  = log(e) (alpha_i - 1) / C_i   // because of cancellation of terms
- */
-// double ErrorEstimate::log_composition_prior_gradient(double const* sample_composition,
-//                                                       size_t deriv_dimension) const
-// {
-//     double retval =
-//         M_LOG2E
-//         * (this->composition_prior_alphas[deriv_dimension] - 1.0)
-//         / sample_composition[deriv_dimension];
 
-//     return (isnan(retval) || isinf(retval)) ? FLT_MAX : retval;
-// }
-
-/*
-REAL ErrorEstimate::log_likelihood(double const* sample_composition) const
-{
-    
-    if (! (normalized(sample_composition, 4, 1e-10) &&
-           all_positive(sample_composition, 4)))
-    {
-        fprintf(stderr, "log_likelihood: invalid input.\n");
-        exit(2);
-    }
-                
-    REAL sum_log_factors = 0.0;
-
-    for (size_t raw_index = 0; 
-         raw_index != this->locus_data->num_distinct_data; ++raw_index)
-    {
-
-        double count = this->locus_data->raw_counts[raw_index];
-
-        if (count == 0)
-        {
-            //no counts of this data, thus no contribution to log_likelihood
-            continue;
-        }
-
-        size_t datum_index = this->locus_data->stats_index[raw_index];
-
-        sum_log_factors += 
-            gsl_sf_log(single_observation(sample_composition, datum_index))
-            * static_cast<REAL>(count);
-    }
-    return sum_log_factors;
-}
-*/
-
- // In this new formulation, we use the subset of the model that is packed into
- // the locus itself.  Also, we inline the 'single_observation' function
+// In this new formulation, we use the subset of the model that is packed into
+// the locus itself.  Also, we inline the 'single_observation' function
 double ErrorEstimate::log_likelihood(double const* comp) const
 {
     
@@ -310,34 +177,6 @@ double ErrorEstimate::log_likelihood(double const* comp) const
         sum_log_factors += (*lc) * log2(q);
     }
     
-    // iterate over each BQS category
-    // this is an optimization to avoid taking log too many times
-    /*
-    int min_expon = DBL_MIN_EXP + 10;
-    double rp = 1.0;
-    int rp_expon = 0, qq_expon, q_expon;
-    for (; l != l_end; l += 4, lc++)
-    {
-        double q = (*l) * comp[0] + (*(l+1)) * comp[1] + (*(l+2)) * comp[2] + (*(l+3)) * comp[3];
-        frexp(q, & q_expon);
-        // frexp(qq, & qq_expon);
-        rp_expon += (q_expon * (*lc));
-        if (rp_expon < min_expon)
-        {
-            sum_log_factors += log2(rp);
-            rp = qq;
-            rp_expon = qq_expon;
-        }
-        else
-        {
-            double qq = gsl_pow_int(q, static_cast<int>(*lc));
-            rp *= qq;
-            assert(rp != 0);
-        }
-    }   
-    sum_log_factors += log2(rp);
-    */
-
     sum_log_factors *= M_LN2;
     return sum_log_factors;
 }
@@ -351,11 +190,11 @@ double ErrorEstimate::log_likelihood(double const* comp) const
   4. ee[i] = e[i] * ct[i] for all i
   5. max_ee = max over i of ee[i]
 
-In a second loop:
+  In a second loop:
   6. emn[i] = em[i] * 2**(max_ee - ee[i])  (some of these will underflow to zero, silently)
   7. sum_m = sum over i of emn[i]
   8. lsm = log2(sum_m) + max_ee
- */
+*/
 
 
 double log2_likelihood(ErrorEstimate * ee, double const* x)
@@ -400,78 +239,8 @@ double log2_likelihood(ErrorEstimate * ee, double const* x)
 
     // assert(! isinf(ret));
     // assert(! isinf(ret2));
-    return lsm * M_LN2;
+    return lsm;
 }
-
-
-
-
-// mpf_t term, pterm, prod;
-// mpf_init(term);
-// mpf_init(pterm);
-// mpf_init_set_ui(prod, 1);
-
-// for (; l != l_end; l += 4, lc++)
-// {
-//     mpf_set_d(term, 
-//               (*l) * comp[0]
-//               + (*(l+1)) * comp[1]
-//               + (*(l+2)) * comp[2]
-//               + (*(l+3)) * comp[3]);
-
-//     mpf_pow_ui(pterm, term, (*lc));
-//     mpf_mul(prod, prod, pterm);
-// }   
-// long int exp;
-// double mant = mpf_get_d_2exp(&exp, prod);
-// sum_log_factors = gsl_sf_log(mant) + exp * M_LN2;
-// mpf_clear(term);
-// mpf_clear(pterm);
-// mpf_clear(prod);
-
-// if (sum_log_factors != 0)
-// {
-//     assert(sum_log_factors / sum_log_factors_mpf < 1.000000001);
-//     assert(sum_log_factors_mpf / sum_log_factors < 1.000000001);
-// }
-
-
-
-
-//     double comp_prior;
-//     switch (this->prior_type)
-//     {
-//     case ErrorEstimate::DISCRETE:
-//         {
-//             std::map<double const*, size_t>::const_iterator dp_iter = 
-//                 this->discrete_prior_index.find(sample_composition);
-//             if (dp_iter == this->discrete_prior_index.end())
-//             {
-//                 fprintf(stderr, "ErrorEstimate::Log2Posterior: using DISCRETE prior"
-//                         " but called with unrecognized composition\n");
-//                 exit(1);
-//             }
-//             size_t sample_index = (*dp_iter).second;
-//             comp_prior = this->log2_discrete_prior(sample_index);
-//         }
-//         break;
-//     case ErrorEstimate::CONTINUOUS:
-//         comp_prior = this->log2_composition_prior(sample_composition);
-//         break;
-//     }
-
-//     //could be -infinity
-//     if (isinf(sum_log_factors))
-//     {
-//         return -DBL_MAX;
-//     }
-//     //assert(finite(sum_log_factors) != 0);
-//     else
-//     {
-//         return sum_log_factors + comp_prior;
-//     }
-// }
-
 
 
 //transforms x (bounds x1[0,1], x2[0,1-x1], x3[0,1-x1-x2]) to
@@ -485,7 +254,7 @@ bool sort_first_desc(Key a, Key b)
 }
 
 
-void auxiliary_transform(REAL const matrix[3][3], double const x[3], double * transformed)
+void auxiliary_transform(double const matrix[3][3], double const x[3], double * transformed)
 {
     
     Key key[] = { Key(x[0], 0), Key(x[1], 1), Key(x[2], 2) };
@@ -546,11 +315,11 @@ void ErrorEstimate::contract_from_hypercube(double const x[3], double * contract
 }
 
 
-REAL ErrorEstimate::ScaledPosterior(double const* sample_composition,
-                                    REAL log_scaling_factor) const
+double ErrorEstimate::ScaledPosterior(double const* sample_composition,
+                                      double log_scaling_factor) const
 {
 
-    REAL log_scaled =
+    double log_scaled =
         this->log_likelihood(sample_composition) 
         + this->log_dirichlet_prior(sample_composition) 
         - log_scaling_factor;

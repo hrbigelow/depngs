@@ -1,21 +1,39 @@
 #include "metropolis.h"
+#include "dirichlet.h"
+#include "posterior.h"
+#include "stats_tools.h"
 
-#include <ctime>
-#include <utility>
-#include <deque>
-#include <numeric>
-#include <functional>
+#include <cassert>
+#include <cmath>
 #include <algorithm>
+#include <ctime>
+#include <vector>
 
-
-#include <gmp.h>
-
-#include <gsl/gsl_randist.h>
+#include "sampling.h"
 #include <gsl/gsl_statistics_double.h>
 
 
-#include "sampling.h"
-#include "stats_tools.h"
+Metropolis::Metropolis(Posterior * integrand,
+                       Dirichlet * proposal,
+                       size_t ndim, 
+                       bool is_independence_chain,
+                       size_t num_points) 
+    : integrand(integrand), 
+      proposal(proposal), 
+      ndim(ndim), 
+      is_independence_chain_mh(is_independence_chain),
+      num_points(num_points)
+{ 
+    current_point = new double[ndim];
+    sample_points = new double[ndim * num_points];
+}
+
+
+Metropolis::~Metropolis()
+{
+    delete current_point;
+    delete sample_points;
+}
 
 
 //propose a new point z_star from a starting point z_tau
@@ -98,170 +116,6 @@ double * Metropolis::get_current_point() const
 }
 
 
-//iteratively refine the proposal gaussian by updating its mean and
-//covariance according to sampled points.
-/*
-void 
-Metropolis::tune_proposal(size_t num_points,
-                          double max_tuning_iterations,
-                          size_t averaging_window_size,
-                          size_t front_back_window_distance,
-                          size_t autocor_max_offset)
-{
-
-    //calculate mean, covariance, and autocorrelation
-    size_t num_covariances = this->ndim * this->ndim;
-    
-    double * sample_mean = new double[this->ndim];
-    double * estimated_mean = new double[this->ndim];
-    double * sample_covar = new double[num_covariances];
-    double * estimated_covar = new double[num_covariances];
-    double * x = new double[this->ndim];
-    double * x_next = new double[this->ndim];
-
-    size_t autocor_buf_offset = front_back_window_distance;
-    size_t autocor_bufsize = max_tuning_iterations + autocor_buf_offset;
-    double * autocor_buffer = new double[autocor_bufsize];
-
-    //2.0 is just any value above 1 that signals the non-convergence of the algorithm
-    std::fill(autocor_buffer, autocor_buffer + autocor_buf_offset, 4.0);
-
-    double * autocor_measure = autocor_buffer + autocor_buf_offset;
-
-    double * starting_point = new double[this->ndim];
-    std::copy(this->get_current_point(), this->get_current_point() + this->ndim,
-              starting_point);
-
-    if (this->integrand->pdf(starting_point) == 0)
-    {
-        fprintf(stderr, "Metropolis::tune_proposal: Error: starting point"
-                " must yield a non-zero integrand value");
-        exit(1);
-    }
-
-    this->proposal->update_mean(starting_point);
-    this->proposal->get_mean(estimated_mean);
-    this->proposal->get_covariance(estimated_covar);
-
-    double proposal_avg;
-    double front_mean, back_mean, front_stdev, back_stdev;
-
-    for (size_t iteration = 0; iteration != max_tuning_iterations; ++iteration)
-    {
-        this->proposal->update_mean(estimated_mean);
-        this->proposal->update_covariance(estimated_covar);
-        
-        //start the random walk from the mode point each time.
-        std::copy(starting_point, starting_point + this->ndim, x);
-        proposal_avg = 0.0;
-        
-        for (size_t n = 0; n != num_points; ++n)
-        {
-            double proposal_value = std::min(this->step(x, x_next), 1.0);
-
-            proposal_avg = add_sample_to_mean(proposal_avg, n, proposal_value);
-
-            std::copy(x_next, x_next + this->ndim, x);
-
-            std::copy(x_next, x_next + this->ndim, 
-                      this->get_samples() + (n * this->ndim));
-        }
-        
-        fprintf(stdout, "iteration %Zu\n", iteration);
-
-        autocor_measure[iteration] =
-            total_autocorrelation_measure(this->get_samples(), this->ndim,
-                                          num_points, autocor_max_offset);
-        
-        fprintf(stdout, "measure: %g, proposal: %g\n", 
-                autocor_measure[iteration], proposal_avg);
-
-        print_mean_covariance(stdout, estimated_mean, estimated_covar, this->ndim);
-
-        fprintf(stdout, "\n\n");
-
-
-        double * front_position = autocor_measure + iteration - averaging_window_size;
-        double * back_position = front_position - averaging_window_size;
-
-        front_mean = 
-            gsl_stats_mean(front_position, 1, averaging_window_size);
-
-        front_stdev = 
-            gsl_stats_sd_m(front_position, 1, averaging_window_size, front_mean);
-
-        back_mean = 
-            gsl_stats_mean(back_position, 1, averaging_window_size);
-
-        back_stdev = 
-            gsl_stats_sd_m(back_position, 1, averaging_window_size, back_mean);
-
-        if (fabs(front_mean - back_mean) < 0.01 * std::min(front_stdev, back_stdev)
-            && front_mean < 1.0)
-        {
-            break;
-        }
-        
-        
-        multivariate_mean_covariance(this->get_samples(), this->ndim, 
-                                     num_points, sample_mean, 
-                                     sample_covar);
-
-
-        double self_weight = 0.9;
-
-        //shrink the covariance, leave the mean the same
-        for (size_t d = 0; d != num_covariances; ++d)
-        {
-            estimated_covar[d] = 
-                self_weight * estimated_covar[d] 
-                + (1.0 - self_weight) * sample_covar[d];
-        }
-        for (size_t d = 0; d != this->ndim; ++d)
-        {
-            estimated_mean[d] = 
-                self_weight * estimated_mean[d] 
-                + (1.0 - self_weight) * sample_mean[d] ;
-        }
-
-    }
-
-    delete sample_mean;
-    delete estimated_mean;
-    delete sample_covar;
-    delete estimated_covar;
-    delete x;
-    delete x_next;
-    delete starting_point;
-    delete autocor_buffer;
-}
-*/
-
-
-
-
-
-Metropolis::Metropolis(Integrand * _integrand,
-                       SamplingFunction * _proposal,
-                       size_t _ndim, 
-                       bool _is_independence_chain,
-                       size_t _num_points) 
-    : integrand(_integrand), 
-      proposal(_proposal), 
-      ndim(_ndim), 
-      is_independence_chain_mh(_is_independence_chain),
-      num_points(_num_points)
-{ 
-    current_point = new double[ndim];
-    sample_points = new double[ndim * _num_points];
-}
-
-
-Metropolis::~Metropolis()
-{
-    delete current_point;
-    delete sample_points;
-}
 
 
 //do we need to record the y values here?
@@ -303,10 +157,9 @@ double Metropolis::step(double const* z_tau, double * z_tau_next)
 }
 
 
-/* sample from the integrand using the Metropolis algorithm.
-   populates the sample buffer 
-   if alt_sample_points are provided, use those instead of internal
-*/
+// sample from the integrand using the Metropolis algorithm.
+// populates the sample buffer 
+// if alt_sample_points are provided, use those instead of internal
 void 
 Metropolis::sample(size_t num_samples_to_take,
                    size_t burn_in,
@@ -324,12 +177,12 @@ Metropolis::sample(size_t num_samples_to_take,
         exit(1);
     }
 
-//     if (integrand->pdf(this->current_point, this->ndim) == 0)
-//     {
-//         fprintf(stderr, "Metropolis::sample: Error: starting point"
-//                 " must yield a non-zero integrand value");
-//         exit(1);
-//     }
+    //     if (integrand->pdf(this->current_point, this->ndim) == 0)
+    //     {
+    //         fprintf(stderr, "Metropolis::sample: Error: starting point"
+    //                 " must yield a non-zero integrand value");
+    //         exit(1);
+    //     }
 
 
     double * used_sample_points = (alt_sample_points == NULL) 
@@ -386,10 +239,8 @@ Metropolis::sample(size_t num_samples_to_take,
 }
 
 
-/*
-other support functions
-*/
 
+//  other support functions
 void print_mean_covariance(FILE * fh, double const* mean, 
                            double const* covariance, 
                            size_t ndim)
@@ -410,128 +261,266 @@ void print_mean_covariance(FILE * fh, double const* mean,
 
 
 /*
-void
-Metropolis::fine_tune_proposal(Integrand * integrand,
-                               ProposalDistribution * proposal,
-                               size_t window_size,
-                               size_t max_markov_steps,
-                               double autocor_min_decrease,
-                               size_t autocor_max_offset,
-                               size_t initial_best_offset)
-{
-    if (window_size > this->num_points)
-    {
-        fprintf(stderr, "Metropolis::fine_tune_proposal: error: window size exceeds"
-                " total number of samples for this Metropolis instance.");
-        exit(1);
-    }
+  void
+  Metropolis::fine_tune_proposal(Integrand * integrand,
+  ProposalDistribution * proposal,
+  size_t window_size,
+  size_t max_markov_steps,
+  double autocor_min_decrease,
+  size_t autocor_max_offset,
+  size_t initial_best_offset)
+  {
+  if (window_size > this->num_points)
+  {
+  fprintf(stderr, "Metropolis::fine_tune_proposal: error: window size exceeds"
+  " total number of samples for this Metropolis instance.");
+  exit(1);
+  }
 
 
-    //fine tuning.  
-    size_t num_sample_coords = this->ndim * window_size;
+  //fine tuning.  
+  size_t num_sample_coords = this->ndim * window_size;
 
-    double * sample_points = this->get_samples();
-    double * mean = new double[this->ndim];
-    double * covariance = new double[this->ndim * this->ndim];
+  double * sample_points = this->get_samples();
+  double * mean = new double[this->ndim];
+  double * covariance = new double[this->ndim * this->ndim];
 
-    double * x = new double[this->ndim];
-    double * x_next = new double[this->ndim];
-    std::copy(this->current_point, this->current_point + this->ndim, x);
+  double * x = new double[this->ndim];
+  double * x_next = new double[this->ndim];
+  std::copy(this->current_point, this->current_point + this->ndim, x);
 
-//     size_t current_best_offset = initial_best_offset;
+  //     size_t current_best_offset = initial_best_offset;
 
-    //automatically collect every nth sample, where n is determined
-    //each time to be the best autocorrelation offset
-    for (size_t n = 0; n != window_size; ++n)
-    {
-        this->step(integrand, proposal, x, x_next);
-        std::copy(x_next, x_next + this->ndim, x);
-        std::copy(x_next, x_next + this->ndim, 
-                  sample_points + (n * this->ndim));
-    }
+  //automatically collect every nth sample, where n is determined
+  //each time to be the best autocorrelation offset
+  for (size_t n = 0; n != window_size; ++n)
+  {
+  this->step(integrand, proposal, x, x_next);
+  std::copy(x_next, x_next + this->ndim, x);
+  std::copy(x_next, x_next + this->ndim, 
+  sample_points + (n * this->ndim));
+  }
 
-    //calculate mean and covariance
-    multivariate_mean_covariance(sample_points, this->ndim,
-                                 window_size, mean, covariance);
+  //calculate mean and covariance
+  multivariate_mean_covariance(sample_points, this->ndim,
+  window_size, mean, covariance);
     
-    //initialize the sample window
-    //std::deque<std::vector<double> > sample_window;
-    std::vector<double> sample_window(num_sample_coords);
-    std::copy(sample_points,
-              sample_points + num_sample_coords,
-              sample_window.begin());
+  //initialize the sample window
+  //std::deque<std::vector<double> > sample_window;
+  std::vector<double> sample_window(num_sample_coords);
+  std::copy(sample_points,
+  sample_points + num_sample_coords,
+  sample_window.begin());
 
-    //this history 
-    size_t autocor_history_offset = window_size;
-    std::deque<double> autocor_history;
-    autocor_history.resize(autocor_history_offset, 1.0);
+  //this history 
+  size_t autocor_history_offset = window_size;
+  std::deque<double> autocor_history;
+  autocor_history.resize(autocor_history_offset, 1.0);
 
-    double autocor_decrease, autocor_measure;
-    size_t step_number = 0;
-    size_t current_window_size;
+  double autocor_decrease, autocor_measure;
+  size_t step_number = 0;
+  size_t current_window_size;
 
-    do
-    {
-        //1.  perform one Metropolis-Hastings step
+  do
+  {
+  //1.  perform one Metropolis-Hastings step
         
-        this->step(integrand, proposal, x, x_next);
+  this->step(integrand, proposal, x, x_next);
         
-        //2.  update mean and covarance, and autocorrelation
-        current_window_size = sample_window.size() / this->ndim;
+  //2.  update mean and covarance, and autocorrelation
+  current_window_size = sample_window.size() / this->ndim;
 
-        add_to_mean_covariance_matrix(x_next, this->ndim, 
-                                      current_window_size, mean, covariance);
+  add_to_mean_covariance_matrix(x_next, this->ndim, 
+  current_window_size, mean, covariance);
         
-        sample_window.insert(sample_window.end(), x_next, x_next + this->ndim);
-        current_window_size = sample_window.size() / this->ndim;
+  sample_window.insert(sample_window.end(), x_next, x_next + this->ndim);
+  current_window_size = sample_window.size() / this->ndim;
 
-        remove_from_mean_covariance_matrix(&sample_window[0], this->ndim,
-                                           current_window_size, mean, covariance);
+  remove_from_mean_covariance_matrix(&sample_window[0], this->ndim,
+  current_window_size, mean, covariance);
 
-        sample_window.erase(sample_window.begin(), sample_window.begin() + this->ndim);
-        current_window_size = sample_window.size() / this->ndim;
+  sample_window.erase(sample_window.begin(), sample_window.begin() + this->ndim);
+  current_window_size = sample_window.size() / this->ndim;
 
 
-        //3.  update proposal with mean and covariance from step 2.
-        proposal->update_mean(mean);
-        proposal->update_covariance(covariance);
+  //3.  update proposal with mean and covariance from step 2.
+  proposal->update_mean(mean);
+  proposal->update_covariance(covariance);
         
-        if (step_number % 1 == 0)
-        {
-            fprintf(stdout, "iteration %Zu\n", step_number);
-            fprintf(stdout, "added point:");
-            for (size_t d = 0; d != this->ndim; ++d)
-            {
-                fprintf(stdout, "\t%g", x_next[d]);
-            }
-            fprintf(stdout, "\n\n");
+  if (step_number % 1 == 0)
+  {
+  fprintf(stdout, "iteration %Zu\n", step_number);
+  fprintf(stdout, "added point:");
+  for (size_t d = 0; d != this->ndim; ++d)
+  {
+  fprintf(stdout, "\t%g", x_next[d]);
+  }
+  fprintf(stdout, "\n\n");
             
-            print_mean_covariance(stdout, mean, covariance, this->ndim);
-        }
-        ++step_number;
+  print_mean_covariance(stdout, mean, covariance, this->ndim);
+  }
+  ++step_number;
 
-        //4.  update markov chain
-        std::copy(x_next, x_next + this->ndim, x);
+  //4.  update markov chain
+  std::copy(x_next, x_next + this->ndim, x);
 
-        //5.  update autocorrelation history
-        autocor_measure =
-            total_autocorrelation_measure(&sample_window[0], this->ndim,
-                                          current_window_size,
-                                          autocor_max_offset);
+  //5.  update autocorrelation history
+  autocor_measure =
+  total_autocorrelation_measure(&sample_window[0], this->ndim,
+  current_window_size,
+  autocor_max_offset);
 
-        autocor_history.pop_front();
-        autocor_history.push_back(autocor_measure);
+  autocor_history.pop_front();
+  autocor_history.push_back(autocor_measure);
         
-        //6.  compute continuance criterion
-        autocor_decrease = autocor_history.front() - autocor_history.back();
-    }
-    while ((autocor_decrease > autocor_min_decrease || autocor_measure > 1.0) &&
-           step_number < max_markov_steps);
+  //6.  compute continuance criterion
+  autocor_decrease = autocor_history.front() - autocor_history.back();
+  }
+  while ((autocor_decrease > autocor_min_decrease || autocor_measure > 1.0) &&
+  step_number < max_markov_steps);
 
-    delete mean;
-    delete covariance;
-    delete x;
-    delete x_next;
+  delete mean;
+  delete covariance;
+  delete x;
+  delete x_next;
 
-}
+  }
 */
+
+
+//iteratively refine the proposal gaussian by updating its mean and
+//covariance according to sampled points.
+// void 
+// Metropolis::tune_proposal(size_t num_points,
+//                           double max_tuning_iterations,
+//                           size_t averaging_window_size,
+//                           size_t front_back_window_distance,
+//                           size_t autocor_max_offset)
+// {
+
+//     //calculate mean, covariance, and autocorrelation
+//     size_t num_covariances = this->ndim * this->ndim;
+    
+//     double * sample_mean = new double[this->ndim];
+//     double * estimated_mean = new double[this->ndim];
+//     double * sample_covar = new double[num_covariances];
+//     double * estimated_covar = new double[num_covariances];
+//     double * x = new double[this->ndim];
+//     double * x_next = new double[this->ndim];
+
+//     size_t autocor_buf_offset = front_back_window_distance;
+//     size_t autocor_bufsize = max_tuning_iterations + autocor_buf_offset;
+//     double * autocor_buffer = new double[autocor_bufsize];
+
+//     //2.0 is just any value above 1 that signals the non-convergence of the algorithm
+//     std::fill(autocor_buffer, autocor_buffer + autocor_buf_offset, 4.0);
+
+//     double * autocor_measure = autocor_buffer + autocor_buf_offset;
+
+//     double * starting_point = new double[this->ndim];
+//     std::copy(this->get_current_point(), this->get_current_point() + this->ndim,
+//               starting_point);
+
+//     if (this->integrand->pdf(starting_point) == 0)
+//     {
+//         fprintf(stderr, "Metropolis::tune_proposal: Error: starting point"
+//                 " must yield a non-zero integrand value");
+//         exit(1);
+//     }
+
+//     this->proposal->update_mean(starting_point);
+//     this->proposal->get_mean(estimated_mean);
+//     this->proposal->get_covariance(estimated_covar);
+
+//     double proposal_avg;
+//     double front_mean, back_mean, front_stdev, back_stdev;
+
+//     for (size_t iteration = 0; iteration != max_tuning_iterations; ++iteration)
+//     {
+//         this->proposal->update_mean(estimated_mean);
+//         this->proposal->update_covariance(estimated_covar);
+        
+//         //start the random walk from the mode point each time.
+//         std::copy(starting_point, starting_point + this->ndim, x);
+//         proposal_avg = 0.0;
+        
+//         for (size_t n = 0; n != num_points; ++n)
+//         {
+//             double proposal_value = std::min(this->step(x, x_next), 1.0);
+
+//             proposal_avg = add_sample_to_mean(proposal_avg, n, proposal_value);
+
+//             std::copy(x_next, x_next + this->ndim, x);
+
+//             std::copy(x_next, x_next + this->ndim, 
+//                       this->get_samples() + (n * this->ndim));
+//         }
+        
+//         fprintf(stdout, "iteration %Zu\n", iteration);
+
+//         autocor_measure[iteration] =
+//             total_autocorrelation_measure(this->get_samples(), this->ndim,
+//                                           num_points, autocor_max_offset);
+        
+//         fprintf(stdout, "measure: %g, proposal: %g\n", 
+//                 autocor_measure[iteration], proposal_avg);
+
+//         print_mean_covariance(stdout, estimated_mean, estimated_covar, this->ndim);
+
+//         fprintf(stdout, "\n\n");
+
+
+//         double * front_position = autocor_measure + iteration - averaging_window_size;
+//         double * back_position = front_position - averaging_window_size;
+
+//         front_mean = 
+//             gsl_stats_mean(front_position, 1, averaging_window_size);
+
+//         front_stdev = 
+//             gsl_stats_sd_m(front_position, 1, averaging_window_size, front_mean);
+
+//         back_mean = 
+//             gsl_stats_mean(back_position, 1, averaging_window_size);
+
+//         back_stdev = 
+//             gsl_stats_sd_m(back_position, 1, averaging_window_size, back_mean);
+
+//         if (fabs(front_mean - back_mean) < 0.01 * std::min(front_stdev, back_stdev)
+//             && front_mean < 1.0)
+//         {
+//             break;
+//         }
+        
+        
+//         multivariate_mean_covariance(this->get_samples(), this->ndim, 
+//                                      num_points, sample_mean, 
+//                                      sample_covar);
+
+
+//         double self_weight = 0.9;
+
+//         //shrink the covariance, leave the mean the same
+//         for (size_t d = 0; d != num_covariances; ++d)
+//         {
+//             estimated_covar[d] = 
+//                 self_weight * estimated_covar[d] 
+//                 + (1.0 - self_weight) * sample_covar[d];
+//         }
+//         for (size_t d = 0; d != this->ndim; ++d)
+//         {
+//         estimated_mean[d] = 
+//         self_weight * estimated_mean[d] 
+//         + (1.0 - self_weight) * sample_mean[d];
+//         }
+
+//     }
+
+//     delete sample_mean;
+//     delete estimated_mean;
+//     delete sample_covar;
+//     delete estimated_covar;
+//     delete x;
+//     delete x_next;
+//     delete starting_point;
+//     delete autocor_buffer;
+// }

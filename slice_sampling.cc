@@ -8,7 +8,8 @@
 #include "tools.h"
 #include "hilbert.h"
 #include "sampling.h"
-#include "integrands.h"
+#include "posterior.h"
+// #include "integrands.h"
 
 SliceSampling::SliceSampling(size_t const _ndim, 
                              size_t const _nbits_per_dim,
@@ -191,9 +192,9 @@ void SliceSampling::grid_step(int const current_range,
    interval starts as a neighborhood of x with initial_range bits of
    width.  updates xcoord, xcoord_grid and yprime with latest values
 */
-int SliceSampling::step_in(Integrand * integrand,
+int SliceSampling::step_in(Posterior * posterior,
                            uint64_t const* xg,
-                           REAL y,
+                           double y,
                            int initial_range,
                            uint64_t * xgp)
 {
@@ -210,11 +211,11 @@ int SliceSampling::step_in(Integrand * integrand,
         contract_from_grid_coords(xgp, this->ndim, xrp, this->nbits_per_dim);
         if (this->assume_log_integrand)
         {
-            yp = integrand->log_pdf(xrp);
+            yp = posterior->log_pdf(xrp);
         }
         else
         {
-            yp = integrand->pdf(xrp);
+            yp = posterior->pdf(xrp);
         }
     }
     while (yp < y && (! std::equal(xg, xg + this->ndim, xgp)));
@@ -231,9 +232,9 @@ int SliceSampling::step_in(Integrand * integrand,
    neighborhood of x with a neighborhood of intitial_range
    bits. returns the range found.
 */
-int SliceSampling::step_out(Integrand * integrand, 
+int SliceSampling::step_out(Posterior * posterior, 
                             uint64_t const* xg,
-                            REAL const y,
+                            double const y,
                             int const initial_range)
 {
 
@@ -251,11 +252,11 @@ int SliceSampling::step_out(Integrand * integrand,
         contract_from_grid_coords(xgp, this->ndim, xrp, this->nbits_per_dim);
         if (this->assume_log_integrand)
         {
-            yp = integrand->log_pdf(xrp);
+            yp = posterior->log_pdf(xrp);
         }
         else
         {
-            yp = integrand->pdf(xrp);
+            yp = posterior->pdf(xrp);
         }
     }
     while (current_range != static_cast<int>(this->total_bits) && yp >= y);
@@ -293,21 +294,21 @@ void SliceSampling::initialize_starting_point(double const* starting_x,
    sampled in log space, and the integrand given is assumed to be
    log(integrand-of-interest)
  */
-REAL SliceSampling::choose_auxiliary_coord(Integrand * integrand,
+double SliceSampling::choose_auxiliary_coord(Posterior * posterior,
                                            double const* x, 
                                            size_t const ndim)
 {
 
     mpf_urandomb(this->uniform, this->rand_state, 64);
-    REAL y;
+    double y;
     
     if (this->assume_log_integrand)
     {
-        y = integrand->log_pdf(x) + gsl_sf_log(mpf_get_d(this->uniform));
+        y = posterior->log_pdf(x) + gsl_sf_log(mpf_get_d(this->uniform));
     }
     else
     {
-        y = integrand->pdf(x) * mpf_get_d(this->uniform);
+        y = posterior->pdf(x) * mpf_get_d(this->uniform);
     }
     return y;
 }
@@ -321,7 +322,7 @@ REAL SliceSampling::choose_auxiliary_coord(Integrand * integrand,
    shall be populated with 4-tuples of normalized points, rather than 3.
    The 4th is just auto-filled in
 */
-void SliceSampling::sample(Integrand * integrand,
+void SliceSampling::sample(Posterior * posterior,
                            double const* starting_x,
                            int initial_range,
                            size_t every_nth,
@@ -350,7 +351,7 @@ void SliceSampling::sample(Integrand * integrand,
     int current_range = initial_range;
     std::copy(starting_x, starting_x + this->ndim, xrp);
     expand_to_grid_coords(xrp, ndim, xg, this->nbits_per_dim);
-    REAL y = this->choose_auxiliary_coord(integrand, xrp, this->ndim);
+    double y = this->choose_auxiliary_coord(posterior, xrp, this->ndim);
 
     size_t sample_count = 0;
 
@@ -360,10 +361,10 @@ void SliceSampling::sample(Integrand * integrand,
     {
         current_range = initial_range;
         
-        current_range = this->step_out(integrand, xg, y, current_range);
+        current_range = this->step_out(posterior, xg, y, current_range);
 //         fprintf(stdout, "out to %i", current_range);
         
-        current_range = this->step_in(integrand, xg, y, current_range, xgp);
+        current_range = this->step_in(posterior, xg, y, current_range, xgp);
 //         fprintf(stdout, ", in to %i\n", current_range);
 
         contract_from_grid_coords(xgp, this->ndim, xrp, this->nbits_per_dim);
@@ -380,7 +381,7 @@ void SliceSampling::sample(Integrand * integrand,
         std::copy(xgp, xgp + this->ndim, xg);
 
         //choose y coordinate from new x coordinate
-        y = this->choose_auxiliary_coord(integrand, xrp, this->ndim);
+        y = this->choose_auxiliary_coord(posterior, xrp, this->ndim);
         
     }
 

@@ -146,15 +146,15 @@ double williams_moment_match_ratio(NucleotideStats const& stats,
   JPD_DATA strand_global_counts = 
   data_reader->normalize_strand_marginal(strand_marginal, global_counts);
 
-  NucleotideStats & post_params = * posterior.model()->get_model_params();
+  NucleotideStats & post_params = * posterior.ee->get_model_params();
   //post_params.initialize(global_counts);
   post_params.initialize(strand_global_counts);
 
   JPD_DATA strand_locus_counts = 
   post_params.make_per_locus_stats(strand_locus);
     
-  //posterior.model()->set_locus_data(& full_locus);
-  posterior.model()->set_locus_data(& strand_locus);
+  //posterior.ee->set_locus_data(& full_locus);
+  posterior.ee->set_locus_data(& strand_locus);
 
   double initial_point[] = { 0.25, 0.25, 0.25, 0.25 };
   posterior.initialize(mode_tolerance, max_modefinding_iterations, initial_point, verbose);
@@ -211,7 +211,7 @@ double strand_locus_anomaly_score(Posterior & posterior,
     JPD_DATA strand_global_counts = 
         data_reader->normalize_strand_marginal(strand_marginal, global_counts);
 
-    ErrorEstimate * model = posterior.model();
+    ErrorEstimate * model = posterior.ee;
     NucleotideStats * post_params = model->model_params;
 
     post_params->initialize(strand_global_counts);
@@ -354,12 +354,12 @@ double locus_anomaly_score(Posterior & posterior,
     double const mode_tolerance = 1e-10;
     double const max_modefinding_iterations = 3000;
 
-    NucleotideStats & post_params = * posterior.model()->get_model_params();
+    NucleotideStats & post_params = * posterior.ee->get_model_params();
     post_params.initialize(global_counts);
 
     JPD_DATA locus_counts = post_params.make_per_locus_stats(full_locus);
     
-    posterior.model()->set_locus_data(& full_locus);
+    posterior.ee->set_locus_data(& full_locus);
 
     double initial_point[] = { 0.25, 0.25, 0.25, 0.25 };
     posterior.initialize(mode_tolerance, max_modefinding_iterations, 

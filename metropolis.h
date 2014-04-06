@@ -3,14 +3,14 @@
 
 #include <gsl/gsl_randist.h>
 
-#include "sampling.h"
-#include "integrands.h"
+class Posterior;
+class Dirichlet;
 
 class Metropolis
 {
 
-    Integrand * integrand;
-    SamplingFunction * proposal;
+    Posterior * integrand;
+    Dirichlet * proposal;
 
     size_t ndim;
 
@@ -24,8 +24,8 @@ class Metropolis
     double * sample_points;
     size_t num_points;
 
-    Metropolis(Integrand * _integrand,
-               SamplingFunction * _proposal,
+    Metropolis(Posterior * posterior,
+               Dirichlet * dirichlet,
                size_t _ndim, 
                bool _is_independence_chain,
                size_t total_sample_points);

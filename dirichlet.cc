@@ -1,17 +1,17 @@
 #include "dirichlet.h"
-#include "stats_tools.h"
+
+#include <cassert>
 #include "transformation.h"
 
 #include <gsl/gsl_randist.h>
 #include <gsl/gsl_sf_gamma.h>
 #include <gsl/gsl_math.h>
 
-#include <functional>
 #include <algorithm>
 #include <numeric>
 
-Dirichlet::Dirichlet(size_t _ndim, bool _may_underflow)
-    : SamplingFunction(_ndim, _may_underflow)
+Dirichlet::Dirichlet(size_t ndim, bool may_underflow) :
+    ndim(ndim), may_underflow(may_underflow)
 {
     this->alpha = new double[this->ndim];
     this->seed = gsl_rng_alloc(gsl_rng_taus);

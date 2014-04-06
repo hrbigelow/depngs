@@ -1,7 +1,8 @@
 #include "dist_worker.h"
 #include "pileup_tools.h"
 #include "comp_functor.h"
-#include "integrands.h"
+#include "posterior.h"
+// #include "integrands.h"
 #include "error_estimate.h"
 
 #include <cstdio>
@@ -397,7 +398,7 @@ void init_locus(dist_worker_input * input,
     sd->locus = new PileupSummary(0);
     sd->locus->load_line(*sd->current);
     sd->locus->parse(input->worker[s]->min_quality_score);
-    input->worker[s]->posterior->model()->locus_data = & sd->locus->counts;
+    input->worker[s]->posterior->ee->locus_data = & sd->locus->counts;
     input->worker[s]->params->pack(& sd->locus->counts);
                     
     // refresh sample points
