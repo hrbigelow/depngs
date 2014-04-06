@@ -9,7 +9,8 @@ class ErrorEstimate;
 class Dirichlet;
 class Posterior;
 class Metropolis;
-
+class SliceSampling;
+class PileupSummary;
 
 struct posterior_wrapper
 {
@@ -36,7 +37,6 @@ struct posterior_wrapper
     FILE * cdfs_output_fh;
     pthread_mutex_t * file_writing_mutex;
     bool compute_anomaly;
-    double * sample_points_buf;
     std::vector<double *> sample_points_sortable;
 
     char * label_string;
@@ -46,6 +46,7 @@ struct posterior_wrapper
     Dirichlet * prior;
     Posterior * posterior;
     Metropolis * sampler;
+    SliceSampling * slice_sampler;
 
     posterior_wrapper(char const* jpd_data_params_file,
                       double * prior_alphas,
@@ -54,14 +55,35 @@ struct posterior_wrapper
                       size_t num_quantiles,
                       char const* label_string,
                       FILE * cdfs_output_fh,
-                      pthread_mutex_t * file_writing_mutex,
-                      bool compute_anomaly);
+                      pthread_mutex_t * file_writing_mutex);
 
     ~posterior_wrapper();
 
-    void process_line_comp(char const* pileup_line, char * out_buffer);
-    void process_line_mode(char const* pileup_line, char * out_buffer);
+    size_t tune_mh(PileupSummary * locus, double * sample_points_buf);
+    size_t tune_ss(double * sample_points_buf);
+    void sample(PileupSummary * locus, double * sample_points_buf, char * algorithm_used);
+    void values(double * points, size_t num_points, double * values);
+
+    char * print_quantiles(PileupSummary * locus, 
+                           char * algorithm_used, 
+                           double * sample_points_buf,
+                           char * out_buffer);
+
+
+    char * process_line_comp(char const* pileup_line, char * out_buffer, double * sample_points_buf);
+    char * process_line_mode(char const* pileup_line, char * out_buffer);
 };
+
+
+size_t discrete_comp_locus_bytes(size_t num_discrete_values);
+
+char * print_discrete_comp(PileupSummary * locus,
+                           char const* sample_label,
+                           double * discrete_values,
+                           size_t num_discrete_values,
+                           size_t num_discrete_points_to_print,
+                           double min_value_to_print,
+                           char * out_buf);
 
 
 struct wrapper_input

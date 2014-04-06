@@ -214,6 +214,14 @@ double Dirichlet::log_pdf(double const* x)
 }
 
 
+double Dirichlet::log_pdf_4d(double const* x)
+{
+    assert(false);
+    return Transformation::log_dirichlet(this->alpha, x);
+}
+
+
+
 void Dirichlet::sample(double * x_star) const
 {
     gsl_ran_dirichlet(seed, this->ndim, this->alpha, x_star);

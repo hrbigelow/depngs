@@ -74,7 +74,6 @@ int main_comp(int argc, char ** argv)
     char const* cdfs_output_file;
 
     bool verbose = false;
-    bool compute_anomaly = false;
 
     char c;
     while ((c = getopt(argc, argv, "l:t:m:T:f:a:s:i:M:Q:p:q:v")) >= 0)
@@ -111,7 +110,6 @@ int main_comp(int argc, char ** argv)
     return run_comp_or_mode(max_mem,
                             num_threads,
                             min_quality_score,
-                            compute_anomaly,
                             label_string,
                             quantiles_file,
                             prior_alphas_file,

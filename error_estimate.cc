@@ -18,6 +18,7 @@
 #include <gsl/gsl_blas.h>
 #include <gsl/gsl_sf_log.h>
 #include <gsl/gsl_sf_exp.h>
+#include <gsl/gsl_math.h>
 #include <gmp.h>
 
 #include "hilbert.h"
@@ -297,60 +298,142 @@ REAL ErrorEstimate::log_likelihood(double const* sample_composition) const
 double ErrorEstimate::log_likelihood(double const* comp) const
 {
     
-    // !!! This can be taken out at some point
-    // if (! (normalized(comp, 4, 1e-10) && all_positive(comp, 4)))
-    // {
-    //     fprintf(stderr, "log_likelihood: invalid input.\n");
-    //     exit(2);
-    // }
-                
-    double sum_log_factors = 0.0;
-
     double * l = this->locus_data->fbqs_cpd;
     double * l_end = l + (this->locus_data->num_data * 4);
     unsigned long * lc = this->locus_data->raw_counts;
+    double sum_log_factors = 0.0;
 
-    // iterate over each BQS category
+    // this is the original calculation.  below is an optimized version
     for (; l != l_end; l += 4, lc++)
     {
-        sum_log_factors += (*lc)
-            * gsl_sf_log((*l) * comp[0]
-                         + (*(l+1)) * comp[1]
-                         + (*(l+2)) * comp[2]
-                         + (*(l+3)) * comp[3]);
+        double q = (*l) * comp[0] + (*(l+1)) * comp[1] + (*(l+2)) * comp[2] + (*(l+3)) * comp[3];
+        sum_log_factors += (*lc) * log2(q);
+    }
+    
+    // iterate over each BQS category
+    // this is an optimization to avoid taking log too many times
+    /*
+    int min_expon = DBL_MIN_EXP + 10;
+    double rp = 1.0;
+    int rp_expon = 0, qq_expon, q_expon;
+    for (; l != l_end; l += 4, lc++)
+    {
+        double q = (*l) * comp[0] + (*(l+1)) * comp[1] + (*(l+2)) * comp[2] + (*(l+3)) * comp[3];
+        frexp(q, & q_expon);
+        // frexp(qq, & qq_expon);
+        rp_expon += (q_expon * (*lc));
+        if (rp_expon < min_expon)
+        {
+            sum_log_factors += log2(rp);
+            rp = qq;
+            rp_expon = qq_expon;
+        }
+        else
+        {
+            double qq = gsl_pow_int(q, static_cast<int>(*lc));
+            rp *= qq;
+            assert(rp != 0);
+        }
     }   
+    sum_log_factors += log2(rp);
+    */
 
-    // mpf_t term, pterm, prod;
-    // mpf_init(term);
-    // mpf_init(pterm);
-    // mpf_init_set_ui(prod, 1);
-
-    // for (; l != l_end; l += 4, lc++)
-    // {
-    //     mpf_set_d(term, 
-    //               (*l) * comp[0]
-    //               + (*(l+1)) * comp[1]
-    //               + (*(l+2)) * comp[2]
-    //               + (*(l+3)) * comp[3]);
-
-    //     mpf_pow_ui(pterm, term, (*lc));
-    //     mpf_mul(prod, prod, pterm);
-    // }   
-    // long int exp;
-    // double mant = mpf_get_d_2exp(&exp, prod);
-    // sum_log_factors = gsl_sf_log(mant) + exp * M_LN2;
-    // mpf_clear(term);
-    // mpf_clear(pterm);
-    // mpf_clear(prod);
-
-    // if (sum_log_factors != 0)
-    // {
-    //     assert(sum_log_factors / sum_log_factors_mpf < 1.000000001);
-    //     assert(sum_log_factors_mpf / sum_log_factors < 1.000000001);
-    // }
-
+    sum_log_factors *= M_LN2;
     return sum_log_factors;
 }
+
+
+/*
+  Technique 3:
+  1. q[i] = dot_prod_i for all q
+  2. m[i], e[i] for all q[i] (frexp)
+  3. em[i] = m[i] ** ct[i] for all i (these should not overflow or underflow)
+  4. ee[i] = e[i] * ct[i] for all i
+  5. max_ee = max over i of ee[i]
+
+In a second loop:
+  6. emn[i] = em[i] * 2**(max_ee - ee[i])  (some of these will underflow to zero, silently)
+  7. sum_m = sum over i of emn[i]
+  8. lsm = log2(sum_m) + max_ee
+ */
+
+
+double log2_likelihood(ErrorEstimate * ee, double const* x)
+{
+    double * cpd_beg = ee->locus_data->fbqs_cpd;
+    double * cpd_end = cpd_beg + (ee->locus_data->num_data * 4);
+    unsigned long * ct_beg = ee->locus_data->raw_counts;
+
+    double * cpd;
+    unsigned long * ct;
+
+    // this is the original calculation.  below is an optimized version
+    int s = 0;
+    double p = 1.0;
+    double lp = 0.0;
+    int cti_floor = 0;
+    int min_exp = DBL_MIN_EXP;
+    for (cpd = cpd_beg, ct = ct_beg; cpd != cpd_end; cpd += 4, ++ct)
+    {
+        int e;
+        int cti = static_cast<int>(*ct);
+        double q = (cpd[0] * x[0]) + (cpd[1] * x[1]) + (cpd[2] * x[2]) + (cpd[3] * x[3]);
+        double m = frexp(q, &e);
+        if (cti > 50 || cti_floor < min_exp)
+        {
+            // as it turns out, taking log2 takes ~25 ns, but doing gsl_pow_int
+            // takes 60 to 150 ns for powers above about 50
+            // also, since m is in [0.5, 1), any cti > 200 or so will cause underflow)
+            lp += cti * log2(q);
+        }
+        else
+        {
+            // this will have an exponent
+            double em = gsl_pow_int(m, cti);
+            s += (e * cti);
+            p *= em;
+            cti_floor -= cti;
+        }
+    }
+
+    double lsm = log2(p) + s + lp;
+
+    // assert(! isinf(ret));
+    // assert(! isinf(ret2));
+    return lsm * M_LN2;
+}
+
+
+
+
+// mpf_t term, pterm, prod;
+// mpf_init(term);
+// mpf_init(pterm);
+// mpf_init_set_ui(prod, 1);
+
+// for (; l != l_end; l += 4, lc++)
+// {
+//     mpf_set_d(term, 
+//               (*l) * comp[0]
+//               + (*(l+1)) * comp[1]
+//               + (*(l+2)) * comp[2]
+//               + (*(l+3)) * comp[3]);
+
+//     mpf_pow_ui(pterm, term, (*lc));
+//     mpf_mul(prod, prod, pterm);
+// }   
+// long int exp;
+// double mant = mpf_get_d_2exp(&exp, prod);
+// sum_log_factors = gsl_sf_log(mant) + exp * M_LN2;
+// mpf_clear(term);
+// mpf_clear(pterm);
+// mpf_clear(prod);
+
+// if (sum_log_factors != 0)
+// {
+//     assert(sum_log_factors / sum_log_factors_mpf < 1.000000001);
+//     assert(sum_log_factors_mpf / sum_log_factors < 1.000000001);
+// }
 
 
 

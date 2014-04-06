@@ -8,7 +8,6 @@
 int run_comp_or_mode(size_t max_mem,
                      size_t num_threads,
                      size_t min_quality_score,
-                     bool compute_anomaly,
                      char const* label_string,
                      char const* quantiles_file,
                      char const* prior_alphas_file,
@@ -54,13 +53,11 @@ int run_comp_or_mode(size_t max_mem,
     FILE * cdfs_output_fh = open_if_present(cdfs_output_file, "w");
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
 
-
-    PileupSummary pileup(0);
     size_t chunk_size = max_mem;
 
     char * chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = pileup.FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size);
+    FastqType ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
 
     if (ftype == None)
     {
@@ -118,8 +115,7 @@ int run_comp_or_mode(size_t max_mem,
                                   num_quantiles,
                                   label_string,
                                   cdfs_output_fh,
-                                  & file_writing_mutex,
-                                  compute_anomaly);
+                                  & file_writing_mutex);
     }
     
     // number of characters needed for a single inference

@@ -11,6 +11,7 @@ int usage()
             "Usage:\n\n"
             "dep comp       Estimate per-locus base composition of diverse population\n"
             "dep mode       Estimate most probable per-locus base composition\n"
+            "dep dist       Estimate sample-pairwise base composition distance with error bars\n"
             "dep discomp    Estimate per-locus discrete genotype of clonal population\n"
             // "dep anomaly    Scores the degree of data anomaly\n"
             "dep simp       Simulate pileup file\n"
@@ -37,6 +38,10 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "mode") == 0)
     {
         return main_mode(argc - 1, argv + 1);
+    }
+    else if (strcmp(argv[1], "dist") == 0)
+    {
+        return main_dist(argc - 1, argv + 1);
     }
     else if (strcmp(argv[1], "discomp") == 0)
     {

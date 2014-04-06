@@ -303,11 +303,14 @@ double * ParseNumbersFile(char const* numbers_file, size_t * num_numbers)
 }
 
 
-//opens the file and returns file handle if file is not '/dev/null'
+// if file is not NULL and not '/dev/null', attempts to
+// open the file.  In this case, it is an error if it cannot open the file.
+// otherwise, returns NULL
 FILE * open_if_present(char const* file, char const* mode)
 {
-    if (strcmp(file, "/dev/null") == 0 ||
-        strcmp(file, "") == 0)
+    if (file == NULL
+        || strcmp(file, "/dev/null") == 0
+        || strcmp(file, "") == 0)
     {
         return NULL;
     }
@@ -339,4 +342,17 @@ int close_if_present(FILE * fh)
     {
         return 0;
     }
+}
+
+
+
+// Given a range [begin, end) and a number of chunks num_chunks to
+// divide into, return the begin or end of chunk chunk, in [0,
+// num_chunks), whether to return the begin or end of the range is
+// determined by 'give_begin'
+size_t range_chunk_offset(size_t begin, size_t end, size_t num_chunks, size_t chunk, bool give_begin)
+{
+    assert(begin < end);
+    assert(chunk < num_chunks);
+    return (end - begin) * (chunk + (give_begin ? 0 : 1)) / num_chunks;
 }

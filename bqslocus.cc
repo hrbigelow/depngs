@@ -63,6 +63,8 @@ int bqslocus_usage()
             "Usage: dep bqslocus input.pileup label base_qual_strand.cts base_strand.cts strand.cts\n\n"
             "Set any of base_qual_strand.cts, base_strand.cts, strand.cts to /dev/null\n"
             "if not needed.  (Will run faster as well.)\n\n"
+            "Options:\n\n"
+            "-t INT      number of threads to use [1]\n"
             );
     return 1;
 }
@@ -71,7 +73,19 @@ int bqslocus_usage()
 int main_bqslocus(int argc, char ** argv)
 {
 
-    if (argc != 5)
+    char c;
+    size_t num_threads = 1;
+
+    while ((c = getopt(argc, argv, "t:")) >= 0)
+    {
+        switch(c)
+        {
+        case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
+        default: return bqslocus_usage(); break;
+        }
+    }
+
+    if (argc - optind != 5)
     {
         return bqslocus_usage();
     }
@@ -140,12 +154,10 @@ int main_bqslocus(int argc, char ** argv)
 
     char line_label[1000];
 
-    PileupSummary summary(0);
-
     size_t chunk_size = 1024 * 1024;
     char * chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = summary.FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size);
+    FastqType ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
     PileupSummary::SetFtype(ftype);
 
     size_t nbytes_read, nbytes_unused = 0;

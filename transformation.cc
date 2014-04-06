@@ -54,9 +54,9 @@ namespace Transformation
         
         for (size_t d = 0; d != 3; ++d)
         {
-            gsl_error_handler_t * original_handler = gsl_set_error_handler_off();
+            // gsl_error_handler_t * original_handler = gsl_set_error_handler_off();
             enegx = gsl_sf_exp(- x[d]);
-            gsl_set_error_handler(original_handler);
+            // gsl_set_error_handler(original_handler);
 
             sgp = & sg[d];
 
@@ -230,7 +230,7 @@ namespace Transformation
     void composition_to_r3_sigmoid(double const* c, double * r)
     {
         
-        gsl_error_handler_t * original_handler = gsl_set_error_handler_off();
+        // gsl_error_handler_t * original_handler = gsl_set_error_handler_off();
         double arg[3];
         arg[0] = 1.0 / (c[0] + c[1]) - 1.0;
         arg[1] = (c[3] == 0 && c[2] == 0) ? 1 : c[3] / c[2];
@@ -247,7 +247,7 @@ namespace Transformation
         status = gsl_sf_log_e(arg[2], & result);
         r[2] = status ? FLT_MAX : ((gsl_isinf(result.val) == 1) ? -FLT_MAX : -result.val);
 
-        gsl_set_error_handler(original_handler);
+        // gsl_set_error_handler(original_handler);
     }
 
 

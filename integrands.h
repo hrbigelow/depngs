@@ -104,6 +104,7 @@ public:
 
     double pdf(double const* x);
     double log_pdf(double const* x);
+
     REAL marginal_cdf(double const xcoord, size_t const marg_dim) const;
 /*     REAL marginal_truncated_cdf(double const xcoord, size_t const marg_dim); */
     REAL inv_marginal_cdf(double const p, size_t const marg_dim) const;
@@ -138,6 +139,9 @@ public:
 
     REAL pdf(double const* x);
     REAL log_pdf(double const* x);
+
+    double log_pdf_4d(double const* x);
+
     ErrorEstimate * model()
     {
         return ee;

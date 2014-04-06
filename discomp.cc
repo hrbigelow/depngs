@@ -53,7 +53,7 @@ int main_discomp(int argc, char ** argv)
     pileup_input_file = argv[optind + 2];
     posterior_output_file = argv[optind + 3];
 
-    size_t num_evaluation_points;
+    size_t num_evaluation_points = 0;
 
     printf ("label_string: %s\n"
             "evaluation_points_file: %s\n"

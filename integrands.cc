@@ -9,6 +9,7 @@
 #include "stats_tools.h"
 #include "error_estimate.h"
 
+// not thread safe
 void Integrand::store_call(double const* x, double y)
 {
     std::copy(x, x + this->ndim, this->last_point);
@@ -363,10 +364,10 @@ REAL Posterior::log_pdf(double const* x)
 
     double y;
 //     static size_t recall_count = 0;
-    if (this->get_last_call(x, &y))
-    {
-        return y;
-    }
+    // if (this->get_last_call(x, &y))
+    // {
+    //     return y;
+    // }
 
     double xx[4];
     std::copy(x, x+4, xx);
@@ -384,8 +385,17 @@ REAL Posterior::log_pdf(double const* x)
     {
         y = -DBL_MAX;
     }
-    this->store_call(x, y);
+    // this->store_call(x, y);
     return y;
 }
 
+
+double Posterior::log_pdf_4d(double const*x)
+{
+    double ret = 
+        // ee->log_likelihood(x) 
+        log_likelihood(ee, x);
+        + ee->log_dirichlet_prior(x);
+    return ret;
+}
 

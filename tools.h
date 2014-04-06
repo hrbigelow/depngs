@@ -270,4 +270,12 @@ double * ParseNumbersFile(char const* numbers_file, size_t * num_numbers);
 FILE * open_if_present(char const* file, char const* mode);
 int close_if_present(FILE * fh);
 
+
+// Given a range [begin, end) and a number of chunks num_chunks to
+// divide into, return the begin or end of chunk chunk, in [0,
+// num_chunks), whether to return the begin or end of the range is
+// determined by 'give_begin'
+size_t range_chunk_offset(size_t begin, size_t end, size_t num_chunks, size_t chunk, bool give_begin);
+
+
 #endif //_TOOLS_H

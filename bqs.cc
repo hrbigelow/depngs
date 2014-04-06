@@ -9,29 +9,87 @@ int bqs_usage()
 {
     fprintf(stderr,
             "\nTally {basecall, quality score, strand} counts in a sample pileup file\n"
-            "Usage: dep bqs sample.pileup sample.bqs\n\n");
+            "Usage: dep bqs [options] sample.pileup sample.bqs\n"
+            "Options:\n\n"
+            "-t INT      number of threads to use [1]\n"
+            "-m INT      number bytes of memory to use [100000000]\n"
+            );
     return 1;
 }
 
+extern char *optarg;
+extern int optind;
+
+
+struct fastq_tally_input
+{
+    size_t thread_num;
+    std::vector<char *>::iterator beg;
+    std::vector<char *>::iterator end;
+    size_t * counts; // do not own
+    size_t min_quality_score;
+    fastq_tally_input(size_t thread_num,
+                      std::vector<char *>::iterator beg,
+                      std::vector<char *>::iterator end,
+                      size_t * counts,
+                      size_t min_quality_score) :
+        thread_num(thread_num), beg(beg), end(end), counts(counts),
+        min_quality_score(min_quality_score)
+    {
+    }
+    
+};
+
+
+void * fastq_tally_worker(void * args)
+{
+    fastq_tally_input * input = static_cast<fastq_tally_input *>(args);
+
+    PileupSummary locus(0);
+    std::vector<char *>::iterator it;
+    for (it = input->beg; it != input->end; ++it)
+    {
+        locus.load_line(*it);
+        locus.parse(input->min_quality_score);
+        for (size_t c = 0; c != locus.counts.num_data; ++c)
+        {
+            input->counts[locus.counts.stats_index[c]] += locus.counts.raw_counts[c];
+        }
+    }
+    pthread_exit((void*) 0);
+}
+
+
 int main_bqs(int argc, char ** argv)
 {
+    char c;
+    size_t num_threads = 1;
+    size_t max_mem = 100000000;
 
-    if (argc != 3)
+    while ((c = getopt(argc, argv, "t:m:")) >= 0)
+    {
+        switch(c)
+        {
+        case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
+        case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
+        default: return bqs_usage(); break;
+        }
+    }
+    if (argc - optind != 2)
     {
         return bqs_usage();
     }
 
-    char * pileup_input_file = argv[1];
-    char * bqs_output_file = argv[2];
+    char * pileup_input_file = argv[optind];
+    char * bqs_output_file = argv[optind + 1];
     size_t min_quality_score = 0;
 
     //initialize fastq_type;
-    PileupSummary pileup(0);
 
-    size_t chunk_size = 1024 * 1024;
+    size_t chunk_size = max_mem;
     char * chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = pileup.FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size);
+    FastqType ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
 
     if (ftype == None)
     {
@@ -45,42 +103,72 @@ int main_bqs(int argc, char ** argv)
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
     FILE * bqs_output_fh = open_if_present(bqs_output_file, "w");
     
-    size_t nbytes_read, nbytes_unused = 0;
     char * last_fragment;
-    char * read_pointer = chunk_buffer_in;
-
+    size_t max_pileup_line_size = 1000000; // !!! fix this
+    size_t bytes_read;
+    size_t bytes_wanted = chunk_size - max_pileup_line_size;
     size_t * counts = new size_t[Nucleotide::num_bqs];
-    std::fill(counts, counts + Nucleotide::num_bqs, 0);
+    size_t ** counts_t = new size_t *[num_threads];
+    fastq_tally_input ** worker_input = new fastq_tally_input *[num_threads];
+    pthread_t * threads = new pthread_t[num_threads];
+
+    std::vector<char *> lines;
+
+    for (size_t t = 0; t != num_threads; ++t)
+    {
+        counts_t[t] = new size_t[Nucleotide::num_bqs];
+        std::fill(counts_t[t], counts_t[t] + Nucleotide::num_bqs, 0);
+        worker_input[t] = new fastq_tally_input(t, lines.begin(), lines.end(), counts_t[t],
+                                                min_quality_score);
+    }
+
+    size_t fread_nsec;
 
     while (! feof(pileup_input_fh))
     {
-        nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
+        bytes_read = FileUtils::read_until_newline(chunk_buffer_in, bytes_wanted,
+                                                   max_pileup_line_size, pileup_input_fh,
+                                                   & fread_nsec);
+        
+        lines = FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
 
-        std::vector<char *> pileup_lines =
-            FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
-
-        std::vector<char *>::iterator pit;
-        read_pointer[nbytes_read] = '\0';
-
-        //for (size_t l = 0; l != pileup_lines.size(); ++l)
-        for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
+        for (size_t t = 0; t != num_threads; ++t)
         {
-            PileupSummary locus(0);
-            locus.load_line((*pit));
-            locus.parse(min_quality_score);
+            size_t b = range_chunk_offset(0, lines.size(), num_threads, t, true);
+            size_t e = range_chunk_offset(0, lines.size(), num_threads, t, false);
+            worker_input[t]->beg = lines.begin() + b;
+            worker_input[t]->end = lines.begin() + e;
 
-            for (size_t c = 0; c != locus.counts.num_data; ++c)
-            {
-                counts[locus.counts.stats_index[c]] += locus.counts.raw_counts[c];
-            }
+            int rc = pthread_create(&threads[t], NULL, &fastq_tally_worker, 
+                                    static_cast<void *>(worker_input[t]));
+            assert(rc == 0);
         }
-        nbytes_unused = strlen(last_fragment);
-        memmove(chunk_buffer_in, last_fragment, nbytes_unused);
-        read_pointer = chunk_buffer_in + nbytes_unused;
+
+        for (size_t t = 0; t != num_threads; ++t) {
+            void *end;
+            int rc = pthread_join(threads[t], &end);
+            assert(0 == rc);
+        }
+
     }
     fclose(pileup_input_fh);
 
     delete chunk_buffer_in;
+    delete threads;
+
+    std::fill(counts, counts + Nucleotide::num_bqs, 0);
+    for (size_t t = 0; t != num_threads; ++t)
+    {
+        for (size_t bqs = 0; bqs != Nucleotide::num_bqs; ++bqs)
+        {
+            counts[bqs] += worker_input[t]->counts[bqs];
+        }
+        delete counts_t[t];
+        delete worker_input[t];
+    }
+    delete counts_t;
+    delete worker_input;
+
 
     char basecall;
     size_t quality;
@@ -98,48 +186,6 @@ int main_bqs(int argc, char ** argv)
 
     delete counts;
 
-
-    /*
-    size_t max_quality_present = 0;
-
-max_   std::map<std::string, size_t>::const_iterator datum_iter;
-
-    //find the maximum nonzero quality present
-    for (datum_iter = fake_stats.name_mapping.begin();
-         datum_iter != fake_stats.name_mapping.end();
-         ++datum_iter)
-    {
-        BaseQualStrandReader::Datum datum = 
-            reader.get_datum_from_name((*datum_iter).first);
-        size_t datum_index = (*datum_iter).second;
-
-        if (all_counts[datum_index] > 0.0)
-        {
-            max_quality_present = std::max(max_quality_present, datum.quality);
-        }
-        
-    }
-
-    for (datum_iter = fake_stats.name_mapping.begin();
-         datum_iter != fake_stats.name_mapping.end();
-         ++datum_iter)
-    {
-        BaseQualStrandReader::Datum datum = 
-            reader.get_datum_from_name((*datum_iter).first);
-        size_t datum_index = (*datum_iter).second;
-
-        if (datum.quality <= max_quality_present)
-        {
-            fprintf(bqs_output_fh, "%c\t%Zu\t%c\t%Zu\n",
-                    datum.called_base,
-                    datum.quality,
-                    datum.strand,
-                    static_cast<size_t>(all_counts[datum_index]));
-        }
-    }
-    
-    delete all_counts;
-    */
     close_if_present(bqs_output_fh);
 
     return 0;

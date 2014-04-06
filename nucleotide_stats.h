@@ -30,7 +30,7 @@ struct packed_counts
     unsigned long * raw_counts;
     size_t * stats_index;
     double * fbqs_cpd; // founder base likelihood in f,b,q,s order
-    size_t num_data;
+    size_t num_data; // number of elements in 'raw_counts' and 'stats_index'.  fbqs_cpd has 4 * raw_counts elements.
 };
 
 

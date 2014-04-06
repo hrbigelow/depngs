@@ -52,7 +52,7 @@ int main_simp(int argc, char ** argv)
         return 0;
     }
 
-    FastqType fastq_type;
+    FastqType fastq_type = None;
     if (strcmp(ftype_string, "Sanger") == 0)
     {
         fastq_type = Sanger;

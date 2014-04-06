@@ -14,8 +14,9 @@ INSTALLDATA = /usr/bin/install -c -m 644
 OBJDIR = obj
 CPPFLAGS = -I. -I..
 OPT = -O0
-CXXFLAGS = -ggdb3 $(OPT) -Wall -std=gnu++0x
-LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz
+PROF = 
+CXXFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu++0x
+LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt
 
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
 
@@ -28,13 +29,13 @@ EXE = dep test_dirichlet
 .PHONY : all
 all : $(EXE)
 
-dep : $(addprefix $(OBJDIR)/, dep.o comp.o mode.o discomp.o simp.o	\
-	simc.o bqs.o bqslocus.o bqs2jpd.o metropolis.o sampling.o		\
-	integrands.o tools.o transformation.o error_estimate.o			\
-	pileup_tools.o stats_tools.o dirichlet.o slice_sampling.o		\
-	hilbert.o simulation.o nucleotide_stats.o nucleotide_reader.o	\
-	base_qual_strand_reader.o usage_strings.o anomaly.o				\
-	anomaly_tools.o) ../samutil/obj/file_utils.o
+dep : $(addprefix $(OBJDIR)/, dep.o comp.o mode.o comp_functor.o		\
+	discomp.o simp.o simc.o bqs.o bqslocus.o bqs2jpd.o metropolis.o		\
+	sampling.o integrands.o tools.o transformation.o error_estimate.o	\
+	pileup_tools.o stats_tools.o dirichlet.o slice_sampling.o			\
+	hilbert.o simulation.o nucleotide_stats.o usage_strings.o			\
+	run_comp_or_mode.o anomaly_tools.o dist.o dist_worker.o)			\
+	../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 quantile_test : quantile_test.o sampling.o
@@ -47,6 +48,8 @@ test_dirichlet : test_dirichlet.o
 filter_sam_by_score : filter_sam_by_score.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
+distance_wise : obj/distance_wise.o ../samutil/obj/file_utils.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 -include $(patsubst ./%.cc,$(OBJDIR)/%.d,$(SOURCES))
 

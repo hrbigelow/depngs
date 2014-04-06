@@ -317,6 +317,7 @@ void NucleotideStats::pack(packed_counts * c)
         for (size_t f = 0; f != 4; ++f)
         {
             (*buf) = this->founder_base_likelihood[f][code];
+            assert(*buf != 0.0);
             ++buf;
         }
     }

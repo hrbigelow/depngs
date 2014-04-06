@@ -42,7 +42,8 @@ class Metropolis
                 size_t const burn_in,
                 size_t const every_nth,
                 double * proposal_mean,
-                double * proposal_variance);
+                double * proposal_variance,
+                double * alt_sample_points);
     
     double step(double const* z_tau, double * z_tau_next);
     

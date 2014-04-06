@@ -73,6 +73,7 @@ void PileupSummary::load_line(char const* read_pointer)
     if (scanned_fields != 4)
     {
         fprintf(stderr, "PileupSummary::load_line: Warning: badly formatted line\n");
+        assert(false);
         exit(10);
     }
 
@@ -158,6 +159,7 @@ void PileupSummary::load_line(char const* read_pointer)
                 indel_sequence[indel_size] = '\0';
 
                 // fgets(indel_sequence, indel_size + 1, file);
+                /*
                 for (int i = 0; i != indel_size; ++i)
                 {
                     indel_sequence[i] = toupper(indel_sequence[i]);
@@ -172,10 +174,11 @@ void PileupSummary::load_line(char const* read_pointer)
                     indel.insert(std::make_pair(indel_str, 0));
                 }
                 indel[indel_str]++;
+                */
             }
 
             //indel size histogram considers matches to be 'zero-length indels'
-            this->indel_counts[indel_bin]++;
+            // this->indel_counts[indel_bin]++;
                 
         }
 
@@ -295,9 +298,24 @@ void PileupSummary::parse(size_t min_quality_score)
     }
 
     this->counts.num_data = nd;
+    if (this->counts.raw_counts != NULL)
+    {
+        delete this->counts.raw_counts;
+    }
     this->counts.raw_counts = new unsigned long[nd];
+
+    if (this->counts.stats_index != NULL)
+    {
+        delete this->counts.stats_index;
+    }
     this->counts.stats_index = new size_t[nd];
+
+    if (this->counts.fbqs_cpd != NULL)
+    {
+        delete this->counts.fbqs_cpd;
+    }
     this->counts.fbqs_cpd = new double[nd * 4];
+
     this->read_depth = effective_read_depth;
     std::copy(rc_tmp, rc_tmp + nd, this->counts.raw_counts);
     std::copy(rc_ind_tmp, rc_ind_tmp + nd, this->counts.stats_index);
@@ -308,40 +326,111 @@ void PileupSummary::parse(size_t min_quality_score)
 }
 
 
+typedef char CODES_FLAGS[256];
 
-FastqType PileupSummary::FastqFileType(char const* pileup_file,
-                                       char * chunk_buffer_in,
-                                       size_t chunk_size)
+struct fastq_type_input
+{
+    size_t thread_num;
+    std::vector<char *>::iterator beg;
+    std::vector<char *>::iterator end;
+    CODES_FLAGS * seen_codes_flags; // do not own this
+    fastq_type_input(size_t thread_num,
+                     std::vector<char *>::iterator beg,
+                     std::vector<char *>::iterator end,
+                     CODES_FLAGS * seen_codes_flags) :
+        thread_num(thread_num), beg(beg), end(end), seen_codes_flags(seen_codes_flags)
+    {
+    }
+    
+};
+
+void * fastq_type_worker(void * args)
+{
+    fastq_type_input * input = static_cast<fastq_type_input *>(args);
+
+    PileupSummary locus(0);
+    std::vector<char *>::iterator it;
+    for (it = input->beg; it != input->end; ++it)
+    {
+        locus.load_line(*it);
+        for (size_t rd = 0; rd != locus.read_depth; ++rd)
+        {
+            (*input->seen_codes_flags)[static_cast<size_t>(locus.quality_codes[rd])] = 1;
+        }
+    }
+    pthread_exit((void*) 0);
+}
+
+
+// determine the fastq offset of this pileup file
+FastqType FastqFileType(char const* pileup_file,
+                        char * chunk_buffer_in,
+                        size_t chunk_size,
+                        size_t num_threads)
 {
     FILE * pileup_input_fh = open_if_present(pileup_file, "r");
-    char seen_codes_flags[256];
+    CODES_FLAGS seen_codes_flags;
     std::fill(seen_codes_flags, seen_codes_flags + 256, 0);
 
-    size_t nbytes_read, nbytes_unused = 0;
     char * last_fragment;
-    char * read_pointer = chunk_buffer_in;
+    size_t max_pileup_line_size = 1000000;
+    size_t bytes_wanted = chunk_size - max_pileup_line_size - 1;
+    size_t bytes_read;
+    fastq_type_input ** worker_input = new fastq_type_input *[num_threads];
+    std::vector<char *> lines;
+    CODES_FLAGS * seen_codes_flags_t = new CODES_FLAGS[num_threads];
+    pthread_t * threads = new pthread_t[num_threads];
+
+    for (size_t t = 0; t != num_threads; ++t)
+    {
+        std::fill(seen_codes_flags_t[t], seen_codes_flags_t[t] + 256, 0);
+        worker_input[t] = 
+            new fastq_type_input(t, lines.begin(), lines.end(), &seen_codes_flags_t[t]);
+    }
+
+    size_t fread_nsec;
+    size_t total_bytes_read = 0;
+    size_t total_fread_nsec = 0;
 
     while (! feof(pileup_input_fh))
     {
-        nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
+        bytes_read = FileUtils::read_until_newline(chunk_buffer_in, bytes_wanted,
+                                                   max_pileup_line_size, pileup_input_fh,
+                                                   &fread_nsec);
 
-        std::vector<char *> lines =
-            FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
-        
-        read_pointer[nbytes_read] = '\0';
-        
-        for (size_t l = 0; l != lines.size(); ++l)
+        lines = FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
+        total_bytes_read += bytes_read;
+        total_fread_nsec += fread_nsec;
+
+        for (size_t t = 0; t != num_threads; ++t)
         {
-            this->load_line(lines[l]);
-            for (size_t rd = 0; rd != this->read_depth; ++rd)
-            {
-                seen_codes_flags[static_cast<size_t>(this->quality_codes[rd])] = 1;
-            }
+            size_t b = range_chunk_offset(0, lines.size(), num_threads, t, true);
+            size_t e = range_chunk_offset(0, lines.size(), num_threads, t, false);
+
+            worker_input[t]->beg = lines.begin() + b;
+            worker_input[t]->end = lines.begin() + e;
+
+            // fprintf(stdout, "thread %Zu: %Zu to %Zu of %Zu\n", t, b, e, lines.size());
+            int rc = pthread_create(&threads[t], NULL, &fastq_type_worker, 
+                                    static_cast<void *>(worker_input[t]));
+            assert(rc == 0);
         }
-        nbytes_unused = strlen(last_fragment);
-        memmove(chunk_buffer_in, last_fragment, nbytes_unused);
-        read_pointer = chunk_buffer_in + nbytes_unused;
+
+        for (size_t t = 0; t != num_threads; ++t) {
+            void *end;
+            int rc = pthread_join(threads[t], &end);
+            assert(0 == rc);
+        }
+        
     }
+    fprintf(stderr, "FastqFileType: read %Zu bytes in %Zu ns.  (%5.3f MB/s)\n",
+            total_bytes_read, total_fread_nsec,
+            static_cast<float>(total_bytes_read) 
+            / static_cast<float>(total_fread_nsec) / 1000.0);
+            
+
+    delete threads;
+
     fclose(pileup_input_fh);
 
     char seen_codes[256];
@@ -349,12 +438,23 @@ FastqType PileupSummary::FastqFileType(char const* pileup_file,
         
     for (size_t c = 0; c != 256; ++c)
     {
-        if (seen_codes_flags[c] == 1)
+        for (size_t t = 0; t != num_threads; ++t)
         {
-            *seen_codes_ptr++ = static_cast<char>(c);
+            if ((*worker_input[t]->seen_codes_flags)[c] == 1)
+            {
+                *seen_codes_ptr++ = static_cast<char>(c);
+                break;
+            }
         }
     }
     *seen_codes_ptr = '\0';
+
+    for (size_t t = 0; t != num_threads; ++t)
+    {
+        delete worker_input[t];
+    }
+    delete worker_input;
+    delete seen_codes_flags_t;
 
     fprintf(stderr, "Fastq codes seen in this file: %s\n", seen_codes);
     FastqType ftype = get_fastq_type(seen_codes);

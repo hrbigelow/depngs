@@ -5,6 +5,8 @@ int main_comp(int argc, char ** argv);
 
 int main_mode(int argc, char ** argv);
 
+int main_dist(int argc, char ** argv);
+
 int main_discomp(int argc, char ** argv);
 
 int main_simp(int argc, char ** argv);

@@ -313,17 +313,26 @@ double window_averaged_mode(std::vector<double *> * points,
 }
 
 
-void print_quantiles(char * out_buf, 
-                     double * sample_points,
-                     size_t num_points,
-                     double const* mode_point,
-                     char const* line_label,
-                     char const** dimension_labels,
-                     char const* sums_label,
-                     double const* quantiles, 
-                     size_t num_quantiles,
-                     size_t num_dimensions)
+// this should be in synch with print_marginal_quantiles
+// there are 5 lines per locus
+size_t marginal_quantiles_locus_bytes(size_t num_quantiles)
 {
+    return 5 * (71 + (10 * num_quantiles) + 11 + num_quantiles);
+}
+
+// return next write position after writing to out_buf
+char * print_marginal_quantiles(char * out_buf, 
+                                double * sample_points,
+                                size_t num_points,
+                                double const* mode_point,
+                                char const* line_label,
+                                char const** dimension_labels,
+                                char const* sums_label,
+                                double const* quantiles, 
+                                size_t num_quantiles)
+{
+
+    size_t num_dimensions = 4;
 
     double * quantile_sums = new double[num_quantiles];
     std::fill(quantile_sums, quantile_sums + num_quantiles, 0.0);
@@ -397,6 +406,7 @@ void print_quantiles(char * out_buf,
     delete quantile_sums;
     delete quantile_values;
 
+    return out_buf;
 }
 
 struct less_ptr

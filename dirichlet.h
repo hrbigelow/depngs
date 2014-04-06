@@ -29,6 +29,8 @@ public:
 
     double pdf(double const* x);
     double log_pdf(double const* x);
+
+    double log_pdf_4d(double const* x);
     void sample(double * x) const;
     void sample_conditioned(double const* x_tau, 
                             double * x_star);

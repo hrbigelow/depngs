@@ -60,16 +60,17 @@ double window_averaged_mode(std::vector<double *> * points,
                             size_t window_size);
 
 
-void print_quantiles(char * out_buf,
-                     double * sample_points,
-                     size_t num_points,
-                     double const* mode_point,
-                     char const* line_label,
-                     char const** dimension_labels,
-                     char const* sums_label,
-                     double const* quantiles, 
-                     size_t num_quantiles,
-                     size_t num_dimensions);
+size_t marginal_quantiles_locus_bytes(size_t num_quantiles);
+
+char * print_marginal_quantiles(char * out_buf,
+                                double * sample_points,
+                                size_t num_points,
+                                double const* mode_point,
+                                char const* line_label,
+                                char const** dimension_labels,
+                                char const* sums_label,
+                                double const* quantiles, 
+                                size_t num_quantiles);
 
 void print_numerical_cdfs(FILE * out_fh, 
                           char const* label,

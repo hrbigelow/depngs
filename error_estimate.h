@@ -32,9 +32,9 @@ class NucleotideStats;
 class LocusSummary;
 
 
-class Discrete {
+/* class Discrete { */
     
-};
+/* }; */
 
 class ErrorEstimate {
 
@@ -121,6 +121,8 @@ class ErrorEstimate {
 
         
 };
+
+double log_likelihood(ErrorEstimate * ee, double const* comp);
 
 //tells whether x is within the unit hypercube
 bool within_hypercube(double const x[3]);

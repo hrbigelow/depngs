@@ -304,13 +304,16 @@ double Metropolis::step(double const* z_tau, double * z_tau_next)
 
 
 /* sample from the integrand using the Metropolis algorithm.
-   populates the sample buffer */
+   populates the sample buffer 
+   if alt_sample_points are provided, use those instead of internal
+*/
 void 
 Metropolis::sample(size_t num_samples_to_take,
                    size_t burn_in,
                    size_t every_nth,
                    double * proposal_mean,
-                   double * proposal_variance)
+                   double * proposal_variance,
+                   double * alt_sample_points)
 {
     if (num_samples_to_take > this->num_points)
     {
@@ -328,6 +331,10 @@ Metropolis::sample(size_t num_samples_to_take,
 //         exit(1);
 //     }
 
+
+    double * used_sample_points = (alt_sample_points == NULL) 
+        ? this->sample_points
+        : alt_sample_points;
 
     //update the markov chain at each step.
     srand(time(NULL));
@@ -353,7 +360,7 @@ Metropolis::sample(size_t num_samples_to_take,
 
         if (step_count > burn_in && step_count % every_nth == 0)
         {
-            std::copy(z_tau, z_tau + this->ndim, this->sample_points 
+            std::copy(z_tau, z_tau + this->ndim, used_sample_points
                       + (sample_count * this->ndim));
             ++sample_count;
         }

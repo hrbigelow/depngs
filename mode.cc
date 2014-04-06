@@ -16,7 +16,6 @@ int mode_usage()
             "-p FILE     alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-q INT      %s\n"
             "-v <empty>  if present, be verbose [absent]\n"
-            "-a <empty>  if present, compute anomaly scores [absent]\n"
             "\n"
             "Output fields are:\n"
             "label_string reference position reference_base "
@@ -53,10 +52,9 @@ int main_mode(int argc, char ** argv)
     char const* posterior_output_file;
 
     bool verbose = false;
-    bool compute_anomaly = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:p:q:va")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:p:q:v")) >= 0)
     {
         switch(c)
         {
@@ -66,7 +64,6 @@ int main_mode(int argc, char ** argv)
         case 'p': strcpy(prior_alphas_file, optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
         case 'v': verbose = true; break;
-        case 'a': compute_anomaly = true; break;
         default: return mode_usage(); break;
         }
     }
@@ -82,7 +79,6 @@ int main_mode(int argc, char ** argv)
     return run_comp_or_mode(max_mem,
                             num_threads,
                             min_quality_score,
-                            compute_anomaly,
                             label_string,
                             "/dev/null",
                             prior_alphas_file,

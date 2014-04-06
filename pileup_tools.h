@@ -22,14 +22,17 @@ public:
     static int quality_code_offset;
     static FastqType fastq_type;
 
- PileupSummary(int indel_histo_size) : indel_histo_size(indel_histo_size),
+ PileupSummary(int indel_histo_size) : 
+    // indel_histo_size(indel_histo_size),
         bases(NULL), bases_upper(NULL), quality_codes(NULL)
     {
         counts.raw_counts = NULL;
         counts.stats_index = NULL;
         counts.fbqs_cpd = NULL;
+        counts.num_data = 0;
         memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
         memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
+        /*
         indel_counts = new int[indel_histo_size * 2 + 1];
         indel_seqs = new std::map<std::string, int>[indel_histo_size * 2 + 1];
         indel_counts += indel_histo_size;
@@ -39,14 +42,15 @@ public:
             indel_counts[i] = 0;
             indel_seqs[i] = std::map<std::string, int>();
         }
+        */
         sum_of_counts = 0;
     }
 
 
     ~PileupSummary()
     {
-        delete &indel_counts[-indel_histo_size];
-        delete [] &indel_seqs[-indel_histo_size];
+        /* delete &indel_counts[-indel_histo_size]; */
+        /* delete [] &indel_seqs[-indel_histo_size]; */
         if (bases != NULL)
         {
             delete bases;
@@ -72,6 +76,11 @@ public:
             delete this->counts.stats_index;
             this->counts.stats_index = NULL;
         }
+        if (this->counts.fbqs_cpd != NULL)
+        {
+            delete this->counts.fbqs_cpd;
+            this->counts.fbqs_cpd = NULL;
+        }
     }
 
     void load_line(char const* line);
@@ -80,11 +89,11 @@ public:
     int position;
     char reference_base;
     size_t read_depth;
-    int indel_histo_size;
+    // int indel_histo_size;
     int base_counts[num_base_symbols]; //ACGTNacgtn
     int base_qual_sums[num_base_symbols]; //qualities for corresponding counts
     int sum_of_counts;
-    int * indel_counts;
+    // int * indel_counts;
     char * bases;
     char * bases_upper;
     char * quality_codes;
@@ -99,11 +108,13 @@ public:
 
     void parse(size_t min_quality_score);
 
-    FastqType FastqFileType(char const* pileup_file,
-                            char * chunk_buffer_in,
-                            size_t chunk_size);
-
     static void SetFtype(FastqType _fastq_type);
 };
+
+FastqType FastqFileType(char const* pileup_file,
+                        char * chunk_buffer_in,
+                        size_t chunk_size,
+                        size_t num_threads);
+
 
 #endif // _PILEUP_TOOLS_H

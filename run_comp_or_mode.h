@@ -6,7 +6,6 @@
 int run_comp_or_mode(size_t max_mem,
                      size_t num_threads,
                      size_t min_quality_score,
-                     bool compute_anomaly,
                      char const* label_string,
                      char const* quantiles_file,
                      char const* prior_alphas_file,

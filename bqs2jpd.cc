@@ -44,7 +44,7 @@ int main_bqs2jpd(int argc, char ** argv)
 
         data_prob[basecall_index] = (1.0 - error_prob) * count;
         
-        fprintf(jpd_output_fh, "%c_%Zu_%c\t%8.2f\t%8.2f\t%8.2f\t%8.2f\n",
+        fprintf(jpd_output_fh, "%c_%Zu_%c\t%8.6g\t%8.6g\t%8.6g\t%8.6g\n",
                 basecall, quality, strand, data_prob[0], data_prob[1],
                 data_prob[2], data_prob[3]);
     }
