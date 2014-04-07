@@ -2,6 +2,7 @@
 #include "stats_tools.h"
 #include "error_estimate.h"
 
+#include <cassert>
 
 #include <gsl/gsl_sf_trig.h>
 #include <gsl/gsl_sf_exp.h>
@@ -260,13 +261,6 @@ namespace Transformation
             + (alpha[2] - 1.0) * gsl_sf_log(x[2])
             + (alpha[3] - 1.0) * gsl_sf_log(x[3]);
         
-        // double ld =
-        //     gsl_sf_log(
-        //                pow(x[0], alpha[0] - 1.0)
-        //                * pow(x[1], alpha[1] - 1.0)
-        //                * pow(x[2], alpha[2] - 1.0)
-        //                * pow(x[3], alpha[3] - 1.0));
-
         // if (ld != 0)
         // {
         //     assert(ld / ld2 < 1.00001);

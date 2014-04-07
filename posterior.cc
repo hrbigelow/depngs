@@ -1,7 +1,8 @@
 #include "posterior.h"
 #include "error_estimate.h"
-
 #include "stats_tools.h"
+
+#include <float.h>
 
 //currently, initializes mode point and log_scaling_factor
 void Posterior::initialize(double mode_tolerance, size_t max_function_evals,
@@ -24,12 +25,6 @@ void Posterior::initialize(double mode_tolerance, size_t max_function_evals,
 double Posterior::pdf(double const* x)
 {
     double y;
-//     static size_t recall_count = 0;
-    // if (this->get_last_call(x, &y))
-    // {
-    //     return y;
-    // }
-
     double xx[4];
     std::copy(x, x+3, xx);
     xx[3] = 1.0 - x[0] - x[1] - x[2];
@@ -41,7 +36,6 @@ double Posterior::pdf(double const* x)
     {
         y = 0.0;
     }
-    // this->store_call(x, y);
     return y;
 }
 
@@ -69,11 +63,3 @@ double Posterior::log_pdf(double const* x)
     }
     return y;
 }
-
-
-// double Posterior::log2_pdf(double const*x)
-// {
-//     double ret = log2_likelihood(ee, x);
-//         + ee->log_dirichlet_prior(x);
-//     return ret;
-// }

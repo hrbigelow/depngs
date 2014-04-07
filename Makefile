@@ -30,8 +30,8 @@ EXE = dep test_dirichlet
 all : $(EXE)
 
 dep : $(addprefix $(OBJDIR)/, dep.o comp.o mode.o comp_functor.o		\
-	discomp.o simp.o simc.o bqs.o bqslocus.o bqs2jpd.o metropolis.o		\
-	sampling.o posterior.o tools.o transformation.o error_estimate.o	\
+	simp.o simc.o bqs.o bqslocus.o bqs2jpd.o metropolis.o sampling.o	\
+	posterior.o tools.o transformation.o error_estimate.o				\
 	pileup_tools.o stats_tools.o dirichlet.o slice_sampling.o			\
 	hilbert.o simulation.o nucleotide_stats.o usage_strings.o			\
 	run_comp_or_mode.o anomaly_tools.o dist.o dist_worker.o)			\

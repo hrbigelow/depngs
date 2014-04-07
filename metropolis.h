@@ -26,8 +26,8 @@ class Metropolis
 
     Metropolis(Posterior * posterior,
                Dirichlet * dirichlet,
-               size_t _ndim, 
-               bool _is_independence_chain,
+               size_t ndim, 
+               bool is_independence_chain,
                size_t total_sample_points);
 
     ~Metropolis();

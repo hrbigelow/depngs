@@ -2,6 +2,8 @@
 
 #include <cstring>
 #include <numeric>
+#include <algorithm>
+
 #include <gsl/gsl_sf_exp.h>
 
 #include "nucleotide_stats.h"
@@ -264,7 +266,6 @@ void posterior_wrapper::values(double * points, size_t num_points,
         maxv = std::max(maxv, *val);
     }
     double sum = 0.0;
-    // gsl_error_handler_t * def = gsl_set_error_handler_off();
     for (val = values; val != vend; ++val)
     {
         gsl_sf_result res;
@@ -277,11 +278,8 @@ void posterior_wrapper::values(double * points, size_t num_points,
 
         *val = res.val;
         assert(! isnan(*val));
-        // *val = gsl_sf_exp(*val - maxv); // does this throw underflow error?
         sum += *val;
     }
-    // gsl_set_error_handler(def);
-
     for (val = values; val != vend; ++val)
     {
         *val /= sum;

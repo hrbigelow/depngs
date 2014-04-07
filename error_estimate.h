@@ -1,17 +1,10 @@
 #ifndef _ERROR_ESTIMATE_H
 #define _ERROR_ESTIMATE_H
 
-#include <utility>
-#include <vector>
+#include <cstddef>
 #include <map>
-#include <algorithm>
 
-#include <gsl/gsl_vector.h>
-
-#include "tools.h"
-#include "sampling.h"
-#include "nucleotide_stats.h"
-
+struct packed_counts;
 
 /*
 Estimate the distribution of base compositions for a given sequenced sample.
@@ -35,25 +28,10 @@ class LocusSummary;
 class ErrorEstimate {
 
  public:
-    static const int NBASES = 4;
     static char const* nucleotides;
     static int const base_to_index[];
 
-    enum PriorType
-    {
-        DISCRETE,
-        CONTINUOUS
-    };
-
  private:
-
-    PriorType prior_type;
-
-    bool uniform_prior;
-
-    size_t num_discrete_priors;
-    double * log_discrete_prior_dist; //handles the case of a discrete ploidy.
-    std::map<double const*, size_t> discrete_prior_index;
 
     //for expanding to the unit hypercube
     double expansion_rows[3][3];

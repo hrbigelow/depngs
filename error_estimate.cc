@@ -1,38 +1,17 @@
 #include "error_estimate.h"
 
-#include <cstdio>
-#include <cstdlib>
-#include <cassert>
-#include <cmath>
 #include <cstring>
-#include <limits>
-#include <utility>
-#include <map>
+#include <cassert>
 #include <algorithm>
-#include <set>
-#include <vector>
-#include <cctype>
 
-#include <gsl/gsl_vector.h>
 #include <gsl/gsl_multimin.h>
 #include <gsl/gsl_blas.h>
-#include <gsl/gsl_sf_log.h>
 #include <gsl/gsl_sf_exp.h>
 #include <gsl/gsl_math.h>
-#include <gmp.h>
 
-#include "hilbert.h"
 #include "dirichlet.h"
-
-#include "tools.h"
-#include "sampling.h"
-#include "stats_tools.h"
-#include "simulation.h"
 #include "transformation.h"
 #include "nucleotide_stats.h"
-
-
-const int ErrorEstimate::NBASES;
 
 double expansion_rows_global[3][3] = { 
     { 1., 1., 1. }, 
@@ -55,10 +34,6 @@ ErrorEstimate::ErrorEstimate()
     //create matrices for transformations
     std::fill(this->composition_prior_alphas,
               this->composition_prior_alphas + 4, 1.0);
-    this->uniform_prior = true;
-    this->num_discrete_priors = 0;
-    this->log_discrete_prior_dist = NULL;
-    this->prior_type = ErrorEstimate::CONTINUOUS;
 
     memcpy(expansion_rows, expansion_rows_global, 9 * sizeof(double));
     memcpy(contraction_rows, contraction_rows_global, 9 * sizeof(double));
@@ -68,41 +43,10 @@ ErrorEstimate::ErrorEstimate()
 void ErrorEstimate::set_composition_prior_alphas(double const* alphas)
 {
     std::copy(alphas, alphas + 4, this->composition_prior_alphas);
-    this->uniform_prior = 
-        alphas[0] == 1.0
-        && alphas[1] == 1.0
-        && alphas[2] == 1.0
-        && alphas[3] == 1.0;
 }
-
-
-void ErrorEstimate::set_discrete_prior_dist(double const* prior_points_flat,
-                                            double const* prior_dist, 
-                                            size_t num_priors)
-{
-    this->num_discrete_priors = num_priors;
-    this->log_discrete_prior_dist = new double[this->num_discrete_priors];
-    std::copy(prior_dist, prior_dist + num_priors, this->log_discrete_prior_dist);
-
-    double const* prior_point;
-    for (size_t i = 0; i != num_priors; ++i)
-    {
-        prior_point = prior_points_flat + (i * 4);
-        this->discrete_prior_index[prior_point] = i;
-
-        this->log_discrete_prior_dist[i] = 
-            log(this->log_discrete_prior_dist[i]);
-    }
-    this->prior_type = ErrorEstimate::DISCRETE;
-}
-
 
 ErrorEstimate::~ErrorEstimate()
 {
-    if (this->log_discrete_prior_dist != NULL)
-    {
-        delete this->log_discrete_prior_dist;
-    }
 }
 
 
@@ -134,26 +78,15 @@ void ErrorEstimate::log_likelihood_gradient(double const* comp,
 }
 
 
-
-double ErrorEstimate::log_discrete_prior(size_t sample_point_index) const
-{
-    return this->log_discrete_prior_dist[sample_point_index];
-}
-
-
 double ErrorEstimate::log_dirichlet_prior(double const* sample_composition) const
 {
+    // instead of auto-detecting whether this is a uniform prior,
+    // decide at application level whether or not to use the dirichlet
+    // prior.
     double retval;
-    if (this->uniform_prior)
-    {
-        retval = 0.0;
-    }
-    else
-    {
-        retval = 
-            Transformation::log_dirichlet(this->composition_prior_alphas,
-                                          sample_composition);
-    }
+    retval = 
+        Transformation::log_dirichlet(this->composition_prior_alphas,
+                                      sample_composition);
     return retval;
     //return (isnan(retval) || isinf(retval)) ? FLT_MAX : retval;
 }
@@ -382,11 +315,6 @@ size_t ErrorEstimate::find_mode_point(double min_step_size,
     
     for (size_t d = 0; d != 4; ++d)
     {
-        // std::fill(test_comp[d], test_comp[d] + 4, minority_comp);
-        // test_comp[d][d] = majority_comp;
-        // Transformation::composition_to_r3_sigmoid(test_comp[d], 
-        //                                           test_r3_point);
-
         gsl_vector *test_r3_vec = gsl_vector_alloc(sphere_ndim);
         gsl_vector_set(test_r3_vec, 0, test_r3_point[d][0]);
         gsl_vector_set(test_r3_vec, 1, test_r3_point[d][1]);
@@ -403,9 +331,6 @@ size_t ErrorEstimate::find_mode_point(double min_step_size,
     // std::copy(test_comp[min_test_value_ind], 
     //           test_comp[min_test_value_ind] + 4, 
     //           best_initial_point);
-
-    // double initial_r3_point[sphere_ndim];
-    // Transformation::composition_to_r3_sigmoid(best_initial_point, initial_r3_point);
 
     x = gsl_vector_alloc(sphere_ndim);
     gsl_vector_set(x, 0, test_r3_point[best_ind][0]);
