@@ -2,6 +2,7 @@
 #include "pileup_tools.h"
 #include "comp_functor.h"
 #include "posterior.h"
+#include "locus_comp.h"
 // #include "integrands.h"
 #include "error_estimate.h"
 
@@ -11,7 +12,8 @@
 #include <gsl/gsl_math.h>
 #include <algorithm>
 
-dist_worker_input::dist_worker_input(size_t num_samples,
+dist_worker_input::dist_worker_input(size_t thread_num,
+                                     size_t num_samples,
                                      size_t num_sample_pairs,
                                      size_t num_sample_point_pairings,
                                      double * dist_quantiles,
@@ -28,6 +30,7 @@ dist_worker_input::dist_worker_input(size_t num_samples,
                                      size_t * pair_sample1,
                                      size_t * pair_sample2,
                                      std::map<char const*, size_t, ltstr> * contig_order) :
+    thread_num(thread_num),
     num_samples(num_samples), num_sample_pairs(num_sample_pairs),
     num_sample_point_pairings(num_sample_point_pairings),
     dist_quantiles(dist_quantiles), num_dist_quantiles(num_dist_quantiles),
@@ -80,42 +83,6 @@ dist_worker_input::~dist_worker_input()
 }
 
 // assumes the chromosome has a number
-bool less_locus_position::operator()(char * locus_line1, char * locus_line2)
-{
-    char contig1[100];
-    char contig2[100];
-    size_t position1;
-    size_t position2;
-    sscanf(locus_line1, "%s\t%zu", contig1, &position1);
-    sscanf(locus_line2, "%s\t%zu", contig2, &position2);
-
-    if (strcmp(contig1, contig2) == 0) 
-    { 
-        return position1 < position2; 
-    }
-    else
-    {
-        std::map<char const*, size_t>::iterator it1, it2;
-        it1 = this->contig_order->find(contig1);
-        it2 = this->contig_order->find(contig2);
-        assert(it1 != this->contig_order->end());
-        assert(it2 != this->contig_order->end());
-        return (*it1) < (*it2);
-    }
-}
-
-
-
-bool equal_locus_position::operator()(char * locus_line1, char * locus_line2)
-{
-    char contig1[100];
-    char contig2[100];
-    size_t position1;
-    size_t position2;
-    sscanf(locus_line1, "%s\t%zu", contig1, &position1);
-    sscanf(locus_line2, "%s\t%zu", contig2, &position2);
-    return strcmp(contig1, contig2) == 0 && position1 == position2;
-}
 
 
 size_t distance_quantiles_locus_bytes(size_t num_quantiles)
@@ -193,23 +160,6 @@ char * print_distance_quantiles(double const* points1,
 // distances by taking the weighted cartesian product of all possible
 // pairs that have a joint weight above a threshold.  The quantiles
 // are then calculated from this set of weighted distances.
-struct weighted_dist_pair
-{
-    double weight;
-    double distance;
-    weighted_dist_pair(double weight, double distance) : weight(weight), distance(distance) { }
-    weighted_dist_pair() : weight(0), distance(0) { }
-};
-
-struct less_distance {
-    bool operator()(weighted_dist_pair const& a, weighted_dist_pair const& b) const
-    {
-        return a.distance < b.distance;
-    }
-};
-
-
-
 char * print_distance_quantiles_discrete(double const* posterior_values1,
                                          double const* posterior_values2,
                                          char const* contig,
@@ -248,7 +198,6 @@ char * print_distance_quantiles_discrete(double const* posterior_values1,
     size_t num_pairs = num_filtered1 * num_filtered2;
     assert(num_pairs > 0);
 
-    // weighted_dist_pair * weighted_dist = new weighted_dist_pair[num_pairs];
     double * weights = new double[mat->num_distances];
     std::fill(weights, weights + mat->num_distances, 0.0);
 
@@ -283,7 +232,8 @@ char * print_distance_quantiles_discrete(double const* posterior_values1,
     // in this test, we try to pre-emptively avoid the sort if we can determine that
     // the locus has zero values for all quantiles
     double highest_quantile = wi->dist_quantiles[wi->num_dist_quantiles - 1];
-    // if (false)
+
+    // printf("%Zu\n", position); // this is for debugging whether all positions are considered.
     if (weights[0] > highest_quantile)
     {
         // do nothing
@@ -385,6 +335,34 @@ char * next_distance_quantiles_aux(dist_worker_input * input,
         
     }
     return out_buf;
+}
+
+
+// find global_s, and init the is_next field for all samples
+// this is run
+size_t init_global_and_next(dist_worker_input * input, sample_details * samples)
+{
+    size_t global_s = 0;
+    for (size_t s = 0; s != input->num_samples; ++s)
+    {
+        if (samples[s].current != input->end[s]
+            && (samples[global_s].current == input->end[global_s]
+                || input->less_locus(*samples[s].current, *samples[global_s].current)
+                ))
+        {
+            global_s = s;
+        }
+    }
+    bool global_at_end = (samples[global_s].current == input->end[global_s]);
+    for (size_t s = 0; s != input->num_samples; ++s)
+    {
+        samples[s].is_next = 
+            (samples[s].current != input->end[s]) 
+            && (! global_at_end)
+            && input->equal_locus(*samples[s].current, *samples[global_s].current);
+    }
+
+    return global_s;
 }
 
 
@@ -563,26 +541,9 @@ void * dist_worker(void * args)
             continue;
         }
         init_locus(input, s, &samples[s]);
-
-        // update global current to lesser position if needed
-        // global_s should only be updated if both iterators are valid
-        
-        if (samples[s].current != input->end[s] &&
-            samples[global_s].current != input->end[global_s] &&
-            input->less_locus(*samples[s].current, *samples[global_s].current))
-        {
-            global_s = s;
-        }
     }
 
-    // initialize is_next
-    for (size_t s = 0; s != input->num_samples; ++s)
-    {
-        samples[s].is_next = 
-            (samples[s].current != input->end[s])
-            && (samples[global_s].current != input->end[global_s])
-            && input->equal_locus(*samples[s].current, *samples[global_s].current);
-    }
+    global_s = init_global_and_next(input, samples);
 
     // main loop for computing pairwise distances
     // though slightly inefficient, just construct null_points here
@@ -615,25 +576,8 @@ void * dist_worker(void * args)
         // this is the last stop before we move forward
         advance_loci_aux(input, samples, & out_comp_buf, & out_discomp_buf);
 
-        for (size_t s = 0; s != input->num_samples; ++s)
-        {
-            if (samples[s].current != input->end[s]
-                && samples[global_s].current != input->end[global_s]
-                && input->less_locus(*samples[s].current, *samples[global_s].current))
-            {
-                global_s = s;
-            }
-        }
+        global_s = init_global_and_next(input, samples);
         
-        // initialize is_next
-        for (size_t s = 0; s != input->num_samples; ++s)
-        {
-            samples[s].is_next = 
-                (samples[s].current != input->end[s]) 
-                && (samples[global_s].current != input->end[global_s])
-                && input->equal_locus(*samples[s].current, *samples[global_s].current);
-        }
-
     }   
 
     for (size_t s = 0; s != input->num_samples; ++s)
@@ -648,3 +592,5 @@ void * dist_worker(void * args)
 
     pthread_exit((void*) 0);
 }
+
+

@@ -10,18 +10,19 @@ class Posterior
 
  public:
 
+    ErrorEstimate * ee;
     size_t ndim;
     bool may_underflow;
     
-    ErrorEstimate * ee;
     double log_scaling_factor;
     
     double mode_point[4];
     bool zero_boundary[4];
     
  Posterior(ErrorEstimate * ee, size_t ndim, bool may_underflow) :
-    ndim(ndim), may_underflow(may_underflow)
+    ee(ee), ndim(ndim), may_underflow(may_underflow)
     {
+        
     }
     
     void initialize(double mode_tolerance, size_t max_function_evals, 

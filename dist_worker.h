@@ -6,27 +6,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "locus_comp.h"
+
 struct posterior_wrapper;
 
-struct ltstr
-{
-    bool operator()(const char* s1, const char* s2) const
-    {
-        return strcmp(s1, s2) < 0;
-    }
-};
-
-struct less_locus_position
-{
-    std::map<char const*, size_t, ltstr> * contig_order;
-    bool operator()(char * locus_line1, char * locus_line2);
-};
-
-struct equal_locus_position
-{
-    std::map<char const*, size_t, ltstr> * contig_order;
-    bool operator()(char * locus_line1, char * locus_line2);
-};
 
 
 struct eval_dist_matrix
@@ -45,6 +28,7 @@ struct eval_dist_matrix
 struct dist_worker_input
 {
     posterior_wrapper ** worker; // generally encapsulates everything needed to compute outputs
+    size_t thread_num;
     size_t num_samples;
     size_t num_sample_pairs;
     size_t num_sample_point_pairings; 
@@ -78,7 +62,8 @@ struct dist_worker_input
     less_locus_position less_locus;
     equal_locus_position equal_locus;
 
-    dist_worker_input(size_t num_samples,
+    dist_worker_input(size_t thread_num,
+                      size_t num_samples,
                       size_t num_sample_pairs,
                       size_t num_sample_point_pairings,
                       double * dist_quantiles,

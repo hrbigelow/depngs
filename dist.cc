@@ -453,7 +453,7 @@ int main_dist(int argc, char ** argv)
     for (size_t t = 0; t != num_threads; ++t)
     {
         worker_inputs[t] = 
-            new dist_worker_input(num_samples, num_pairings, num_sample_point_pairs,
+            new dist_worker_input(t, num_samples, num_pairings, num_sample_point_pairs,
                                   dist_quantiles, num_dist_quantiles,
                                   comp_quantiles, num_comp_quantiles,
                                   & lattice,
@@ -497,15 +497,17 @@ int main_dist(int argc, char ** argv)
     size_t move_threshold = single_buffer_size / 10;
     size_t bytes_wanted = single_buffer_size - max_pileup_line_size - 1;
     bool all_input_read = false;
-    size_t total_bytes_read;
+    size_t total_pass_bytes_read;
+    
     size_t fread_nsec; // number of nanoseconds to read this chunk.
     size_t total_fread_nsec = 0;
+    size_t total_bytes_read = 0;
 
     while (! all_input_read)
     {
         // for each sample, determine whether the supply of lines is
         // exhausted, if so, refresh it.
-        total_bytes_read = 0;
+        total_pass_bytes_read = 0;
 
         for (size_t s = 0; s != num_samples; ++s)
         {
@@ -576,10 +578,11 @@ int main_dist(int argc, char ** argv)
             {
                 // do nothing
             }
-            total_bytes_read += bytes_read;
-
+            total_pass_bytes_read += bytes_read;
         }
-        all_input_read = (total_bytes_read == 0);
+        all_input_read = (total_pass_bytes_read == 0);
+
+        total_bytes_read += total_pass_bytes_read;
 
         size_t max_num_loci = 0; // number of loci in one sample
         size_t sample_with_max = 0;
@@ -587,11 +590,13 @@ int main_dist(int argc, char ** argv)
         // if any of pileup_lines[s] are non-empty, global_s will be
         // set to the one whose rbegin() has the least genomic position
         size_t global_s = 0;
+        
         for (size_t s = 0; s != num_samples; ++s)
         {
             if ((! pileup_lines[s].empty()) 
-                && (! pileup_lines[global_s].empty())
-                && less_locus(*pileup_lines[s].rbegin(), *pileup_lines[global_s].rbegin()))
+                && (pileup_lines[global_s].empty()
+                    || less_locus(*pileup_lines[s].rbegin(), *pileup_lines[global_s].rbegin())
+                    ))
             {
                 global_s = s;
             }
@@ -631,6 +636,7 @@ int main_dist(int argc, char ** argv)
                 current[sample_with_max] + (((t + 1) * max_num_loci) / num_threads);
 
             size_t max_sample_loci = 0;
+            size_t total_loci = 0;
             for (size_t s = 0; s != num_samples; ++s)
             {
                 worker_inputs[t]->beg[s] = (t == 0) ? current[s] : worker_inputs[t-1]->end[s];
@@ -639,10 +645,13 @@ int main_dist(int argc, char ** argv)
                     : std::upper_bound(current[s], bound[s], *guide_end, less_locus);
 
                 size_t num_loci = std::distance(worker_inputs[t]->beg[s], worker_inputs[t]->end[s]);
+                total_loci += num_loci;
                 max_sample_loci = std::max(num_loci, max_sample_loci);
             }
 
-            size_t dist_output_size = max_dist_line_size * (max_sample_loci * 2 * num_pairings);
+            // pessimistically, assume that there is zero overlap between any loci.
+            // therefore, generate one dist line for every locus position and pairing
+            size_t dist_output_size = max_dist_line_size * (total_loci * num_pairings);
             size_t comp_output_size = max_comp_line_size * (max_sample_loci * num_samples);
             size_t discomp_output_size = max_discomp_line_size * (max_sample_loci * num_samples);
 
@@ -699,7 +708,7 @@ int main_dist(int argc, char ** argv)
 
     fprintf(stderr, "File reading metrics:  %Zu total bytes read in %Zu nanoseconds, %5.3f MB/s\n",
             total_bytes_read, total_fread_nsec,
-            static_cast<float>(total_bytes_read) / static_cast<float>(total_fread_nsec) / 1000.0);
+            static_cast<float>(total_bytes_read) * 1000.0 / static_cast<float>(total_fread_nsec));
 
     if (dist_fh != NULL) { fclose(dist_fh); }
     if (comp_fh != NULL) { fclose(comp_fh); }

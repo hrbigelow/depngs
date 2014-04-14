@@ -19,6 +19,7 @@ int usage()
             "dep bqslocus   Tally {basecall, quality score, strand} counts per locus\n"
             "dep bqs        Tally {basecall, quality score, strand} counts overall\n"
             "dep bqs2jpd    Expand {basecall, quality score, strand} counts to jpd\n"
+            "dep pug        Pileup Grep.  grep a list of loci from a large pileup file using binary search.\n"
             "\n"
             );
     return 1;
@@ -70,6 +71,10 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "bqs2jpd") == 0)
     {
         return main_bqs2jpd(argc - 1, argv + 1);
+    }
+    else if (strcmp(argv[1], "pug") == 0)
+    {
+        return main_pug(argc - 1, argv + 1);
     }
     else
     {

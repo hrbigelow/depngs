@@ -13,6 +13,7 @@ int bqs_usage()
             "Options:\n\n"
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [100000000]\n"
+            "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
             );
     return 1;
 }
@@ -65,13 +66,15 @@ int main_bqs(int argc, char ** argv)
     char c;
     size_t num_threads = 1;
     size_t max_mem = 100000000;
+    char const* fastq_type = "None";
 
-    while ((c = getopt(argc, argv, "t:m:")) >= 0)
+    while ((c = getopt(argc, argv, "t:m:F:")) >= 0)
     {
         switch(c)
         {
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
+        case 'F': fastq_type = optarg; break;
         default: return bqs_usage(); break;
         }
     }
@@ -89,13 +92,22 @@ int main_bqs(int argc, char ** argv)
     size_t chunk_size = max_mem;
     char * chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
+    FastqType ftype = None;
+    if (strcmp(fastq_type, "Sanger") == 0) { ftype = Sanger; }
+    else if (strcmp(fastq_type, "Solexa") == 0) { ftype = Solexa; }
+    else if (strcmp(fastq_type, "Illumina13") == 0) { ftype = Illumina13; }
+    else if (strcmp(fastq_type, "Illumina15") == 0) { ftype = Illumina15; }
+    else { ftype = None; }
 
     if (ftype == None)
     {
-        fprintf(stderr, "Error: Couldn't determine quality scale for pileup input file %s\n",
-                pileup_input_file);
-        exit(1);
+        ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
+        if (ftype == None)
+        {
+            fprintf(stderr, "Error: Couldn't determine quality scale for pileup input file %s\n",
+                    pileup_input_file);
+            exit(1);
+        }
     }
 
     PileupSummary::SetFtype(ftype);
@@ -123,13 +135,17 @@ int main_bqs(int argc, char ** argv)
     }
 
     size_t fread_nsec;
+    size_t total_fread_nsec = 0;
+    size_t total_bytes_read = 0;
 
     while (! feof(pileup_input_fh))
     {
         bytes_read = FileUtils::read_until_newline(chunk_buffer_in, bytes_wanted,
                                                    max_pileup_line_size, pileup_input_fh,
                                                    & fread_nsec);
-        
+        total_fread_nsec += fread_nsec;
+        total_bytes_read += bytes_read;
+
         lines = FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
 
         for (size_t t = 0; t != num_threads; ++t)
@@ -152,6 +168,10 @@ int main_bqs(int argc, char ** argv)
 
     }
     fclose(pileup_input_fh);
+
+    fprintf(stderr, "File reading metrics:  %Zu total bytes read in %Zu nanoseconds, %5.3f MB/s\n",
+            total_bytes_read, total_fread_nsec,
+            static_cast<float>(total_bytes_read) * 1000.0 / static_cast<float>(total_fread_nsec));
 
     delete chunk_buffer_in;
     delete threads;
