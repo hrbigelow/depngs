@@ -34,8 +34,8 @@ dep : $(addprefix $(OBJDIR)/, dep.o comp.o mode.o comp_functor.o		\
 	posterior.o tools.o transformation.o error_estimate.o				\
 	pileup_tools.o stats_tools.o dirichlet.o slice_sampling.o			\
 	hilbert.o simulation.o nucleotide_stats.o usage_strings.o			\
-	run_comp_or_mode.o anomaly_tools.o dist.o dist_worker.o)			\
-	../samutil/obj/file_utils.o
+	run_comp_or_mode.o anomaly_tools.o dist.o dist_worker.o				\
+	locus_comp.o pug.o) ../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 quantile_test : quantile_test.o sampling.o

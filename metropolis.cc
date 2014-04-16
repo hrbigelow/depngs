@@ -177,14 +177,6 @@ Metropolis::sample(size_t num_samples_to_take,
         exit(1);
     }
 
-    //     if (integrand->pdf(this->current_point, this->ndim) == 0)
-    //     {
-    //         fprintf(stderr, "Metropolis::sample: Error: starting point"
-    //                 " must yield a non-zero integrand value");
-    //         exit(1);
-    //     }
-
-
     double * used_sample_points = (alt_sample_points == NULL) 
         ? this->sample_points
         : alt_sample_points;

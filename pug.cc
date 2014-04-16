@@ -17,6 +17,7 @@ int pug_usage()
             "Options:\n\n"
             "-m INT      number bytes of memory to use [1e9]\n"
             "-l INT      maximum length of a pileup line in bytes.  {Nuisance parameter} [100000]\n"
+            "-b INT      size of output buffer [8e6]\n"
             "\n"
             "loci_to_retrieve.rdb has lines like:\n"
             "chr1<tab>19583984\n"
@@ -32,19 +33,22 @@ int pug_usage()
 }
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
+#define MAX(a,b) ((a) < (b) ? (b) : (a))
 
 int main_pug(int argc, char ** argv)
 {
     char c;
     size_t max_mem = 1024l * 1024l * 1024l;
     size_t max_pileup_line_size = 1e6;
+    size_t outbuf_size = 8e6;
 
-    while ((c = getopt(argc, argv, "m:l:")) >= 0)
+    while ((c = getopt(argc, argv, "m:l:b:")) >= 0)
     {
         switch(c)
         {
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
         case 'l': max_pileup_line_size = static_cast<size_t>(atof(optarg)); break;
+        case 'b': outbuf_size = static_cast<size_t>(atof(optarg)); break;
         default: return pug_usage(); break;
         }
     }
@@ -73,7 +77,9 @@ int main_pug(int argc, char ** argv)
 
     // parse locus file
     char * locus_buf = NULL;
-    std::vector<char *> query_lines;
+    std::vector<char *> query_lines_tmp;
+    char ** query;
+    size_t num_query;
     {
         FILE * locus_fh = open_if_present(locus_file, "r");
         struct stat locus_stat;
@@ -91,8 +97,14 @@ int main_pug(int argc, char ** argv)
         fread(locus_buf, 1, total_size, locus_fh);
         fclose(locus_fh);
         char * last_fragment;
-        query_lines = FileUtils::find_complete_lines_nullify(locus_buf, &last_fragment);
-        
+        query_lines_tmp = FileUtils::find_complete_lines_nullify(locus_buf, &last_fragment);
+        num_query = query_lines_tmp.size();
+        query = new char*[num_query + 1];
+        for (size_t i = 0; i != num_query; ++i)
+        {
+            query[i] = query_lines_tmp[i];
+        }
+        query[num_query] = NULL;
     }
 
     less_locus_position less_locus;
@@ -100,7 +112,7 @@ int main_pug(int argc, char ** argv)
     less_locus.contig_order = &contig_order;
     equal_locus.contig_order = &contig_order;
 
-    std::sort(query_lines.begin(), query_lines.end(), less_locus);
+    std::sort(query, query + num_query, less_locus);
     
     FILE * pileup_fh = open_if_present(pileup_file, "r");
 
@@ -108,32 +120,16 @@ int main_pug(int argc, char ** argv)
     fstat(fileno(pileup_fh), &pileup_stat);
     size_t total_pileup_size = pileup_stat.st_size;
 
-    std::vector<char *>::iterator qcur, qbeg, qend, titer;
-    qbeg = query_lines.begin();
-    // size_t min_loci_for_linear = 1;
-    // size_t average_line_length = 100;
-    // size_t jump = min_loci_for_linear * average_line_length;
-
-    // char query_locus[100];
-    // char query_contig[100];
-    // size_t query_position;
-    // size_t fread_elapsed_nsec;
+    std::vector<char *>::iterator titer;
+    char * const* qbeg;
+    char * const* qend;
+    qbeg = query;
+   
     char * target_line = new char[max_pileup_line_size + 1];
-
-    size_t outbuf_size = max_mem;
 
     char * out_buf = new char[outbuf_size + 1];
     char * out_ptr = out_buf;
     char * out_end = out_buf + outbuf_size;
-
-    // size_t lb, ub, cur;
-
-    // size_t fseeks = 0;
-    // size_t fgetss = 0;
-    // size_t freads = 0;
-
-    // compute contig sizes
-    
 
     // create a sparse index of offsets
     struct line_index
@@ -144,23 +140,32 @@ int main_pug(int argc, char ** argv)
 
     // one on the end for the end offset
     size_t index_chunk_size = 1e8;
-    size_t index_size = (total_pileup_size / index_chunk_size) + 1;
-    line_index * sparse_index = new line_index[index_size];
+    size_t index_size = MAX((total_pileup_size / index_chunk_size),1) + 1;
+    fprintf(stderr, "Building index with %Zu entries.\n", index_size);
+    fflush(stderr);
+    line_index * index = new line_index[index_size];
     for (size_t i = 0; i != index_size - 1; ++i)
     {
         // throw away partial line
         fgets(target_line, max_pileup_line_size, pileup_fh);
-        sparse_index[i].file_offset = ftell(pileup_fh);
-        fscanf(pileup_fh, "%50c", sparse_index[i].line);
+        index[i].file_offset = ftell(pileup_fh);
+        fscanf(pileup_fh, "%50c", index[i].line);
         fseek(pileup_fh, index_chunk_size * i, SEEK_SET);
+        if (i != 0 && i % (index_size / 10) == 0)
+        {
+            fprintf(stderr, "Finished %Zu entries.\n", i);
+            fflush(stderr);
+        }
     }
+    fprintf(stderr, "Finished building index.\n");
+    fflush(stderr);
 
     // fill in the sentinel with a dummy value that is greater than the last
     char dummy_contig[50];
     size_t dummy_pos;
-    sscanf(*query_lines.rbegin(), "%s\t%zu", dummy_contig, & dummy_pos);
-    sprintf(sparse_index[index_size - 1].line, "%s\t%Zu", dummy_contig, dummy_pos + 1);
-    sparse_index[index_size - 1].file_offset = total_pileup_size;
+    sscanf(query[num_query - 1], "%s\t%zu", dummy_contig, & dummy_pos);
+    sprintf(index[index_size - 1].line, "%s\t%Zu", dummy_contig, dummy_pos + 1);
+    index[index_size - 1].file_offset = total_pileup_size;
 
     fseek(pileup_fh, 0, SEEK_SET);
 
@@ -170,17 +175,26 @@ int main_pug(int argc, char ** argv)
     size_t max_index_chunks = chunk_size / index_chunk_size;
     char * last_fragment;
 
-    qbeg = query_lines.begin();
+    qbeg = query;
     size_t bi = 0, ei;
+
+
+    // throw out all queries that occur before the beginning of the
+    // index.
+    while (*qbeg != NULL && less_locus(*qbeg, index[0].line))
+    {
+        ++qbeg;
+    }
+
     
-    while (qbeg != query_lines.end())
+    while (*qbeg != NULL)
     {
         // find qend such that [qbeg, qend) fits within
         // max_index_chunks, and there is at least one target to
         // retrieve for each index chunk in the range
 
         // advance bi to the lower_bound position of qbeg
-        while (less_locus(sparse_index[bi].line, *qbeg))
+        while (less_locus(index[bi].line, *qbeg))
         {
             ++bi;
         }
@@ -192,7 +206,7 @@ int main_pug(int argc, char ** argv)
         while (1)
         {
             // phase 1: extend qend until it doesn't fit within the current [bi, ei)
-            while (qend != query_lines.end() && less_locus(*qend, sparse_index[ei].line))
+            while (*qend != NULL && less_locus(*qend, index[ei].line))
             {
                 ++qend;
             }
@@ -202,7 +216,7 @@ int main_pug(int argc, char ** argv)
                 // it is okay to extend number of index chunks
 
                 // phase 2: if qend could fit within [bi, ei), extend ei.
-                if (qend != query_lines.end() && ei != index_size - 1 && less_locus(*qend, sparse_index[ei + 1].line))
+                if (*qend != NULL && ei != index_size - 1 && less_locus(*qend, index[ei + 1].line))
                 {
                     ++ei;
                 }
@@ -217,26 +231,40 @@ int main_pug(int argc, char ** argv)
             }
         }
 
-        fprintf(stderr, "Using index range [%Zu to %Zu) for %Zu query lines\n",
-                bi, ei, std::distance(qbeg, qend));
+        fprintf(stderr, "Using index range [%Zu to %Zu) of %Zu for %Zu query lines\n",
+                bi, ei, index_size, std::distance(qbeg, qend));
+
+        // [qbeg, qend) now should fit within [index[bi], index[ei])
+        // note: this does NOT mean that qend < index[ei], just that qend - 1 < index[ei]
 
         // now, parse the whole chunk
-        size_t this_chunk_size = sparse_index[ei].file_offset - sparse_index[bi].file_offset;
+        size_t this_chunk_size = index[ei].file_offset - index[bi].file_offset;
         char * chunk_buffer = new char[this_chunk_size + 1];
         
-        fseek(pileup_fh, sparse_index[bi].file_offset, SEEK_SET);
+        fseek(pileup_fh, index[bi].file_offset, SEEK_SET);
         fread(chunk_buffer, 1, this_chunk_size, pileup_fh);
         std::vector<char *> target_lines = FileUtils::find_complete_lines_nullify(chunk_buffer, & last_fragment);
         std::vector<char *>::iterator titer = target_lines.begin();
-        while (qbeg != qend)
+        assert(qbeg < qend);
+
+        // print out any loci in [qbeg, qend) that exist in target_lines
+        // we can break out of this loop either if all query loci are printed
+        // or if we run out of target lines (which could happen if 
+        while (qbeg != qend && titer != target_lines.end())
         {
+            // advance titer
             titer = std::lower_bound(titer, target_lines.end(), *qbeg, less_locus);
 
+            // advance qbeg
             while (qbeg != qend && less_locus(*qbeg, *titer))
             {
                 ++qbeg;
             }
-            
+
+            if (qbeg == qend)
+            {
+                break;
+            }
             if (equal_locus(*qbeg, *titer))
             {
                 // print out this qbeg
@@ -252,10 +280,12 @@ int main_pug(int argc, char ** argv)
                 out_ptr += ll;
                 *out_ptr = '\n';
                 ++out_ptr;
+                ++qbeg;
             }
 
-            ++qbeg;
         }
+        qbeg = qend;
+
         delete chunk_buffer;
 
     }
@@ -264,156 +294,18 @@ int main_pug(int argc, char ** argv)
     write(1, out_buf, out_ptr - out_buf);
     fsync(1);
     
-    // fprintf(stderr, "fseeks: %Zu, fgetss: %Zu, freads: %Zu\n",
-    //         fseeks, fgetss, freads);
-
     for (std::map<char const*, size_t, ltstr>::iterator cit = contig_order.begin();
          cit != contig_order.end(); ++cit)
     {
         delete (*cit).first;
     }
 
+    delete locus_buf;
     delete target_line;
     delete out_buf;
+    delete index;
+
     fclose(pileup_fh);
 
     return 0;
 }
-
-    
-    /*
-    while (qbeg != query_lines.end())
-    {
-        // start binary seek-search.  at the end of this,
-        // pileup_fh will be positioned at the beginning of the
-        // first line that is not less than qbeg
-        
-        // we will either be at the beginning of a new line, or at the
-        // end of a file
-        lb = ftell(pileup_fh);
-        ub = MIN(lb + jump, total_pileup_size);
-
-        // phase 1: grow interval forward
-        while (ub != total_pileup_size)
-        {
-            assert(lb < ub);
-            fseek(pileup_fh, ub, SEEK_SET);
-            fgets(target_line, max_pileup_line_size, pileup_fh);
-            ++fseeks;
-            ++fgetss;
-            cur = ftell(pileup_fh);
-
-            if (cur == total_pileup_size)
-            {
-                break;
-            }
-            else
-            {
-                fgets(target_line, max_pileup_line_size, pileup_fh);
-                ++fgetss;
-                if (less_locus(*qbeg, target_line))
-                {
-                    ub = cur;
-                    break;
-                }
-                else
-                {
-                    size_t s = ub - lb;
-                    lb = cur;
-                    ub = MIN(cur + 2 * s, total_pileup_size);
-                }
-            }
-        }
-
-        // phase 2: shrink interval
-        while (ub - lb > jump)
-        {
-            fseek(pileup_fh, (lb + ub) / 2, SEEK_SET);
-            fgets(target_line, max_pileup_line_size, pileup_fh);
-            ++fseeks;
-            ++fgetss;
-            cur = ftell(pileup_fh);
-
-            if (cur == ub)
-            {
-                cur = lb;
-                break;
-            }
-            else
-            {
-                fgets(target_line, max_pileup_line_size, pileup_fh);
-                fseek(pileup_fh, cur, SEEK_SET);
-                ++fseeks;
-                ++fgetss;
-
-                if (less_locus(*qbeg, target_line))
-                {
-                    ub = cur;
-                }
-                else if (equal_locus(*qbeg, target_line))
-                {
-                    break;
-                }
-                else
-                {
-                    lb = cur;
-                }
-            }
-        }
-
-        fseek(pileup_fh, lb, SEEK_SET);
-        
-        // 2. search for qend.  it is only used to grab a new chunk of the target file
-        // sscanf((*qbeg), "%s\t%zu", query_contig, &query_position);
-        // sprintf(query_locus, "%s\t%Zu", query_contig, query_position + min_loci_for_linear);
-        // qend = std::upper_bound(qbeg, query_lines.end(), query_locus, less_locus);
-        
-        // 3. populate target_lines.
-        size_t bytes_wanted = ub - lb;
-        size_t max_bytes = bytes_wanted + max_pileup_line_size;
-        char * target_buf = new char[max_bytes + 1];
-        char * last_fragment;
-        size_t bytes_read = 
-            FileUtils::read_until_newline(target_buf, bytes_wanted, max_pileup_line_size,
-                                          pileup_fh, & fread_elapsed_nsec);
-
-        ++freads;
-        std::vector<char *> target_lines = FileUtils::find_complete_lines_nullify(target_buf, & last_fragment);
-        titer = target_lines.begin();
-
-        // 4. traverse and output.  initially, titer is guaranteed to be not less than
-        // qbeg.
-        for (titer = target_lines.begin(); titer != target_lines.end(); ++titer)
-        {
-
-            while (qbeg != query_lines.end() && less_locus(*qbeg, *titer))
-            {
-                ++qbeg;
-            }
-
-            if (qbeg != query_lines.end() && equal_locus(*qbeg, *titer))
-            {
-                // target contains the locus that we want.  print it, optionally flushing the buffer first
-                size_t ll = strlen(*titer);
-                if (out_ptr + ll > out_end)
-                {
-                    // flush buffer
-                    write(1, out_buf, out_ptr - out_buf);
-                    fsync(1);
-                    out_ptr = out_buf;
-                }
-                strcpy(out_ptr, *titer);
-                out_ptr += ll;
-                *out_ptr = '\n';
-                ++out_ptr;
-            }
-            else
-            {
-                // target is missing the locus we want.  do nothing
-            }
-        }
-        delete target_buf;
-                                                              
-    }
-    */
-
