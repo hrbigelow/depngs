@@ -12,6 +12,13 @@ class Metropolis;
 class SliceSampling;
 class PileupSummary;
 
+enum sampling_method
+    {
+        METROPOLIS_HASTINGS,
+        SLICE_SAMPLING,
+        FAILED
+    };
+
 struct posterior_wrapper
 {
     double mode_tolerance;
@@ -46,7 +53,6 @@ struct posterior_wrapper
     NucleotideStats * params;
     ErrorEstimate * model;
     Dirichlet * prior;
-    /* Posterior * posterior; */
     Metropolis * sampler;
     SliceSampling * slice_sampler;
 

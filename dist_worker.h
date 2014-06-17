@@ -51,14 +51,7 @@ struct dist_worker_input
     double * comp_quantiles;
     size_t num_comp_quantiles;
 
-    eval_dist_matrix * lattice;
-
-    double sampling_fallback_threshold;
-    
-    eval_strategy_t eval_strategy;
-    bool use_discrete;
-    bool use_sampling;
-
+    float min_high_conf_dist; // minimum mutational distance at high confidence to report change
     gsl_rng * randgen;
 
 
@@ -111,9 +104,9 @@ struct sample_details
     PileupSummary *locus;
     bool is_next;
     double *sample_points;
-    double *discrete_values;
-    bool has_sample_points;
-    bool has_discrete_values;
+    int num_sample_points;
+    sampling_method samp_method;
+    size_t autocor_offset;
     std::vector<char *>::iterator current;
     char algorithm_used[10];
 };

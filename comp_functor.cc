@@ -90,21 +90,23 @@ posterior_wrapper::~posterior_wrapper()
 
 
 
+void posterior_wrapper::find_mode()
+{
+    this->model->find_mode_point(this->mode_tolerance,
+                                 this->max_modefinding_iterations,
+                                 this->initial_point,
+                                 this->on_zero_boundary,
+                                 this->verbose,
+                                 this->mode_point);
+}
+
+
 // tune the posterior, return the cumulative autocorrelation offset
 // sample_points_buf is used as a space for writing sample points
 // during the tuning process.
 size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_buf)
 {
 
-    this->model->locus_data = & locus->counts;
-
-    this->model->find_mode_point(1e-20, /* might be this: this->mode_tolerance */
-                                 this->max_modefinding_iterations,
-                                 this->initial_point,
-                                 this->on_zero_boundary,
-                                 this->verbose,
-                                 this->mode_point);
-        
     this->sampler->set_current_point(this->mode_point);
     this->prior->set_alpha0(locus->read_depth + this->prior_alpha0);
 
@@ -210,6 +212,48 @@ size_t posterior_wrapper::tune_ss(double * sample_points_buf)
     return best_autocor_offset;
 }
 
+
+void posterior_wrapper::tune(PileupSummary *locus, double *sample_points_buf,
+                             sampling_method *sm, size_t *autocor_offset)
+{
+    // try MH first.
+    *autocor_offset = this->tune_mh(locus, sample_points_buf);
+
+    if (*autocor_offset <= this->target_autocor_offset)
+        *sm = METROPOLIS_HASTINGS;
+    else
+    {
+        *autocor_offset = this->tune_ss(sample_points_buf);
+        *sm = (*autocor_offset <= this->target_autocor_offset)
+            ? SLICE_SAMPLING
+            : FAILED;
+    }
+}
+
+
+void posterior_wrapper::sample(PileupSummary *locus, 
+                               double *sample_points_buf, 
+                               size_t num_points, 
+                               size_t autocor_offset,
+                               sampling_method sm)
+{
+    switch(sm)
+    {
+    case METROPOLIS_HASTINGS:
+        this->sampler->sample(num_points, 0, autocor_offset, NULL, NULL, sample_points_buf);
+        break;
+    case SLICE_SAMPLING:
+        this->slice_sampler->sample(this->model, 
+                                    this->mode_point,
+                                    this->initial_sampling_range, 
+                                    autocor_offset,
+                                    sample_points_buf,
+                                    num_points);
+        break;
+    case FAILED:
+        break;
+    }
+}
 
 // generate sample points according to the parameters set in posterior_wrapper
 // alt_sample_points must be of size this->final_num_points * 4
