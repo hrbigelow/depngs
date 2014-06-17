@@ -3,13 +3,13 @@
 
 #include <gsl/gsl_randist.h>
 
-class Posterior;
+class ErrorEstimate;
 class Dirichlet;
 
 class Metropolis
 {
 
-    Posterior * integrand;
+    ErrorEstimate * integrand;
     Dirichlet * proposal;
 
     size_t ndim;
@@ -19,12 +19,14 @@ class Metropolis
     bool is_independence_chain_mh;
     double * current_point;
 
+    gsl_rng * randgen;
+
  public:
 
     double * sample_points;
     size_t num_points;
 
-    Metropolis(Posterior * posterior,
+    Metropolis(ErrorEstimate * posterior,
                Dirichlet * dirichlet,
                size_t ndim, 
                bool is_independence_chain,
@@ -41,8 +43,8 @@ class Metropolis
     void sample(size_t const num_samples,
                 size_t const burn_in,
                 size_t const every_nth,
-                double * proposal_mean,
-                double * proposal_variance,
+                double *const proposal_mean,
+                double *const proposal_variance,
                 double * alt_sample_points);
     
     double step(double const* z_tau, double * z_tau_next);

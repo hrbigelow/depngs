@@ -15,6 +15,9 @@ int run_comp_or_mode(size_t max_mem,
                      char const* jpd_data_params_file,
                      char const* posterior_output_file,
                      char const* cdfs_output_file,
+                     size_t tuning_num_points,
+                     size_t final_num_points,
+                     bool verbose,
                      void * (*worker)(void *))
 {
     double * quantiles;
@@ -115,7 +118,10 @@ int run_comp_or_mode(size_t max_mem,
                                   num_quantiles,
                                   label_string,
                                   cdfs_output_fh,
-                                  & file_writing_mutex);
+                                  & file_writing_mutex,
+                                  tuning_num_points,
+                                  final_num_points,
+                                  false);
     }
     
     // number of characters needed for a single inference

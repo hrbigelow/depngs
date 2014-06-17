@@ -20,6 +20,8 @@ struct posterior_wrapper
     size_t tuning_num_points;
     size_t final_num_points;
     double initial_point[4];
+    double mode_point[4];
+    bool on_zero_boundary[4];
     double autocor_max_offset;
     double autocor_max_value;
     size_t initial_autocor_offset;
@@ -44,7 +46,7 @@ struct posterior_wrapper
     NucleotideStats * params;
     ErrorEstimate * model;
     Dirichlet * prior;
-    Posterior * posterior;
+    /* Posterior * posterior; */
     Metropolis * sampler;
     SliceSampling * slice_sampler;
 
@@ -55,7 +57,10 @@ struct posterior_wrapper
                       size_t num_quantiles,
                       char const* label_string,
                       FILE * cdfs_output_fh,
-                      pthread_mutex_t * file_writing_mutex);
+                      pthread_mutex_t * file_writing_mutex,
+                      size_t tuning_num_points,
+                      size_t final_num_points,
+                      bool verbose);
 
     ~posterior_wrapper();
 

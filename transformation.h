@@ -48,6 +48,8 @@ namespace Transformation
 
     double log_dirichlet(double const alpha[4],
                          double const x[4]);
+    
+    double log2_dirichlet(double const alpha[4], double const x[4]);
 
     double log_neg_posterior_value(const gsl_vector * r, void * params);
 

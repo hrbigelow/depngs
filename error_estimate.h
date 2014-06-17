@@ -45,6 +45,8 @@ class ErrorEstimate {
     ErrorEstimate();
     ~ErrorEstimate();
 
+    bool uniform_prior;
+
     packed_counts * locus_data;
     NucleotideStats * model_params;
 
@@ -80,10 +82,16 @@ class ErrorEstimate {
                            bool verbose,
                            double * mode_point) const;
 
-        
+
+    double log_pdf(double const* comp);
+    
+    // same as log_pdf, but explicitly truncating
+    double log_pdf_trunc(double const* comp);
+    
 };
 
-double log2_likelihood(ErrorEstimate * ee, double const* comp);
+
+
 
 //tells whether x is within the unit hypercube
 bool within_hypercube(double const x[3]);

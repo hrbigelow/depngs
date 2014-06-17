@@ -17,6 +17,7 @@
 #include "sampling.h"
 #include "pileup_tools.h"
 #include "stats_tools.h"
+#include "vcf.h"
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
@@ -28,12 +29,14 @@ int dist_usage()
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
             "-x STRING   (optional) name of output discrete composition file.  If absent, do not output discrete compositions\n"
+            "-v STRING   (optional) name of output vcf file.  If absent, do not output VCF file\n"
             "-S STRING   (optional) name of sample_pairings.rdb file (see description below).  Required if -d option is given.\n"
             "-e STRING   (optional) name of eval_points.rdb file, with evaluation points in A C G T format (see below)\n"
             "-E STRING   Evaluation mode (Discrete,Sampling,Mixed). see below [Discrete]\n"
+            "-y REAL     Minimum mutational distance to report as changed [0.2]\n"
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
-            "-v <empty>  if present, be verbose [absent]\n"
+            "-V <empty>  if present, be verbose [absent]\n"
             "-q INT      minimum quality score to include bases as evidence [%s]\n"
             "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
             "\n"
@@ -107,27 +110,31 @@ int main_dist(int argc, char ** argv)
     char const* dist_file = NULL;
     char const* comp_file = NULL;
     char const* discomp_file = NULL;
+    char const* vcf_file = NULL;
 
     char const* sample_pairings_file = NULL;
 
     char const* eval_points_file = NULL;
     char const* evaluation_mode_string = "Discrete";
+    float min_dist_to_report = 0.2;
 
     char const* fastq_type = "None";
 
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:x:S:e:E:t:m:T:f:P:a:i:M:p:q:vD:C:F:l:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:x:v:S:e:E:y:t:m:T:f:P:a:i:M:p:q:VD:C:F:l:")) >= 0)
     {
         switch(c)
         {
         case 'd': dist_file = optarg; break;
         case 'c': comp_file = optarg; break;
         case 'x': discomp_file = optarg; break;
+        case 'v': vcf_file = optarg; break;
         case 'S': sample_pairings_file = optarg; break;
         case 'e': eval_points_file = optarg; break;
         case 'E': evaluation_mode_string = optarg; break;
+        case 'y': min_dist_to_report = atof(optarg); break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
         case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
@@ -138,7 +145,7 @@ int main_dist(int argc, char ** argv)
         case 'M': autocor_max_value = atof(optarg); break;
         case 'p': prior_alphas_file = optarg; break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
-        case 'v': verbose = true; break;
+        case 'V': verbose = true; break;
         case 'D': dist_quantiles_file = optarg; break;
         case 'C': comp_quantiles_file = optarg; break;
         case 'F': fastq_type = optarg; break;
@@ -225,6 +232,7 @@ int main_dist(int argc, char ** argv)
     FILE * dist_fh = open_if_present(dist_file, "w");
     FILE * comp_fh = open_if_present(comp_file, "w");
     FILE * discomp_fh = open_if_present(discomp_file, "w");
+    FILE * vcf_fh = open_if_present(vcf_file, "w");
 
     double * dist_quantiles;
     double * comp_quantiles;
@@ -255,7 +263,8 @@ int main_dist(int argc, char ** argv)
     }
 
     double * prior_alphas;
-    double default_prior_alpha = 1.0; // this is necessary to avoid underflow
+    double default_prior_alpha = 1.0; // this will cause underflow if evaluated on a boundary.
+    // with metropolis-hastings, this is not a problem, but with 
 
     if (prior_alphas_file == NULL)
     {
@@ -328,10 +337,60 @@ int main_dist(int argc, char ** argv)
 
     eval_dist_matrix lattice;
 
-    // parse eval_points_file
+    bool use_discrete, use_sampling;
 
-    if (eval_points_file != NULL)
+    // evaluation_mode
+    if (strcmp(evaluation_mode_string, "Discrete") == 0)
     {
+        use_discrete = true;
+        use_sampling = false;
+    }
+    else if (strcmp(evaluation_mode_string, "Sampling") == 0)
+    {
+        use_discrete = false;
+        use_sampling = true;
+    }
+    else if (strcmp(evaluation_mode_string, "Mixed") == 0)
+    {
+        use_discrete = true;
+        use_sampling = true;
+    }
+    else
+    {
+        fprintf(stderr, "Error: option -E must be one of (Discrete|Sampling|Mixed)\n");
+        exit(7);
+    }
+
+    if (comp_file != NULL && ! use_sampling)
+    {
+        fprintf(stderr,
+                "Error: You specified %s evaluation mode, but "
+                "provided an unnecessary -c <comp_file> option %s\n",
+                evaluation_mode_string, comp_file);
+        exit(10);
+    }
+
+    if (discomp_file != NULL && ! use_discrete)
+    {
+        fprintf(stderr,
+                "Error: You specified %s evaluation mode, but provided an unnecessary -x file option %s\n",
+                evaluation_mode_string, discomp_file);
+        exit(10);
+    }
+
+
+    // parse eval_points_file
+    if (use_discrete)
+    {
+        if (eval_points_file == NULL)
+        {
+            fprintf(stderr, 
+                    "Error: You specified %s evaluation mode, but "
+                    "did not provide an evaluation points file %s\n",
+                    evaluation_mode_string, eval_points_file);
+            exit(10);
+        }
+
         size_t num_components;
         lattice.points = ParseNumbersFile(eval_points_file, & num_components);
         assert(num_components % 4 == 0);
@@ -348,6 +407,7 @@ int main_dist(int argc, char ** argv)
         }
 
         // compute distance matrix
+        // this needs to be done more efficiently in the case of equally spaced grids.
         size_t num_points_squared = lattice.num_points * lattice.num_points;
         double * matrix_tmp = new double[num_points_squared];
         lattice.dist_index = new size_t[num_points_squared];
@@ -391,30 +451,6 @@ int main_dist(int argc, char ** argv)
         delete matrix_tmp;
     }
 
-    bool use_discrete, use_sampling;
-
-    // evaluation_mode
-    if (strcmp(evaluation_mode_string, "Discrete") == 0)
-    {
-        use_discrete = true;
-        use_sampling = false;
-    }
-    else if (strcmp(evaluation_mode_string, "Sampling") == 0)
-    {
-        use_discrete = false;
-        use_sampling = true;
-    }
-    else if (strcmp(evaluation_mode_string, "Mixed") == 0)
-    {
-        use_discrete = true;
-        use_sampling = true;
-    }
-    else
-    {
-        fprintf(stderr, "Error: option -E must be one of (Discrete|Sampling|Mixed)\n");
-        exit(7);
-    }
-
     double sampling_fallback_threshold = 0.99;
 
     std::vector<std::vector<char *> > pileup_lines(num_samples);
@@ -427,6 +463,7 @@ int main_dist(int argc, char ** argv)
     size_t max_dist_line_size = distance_quantiles_locus_bytes(num_dist_quantiles);
     size_t max_comp_line_size = marginal_quantiles_locus_bytes(num_comp_quantiles);
     size_t max_discomp_line_size = discrete_comp_locus_bytes(lattice.num_points);
+    size_t max_vcf_line_size = vcf_locus_bytes(num_samples);
 
     if (single_buffer_size < max_pileup_line_size)
     {
@@ -463,6 +500,7 @@ int main_dist(int argc, char ** argv)
                                   NULL,
                                   NULL,
                                   NULL,
+                                  NULL,
                                   pair_sample1,
                                   pair_sample2,
                                   & contig_order);
@@ -477,7 +515,10 @@ int main_dist(int argc, char ** argv)
                                       num_comp_quantiles,
                                       sample_label[s],
                                       NULL,
-                                      NULL);
+                                      NULL,
+                                      tuning_num_points,
+                                      final_num_points,
+                                      verbose);
         }
     }
 
@@ -503,6 +544,21 @@ int main_dist(int argc, char ** argv)
     size_t total_fread_nsec = 0;
     size_t total_bytes_read = 0;
 
+    // print the vcf header
+    if (vcf_fh != NULL)
+    {
+        fprintf(vcf_fh,
+               "##fileformat=VCFv4.1\n"
+               "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+
+        for (size_t s = 0; s != num_samples; ++s)
+        {
+            fprintf(vcf_fh, "\t%s", sample_label[s]);
+        }
+        fprintf(vcf_fh, "\n");
+    }
+    fflush(vcf_fh);
+
     while (! all_input_read)
     {
         // for each sample, determine whether the supply of lines is
@@ -511,10 +567,9 @@ int main_dist(int argc, char ** argv)
 
         for (size_t s = 0; s != num_samples; ++s)
         {
-            size_t left_shift = 
-                (current[s] == pileup_lines[s].end()) ? 0 : *current[s] - chunk_buffer[s];
+            bool do_full_reload = current[s] == pileup_lines[s].end();
             size_t bytes_read = 0;
-            if (left_shift == 0)
+            if (do_full_reload)
             {
                 // do a full reload
                 bytes_read = FileUtils::read_until_newline(chunk_buffer[s], bytes_wanted,
@@ -534,49 +589,53 @@ int main_dist(int argc, char ** argv)
                 current[s] = pileup_lines[s].begin();
                 bound[s] = pileup_lines[s].end();
             }
-            else if (left_shift > move_threshold)
-            {
-                // do a shift.
-                assert(chunk_buffer[s][chunk_read_size[s] - 1] == '\0');
-                size_t new_read_offset = chunk_read_size[s] - left_shift;
-                assert(strncmp(chunk_buffer[s] + left_shift, "chr", 3) == 0);
-
-                memmove(chunk_buffer[s], chunk_buffer[s] + left_shift, new_read_offset);
-
-                // update all moved pointers
-                for (std::vector<char *>::iterator lit = current[s]; lit != pileup_lines[s].end(); ++lit)
-                {
-                    *lit -= left_shift;
-                }
-                bytes_read = FileUtils::read_until_newline(chunk_buffer[s] + new_read_offset,
-                                                           bytes_wanted - new_read_offset, 
-                                                           max_pileup_line_size, pileup_input_fh[s],
-                                                           & fread_nsec);
-
-                total_fread_nsec += fread_nsec;
-
-                // assert(strncmp(chunk_buffer[s] + new_read_offset, "chr", 3) == 0);
-
-                chunk_read_size[s] = new_read_offset + bytes_read;
-
-                assert(bytes_read == 0 || chunk_buffer[s][chunk_read_size[s] - 1] == '\n');
-
-                assert(chunk_read_size[s] < single_buffer_size);
-
-                // need to splice the vector
-                std::vector<char *> tmp =
-                    FileUtils::find_complete_lines_nullify(chunk_buffer[s] + new_read_offset, &last_fragment);
-
-                assert(chunk_buffer[s][chunk_read_size[s] - 1] == '\0');
-
-                pileup_lines[s].erase(pileup_lines[s].begin(), current[s]);
-                pileup_lines[s].insert(pileup_lines[s].end(), tmp.begin(), tmp.end());
-                current[s] = pileup_lines[s].begin();
-                bound[s] = pileup_lines[s].end();
-            }
             else
             {
-                // do nothing
+                size_t left_shift = *current[s] - chunk_buffer[s];
+                if (left_shift > move_threshold)
+                {
+                    // do a shift.
+                    assert(chunk_buffer[s][chunk_read_size[s] - 1] == '\0');
+                    size_t new_read_offset = chunk_read_size[s] - left_shift;
+                    assert(strncmp(chunk_buffer[s] + left_shift, "chr", 3) == 0);
+
+                    memmove(chunk_buffer[s], chunk_buffer[s] + left_shift, new_read_offset);
+
+                    // update all moved pointers
+                    for (std::vector<char *>::iterator lit = current[s]; lit != pileup_lines[s].end(); ++lit)
+                    {
+                        *lit -= left_shift;
+                    }
+                    bytes_read = FileUtils::read_until_newline(chunk_buffer[s] + new_read_offset,
+                                                               bytes_wanted - new_read_offset, 
+                                                               max_pileup_line_size, pileup_input_fh[s],
+                                                               & fread_nsec);
+
+                    total_fread_nsec += fread_nsec;
+
+                    // assert(strncmp(chunk_buffer[s] + new_read_offset, "chr", 3) == 0);
+
+                    chunk_read_size[s] = new_read_offset + bytes_read;
+
+                    assert(bytes_read == 0 || chunk_buffer[s][chunk_read_size[s] - 1] == '\n');
+
+                    assert(chunk_read_size[s] < single_buffer_size);
+
+                    // need to splice the vector
+                    std::vector<char *> tmp =
+                        FileUtils::find_complete_lines_nullify(chunk_buffer[s] + new_read_offset, &last_fragment);
+
+                    assert(chunk_buffer[s][chunk_read_size[s] - 1] == '\0');
+
+                    pileup_lines[s].erase(pileup_lines[s].begin(), current[s]);
+                    pileup_lines[s].insert(pileup_lines[s].end(), tmp.begin(), tmp.end());
+                    current[s] = pileup_lines[s].begin();
+                    bound[s] = pileup_lines[s].end();
+                }
+                else
+                {
+                    // do nothing
+                }
             }
             total_pass_bytes_read += bytes_read;
         }
@@ -654,10 +713,12 @@ int main_dist(int argc, char ** argv)
             size_t dist_output_size = max_dist_line_size * (total_loci * num_pairings);
             size_t comp_output_size = max_comp_line_size * (max_sample_loci * num_samples);
             size_t discomp_output_size = max_discomp_line_size * (max_sample_loci * num_samples);
+            size_t vcf_output_size = max_vcf_line_size * (max_sample_loci * num_samples);
 
             worker_inputs[t]->out_dist = (dist_fh != NULL) ? new char[dist_output_size + 1] : NULL;
             worker_inputs[t]->out_comp = (comp_fh != NULL) ? new char[comp_output_size + 1] : NULL;
             worker_inputs[t]->out_discomp = (discomp_fh != NULL) ? new char[discomp_output_size + 1] : NULL;
+            worker_inputs[t]->out_vcf = (vcf_fh != NULL) ? new char[vcf_output_size + 1] : NULL;
 
             // dispatch threads
             int rc = pthread_create(&threads[t], NULL, &dist_worker, static_cast<void *>(worker_inputs[t]));
@@ -696,6 +757,14 @@ int main_dist(int argc, char ** argv)
             }        
             fflush(discomp_fh);
         }
+        if (vcf_fh != NULL)
+        {
+            for (size_t t = 0; t < num_threads; ++t) {
+                fwrite(worker_inputs[t]->out_vcf, 1, strlen(worker_inputs[t]->out_vcf), vcf_fh);
+                delete worker_inputs[t]->out_vcf;
+            }        
+            fflush(vcf_fh);
+        }
 
         delete[] threads;
 
@@ -713,6 +782,7 @@ int main_dist(int argc, char ** argv)
     if (dist_fh != NULL) { fclose(dist_fh); }
     if (comp_fh != NULL) { fclose(comp_fh); }
     if (discomp_fh != NULL) { fclose(discomp_fh); }
+    if (vcf_fh != NULL) { fclose(vcf_fh); }
 
     // cleanup
     for (size_t s = 0; s != num_samples; ++s)

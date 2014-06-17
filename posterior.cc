@@ -16,30 +16,35 @@ void Posterior::initialize(double mode_tolerance, size_t max_function_evals,
                               verbose,
                               this->mode_point);
     
-    this->log_scaling_factor = 
-        this->ee->log_likelihood(this->mode_point)
-        + this->ee->log_dirichlet_prior(this->mode_point);
+    // this->log_scaling_factor = 
+    //     this->ee->log_likelihood(this->mode_point)
+    //     + this->ee->log_dirichlet_prior(this->mode_point);
 }
 
+/*
+  double Posterior::pdf(double const* x)
+  {
+  double y;
+  double xx[4];
+  std::copy(x, x+3, xx);
+  xx[3] = 1.0 - x[0] - x[1] - x[2];
+  if (normalized(xx, 4, 1e-10) && all_positive(xx, 4))
+  {
+  y = ee->ScaledPosterior(xx, this->log_scaling_factor);
+  }
+  else
+  {
+  y = 0.0;
+  }
+  return y;
+  }
+*/
 
-double Posterior::pdf(double const* x)
-{
-    double y;
-    double xx[4];
-    std::copy(x, x+3, xx);
-    xx[3] = 1.0 - x[0] - x[1] - x[2];
-    if (normalized(xx, 4, 1e-10) && all_positive(xx, 4))
-    {
-        y = ee->ScaledPosterior(xx, this->log_scaling_factor);
-    }
-    else
-    {
-        y = 0.0;
-    }
-    return y;
-}
-
-
+// Since 'ErrorEstimate' assumes the original point is in 4 dimensions
+// and is normalized.  This function attempts to wrap it and allow
+// either 3 dimensions or 4.
+// But, Metropolis assumes 4 dimensions, while Slice sampling assumes 3.
+// As it turns out, slice_sampling.cc just 
 double Posterior::log_pdf(double const* x)
 {
 

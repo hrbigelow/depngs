@@ -117,6 +117,9 @@ int main_comp(int argc, char ** argv)
                             jpd_data_params_file,
                             posterior_output_file,
                             cdfs_output_file,
+                            tuning_num_points,
+                            final_num_points,
+                            verbose,
                             &comp_worker);
 
 }

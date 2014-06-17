@@ -12,6 +12,7 @@
 #include "dirichlet.h"
 #include "transformation.h"
 #include "nucleotide_stats.h"
+#include "stats_tools.h"
 
 double expansion_rows_global[3][3] = { 
     { 1., 1., 1. }, 
@@ -43,6 +44,11 @@ ErrorEstimate::ErrorEstimate()
 void ErrorEstimate::set_composition_prior_alphas(double const* alphas)
 {
     std::copy(alphas, alphas + 4, this->composition_prior_alphas);
+    this->uniform_prior = 
+        alphas[0] == 1.0
+        && alphas[1] == 1.0
+        && alphas[2] == 1.0
+        && alphas[3] == 1.0;
 }
 
 ErrorEstimate::~ErrorEstimate()
@@ -95,6 +101,7 @@ double ErrorEstimate::log_dirichlet_prior(double const* sample_composition) cons
 
 // In this new formulation, we use the subset of the model that is packed into
 // the locus itself.  Also, we inline the 'single_observation' function
+/*
 double ErrorEstimate::log_likelihood(double const* comp) const
 {
     
@@ -113,10 +120,11 @@ double ErrorEstimate::log_likelihood(double const* comp) const
     sum_log_factors *= M_LN2;
     return sum_log_factors;
 }
+*/
+
 
 
 /*
-  Technique 3:
   1. q[i] = dot_prod_i for all q
   2. m[i], e[i] for all q[i] (frexp)
   3. em[i] = m[i] ** ct[i] for all i (these should not overflow or underflow)
@@ -127,14 +135,20 @@ double ErrorEstimate::log_likelihood(double const* comp) const
   6. emn[i] = em[i] * 2**(max_ee - ee[i])  (some of these will underflow to zero, silently)
   7. sum_m = sum over i of emn[i]
   8. lsm = log2(sum_m) + max_ee
+
+Finally, transform to base e:
+
+ln(X) = log2(X) / log2(e)
+
+
 */
 
 
-double log2_likelihood(ErrorEstimate * ee, double const* x)
+double ErrorEstimate::log_likelihood(double const* x) const
 {
-    double * cpd_beg = ee->locus_data->fbqs_cpd;
-    double * cpd_end = cpd_beg + (ee->locus_data->num_data * 4);
-    unsigned long * ct_beg = ee->locus_data->raw_counts;
+    double * cpd_beg = this->locus_data->fbqs_cpd;
+    double * cpd_end = cpd_beg + (this->locus_data->num_data * 4);
+    unsigned long * ct_beg = this->locus_data->raw_counts;
 
     double * cpd;
     unsigned long * ct;
@@ -172,7 +186,25 @@ double log2_likelihood(ErrorEstimate * ee, double const* x)
 
     // assert(! isinf(ret));
     // assert(! isinf(ret2));
-    return lsm;
+    return lsm / M_LOG2E;
+}
+
+
+// 
+double ErrorEstimate::log_pdf(double const* comp)
+{
+    return this->log_likelihood(comp)
+        + (this->uniform_prior ? 0 : this->log_dirichlet_prior(comp));
+}
+
+
+//
+double ErrorEstimate::log_pdf_trunc(double const* comp)
+{
+    return
+        (normalized(comp, 4, 1e-10) && all_positive(comp, 4))
+        ? log_pdf(comp)
+        : -DBL_MAX;
 }
 
 
@@ -248,6 +280,7 @@ void ErrorEstimate::contract_from_hypercube(double const x[3], double * contract
 }
 
 
+/*
 double ErrorEstimate::ScaledPosterior(double const* sample_composition,
                                       double log_scaling_factor) const
 {
@@ -264,7 +297,7 @@ double ErrorEstimate::ScaledPosterior(double const* sample_composition,
     return value;
     
 }
-
+*/
 
 
 

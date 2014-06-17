@@ -9,7 +9,6 @@
 #include "nucleotide_stats.h"
 #include "error_estimate.h"
 #include "dirichlet.h"
-#include "posterior.h"
 #include "metropolis.h"
 #include "pileup_tools.h"
 #include "stats_tools.h"
@@ -26,12 +25,15 @@ posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
                                      size_t num_quantiles,
                                      char const* label_string,
                                      FILE * cdfs_output_fh,
-                                     pthread_mutex_t * file_writing_mutex) :
+                                     pthread_mutex_t * file_writing_mutex,
+                                     size_t tuning_num_points,
+                                     size_t final_num_points,
+                                     bool verbose) :
     mode_tolerance(1e-60),
     max_modefinding_iterations(3000),
     max_tuning_iterations(10),
-    tuning_num_points(1000),
-    final_num_points(10000),
+    tuning_num_points(tuning_num_points),
+    final_num_points(final_num_points),
     autocor_max_offset(6),
     autocor_max_value(6),
     initial_autocor_offset(30),
@@ -41,7 +43,7 @@ posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
     initial_sampling_range(62 * 3),
     may_underflow(true),
     use_independence_chain_mh(true),
-    verbose(false),
+    verbose(verbose),
     min_quality_score(min_quality_score),
     num_quantiles(num_quantiles),
     cdfs_output_fh(cdfs_output_fh),
@@ -65,11 +67,10 @@ posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
     this->model->set_composition_prior_alphas(prior_alphas);
     this->model->model_params = this->params;
     this->prior = new Dirichlet(full_ndim, this->may_underflow);
-    this->posterior = new Posterior(this->model, this->may_underflow, full_ndim);
-    this->sampler = new Metropolis(this->posterior, this->prior, full_ndim, 
+    // this->posterior = new Posterior(this->model, this->may_underflow, full_ndim);
+    this->sampler = new Metropolis(this->model, this->prior, full_ndim, 
                                    this->use_independence_chain_mh, this->final_num_points);
-    this->slice_sampler = new SliceSampling(truncated_ndim, this->num_bits_per_dim,
-                                            this->is_log_integrand, 1);
+    this->slice_sampler = new SliceSampling(truncated_ndim, this->num_bits_per_dim, 1);
 }
 
 
@@ -81,7 +82,7 @@ posterior_wrapper::~posterior_wrapper()
 
     delete this->sampler;
     delete this->slice_sampler;
-    delete this->posterior;
+    // delete this->posterior;
     delete this->prior;
     delete this->model;
     delete this->params;
@@ -95,24 +96,28 @@ posterior_wrapper::~posterior_wrapper()
 size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_buf)
 {
 
-    this->posterior->ee->locus_data = & locus->counts;
-    this->posterior->initialize(this->mode_tolerance, 
-                                this->max_modefinding_iterations, 
-                                this->initial_point, 
-                                this->verbose);
-    this->sampler->set_current_point(this->posterior->mode_point);
+    this->model->locus_data = & locus->counts;
+
+    this->model->find_mode_point(1e-20, /* might be this: this->mode_tolerance */
+                                 this->max_modefinding_iterations,
+                                 this->initial_point,
+                                 this->on_zero_boundary,
+                                 this->verbose,
+                                 this->mode_point);
+        
+    this->sampler->set_current_point(this->mode_point);
     this->prior->set_alpha0(locus->read_depth + this->prior_alpha0);
 
     if (this->prior->get_alpha0() > 1)
     {
         this->prior->set_alphas_from_mode_or_bound
-            (this->posterior->mode_point,
-             this->posterior->ee->composition_prior_alphas,
-             this->posterior->zero_boundary);
+            (this->mode_point,
+             this->model->composition_prior_alphas,
+             this->on_zero_boundary);
     }
     else
     {
-        this->prior->update(this->posterior->ee->composition_prior_alphas);
+        this->prior->update(this->model->composition_prior_alphas);
     }
 
     //metropolis hastings
@@ -121,7 +126,7 @@ size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_
     size_t const full_ndim = 4;
     double estimated_mean[full_ndim];
 
-
+    
     for (size_t iter = 0; iter != this->max_tuning_iterations; ++iter)
     {
         cumul_autocor_offset = 1;
@@ -130,7 +135,9 @@ size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_
         {
             //sample more and more thinly, starting from every 1'th
             this->sampler->sample(this->tuning_num_points, 0, cumul_autocor_offset,
-                                  &proposal_mean, &proposal_variance, sample_points_buf);
+                                  (verbose ? & proposal_mean : NULL), // only calculate extra stats if in verbose mode
+                                  (verbose ? & proposal_variance : NULL),
+                                  sample_points_buf);
             
             current_autocor_offset =
                 best_autocorrelation_offset(sample_points_buf,
@@ -177,7 +184,7 @@ size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_
         }
 
         this->prior->set_alphas_from_mean_or_bound(estimated_mean,
-                                                   this->posterior->ee->composition_prior_alphas);
+                                                   this->model->composition_prior_alphas);
         
     }
     return cumul_autocor_offset;
@@ -189,8 +196,8 @@ size_t posterior_wrapper::tune_ss(double * sample_points_buf)
     //SliceSampling slice_sampler(truncated_ndim, num_bits_per_dim, is_log_integrand, 1);
 
     this->slice_sampler->Initialize();
-    this->slice_sampler->sample(this->posterior, 
-                                this->posterior->mode_point,
+    this->slice_sampler->sample(this->model, 
+                                this->mode_point,
                                 initial_sampling_range, 1, sample_points_buf,
                                 tuning_num_points);
     
@@ -210,13 +217,12 @@ size_t posterior_wrapper::tune_ss(double * sample_points_buf)
 void posterior_wrapper::sample(PileupSummary * locus, double * sample_points_buf, char * algorithm_used)
 {
     size_t cumul_autocor_offset = this->tune_mh(locus, sample_points_buf);
-    double proposal_mean, proposal_variance;
+    // double proposal_mean, proposal_variance;
 
     if (cumul_autocor_offset <= this->target_autocor_offset)
     {
         //metropolis hastings succeeded
-        this->sampler->sample(this->final_num_points, 0, cumul_autocor_offset,
-                              &proposal_mean, &proposal_variance, sample_points_buf);
+        this->sampler->sample(this->final_num_points, 0, cumul_autocor_offset, NULL, NULL, sample_points_buf);
         strcpy(algorithm_used, "MH");
     }
     else
@@ -227,8 +233,8 @@ void posterior_wrapper::sample(PileupSummary * locus, double * sample_points_buf
         if (best_autocor_offset <= this->target_autocor_offset)
         {
             //slice sampling succeeded
-            this->slice_sampler->sample(this->posterior, 
-                                        this->posterior->mode_point,
+            this->slice_sampler->sample(this->model, 
+                                        this->mode_point,
                                         this->initial_sampling_range, 
                                         best_autocor_offset,
                                         sample_points_buf,
@@ -255,7 +261,7 @@ void posterior_wrapper::values(double * points, size_t num_points,
 
     for (; point != end; point += 4, ++val)
     {
-        *val = log2_likelihood(this->posterior->ee, point);
+        *val = this->model->log_likelihood(point);
         assert(! isinf(*val));
         assert(! isnan(*val));
     }
@@ -314,7 +320,7 @@ char * posterior_wrapper::print_quantiles(PileupSummary * locus,
         print_marginal_quantiles(out_buffer,
                                  sample_points_buf,
                                  this->final_num_points,
-                                 this->posterior->mode_point,
+                                 this->mode_point,
                                  line_label, 
                                  dimension_labels, 
                                  "+", 
@@ -451,9 +457,16 @@ char * posterior_wrapper::process_line_mode(char const* pileup_line,
 
 
     size_t effective_depth = locus.read_depth;
-    this->posterior->ee->locus_data = & locus.counts;
-    this->posterior->initialize(this->mode_tolerance, this->max_modefinding_iterations, 
-                                initial_point, verbose);
+    this->model->locus_data = & locus.counts;
+    // this->posterior->initialize(this->mode_tolerance, this->max_modefinding_iterations, 
+    //                             initial_point, verbose);
+
+    this->model->find_mode_point(1e-20,
+                                 this->max_modefinding_iterations,
+                                 this->initial_point,
+                                 this->on_zero_boundary,
+                                 this->verbose,
+                                 this->mode_point);
 
     out_buffer += 
         sprintf(out_buffer, 
@@ -464,10 +477,10 @@ char * posterior_wrapper::process_line_mode(char const* pileup_line,
                 locus.reference_base, 
                 locus.read_depth,
                 effective_depth,
-                this->posterior->mode_point[0],
-                this->posterior->mode_point[1],
-                this->posterior->mode_point[2],
-                this->posterior->mode_point[3]
+                this->mode_point[0],
+                this->mode_point[1],
+                this->mode_point[2],
+                this->mode_point[3]
                 );
     
     return out_buffer;

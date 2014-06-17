@@ -30,16 +30,17 @@ defined by y.  Generating an independent point drawn uniformly from S
 may still be difficult, in which case we can substitute some update
 for x that leaves the uniform distribution over S invariant.
 
+
+
  */
 
-class Posterior;
+class ErrorEstimate;
 
 class SliceSampling
 {
     size_t const ndim;
     size_t const nbits_per_dim;
 
-    bool assume_log_integrand;
     size_t range_delta;
 
     size_t total_bits;
@@ -59,9 +60,7 @@ class SliceSampling
 
  public:
 
-    SliceSampling(size_t const _ndim, size_t const nbits_per_dim, 
-                  bool const _assume_log_integrand,
-                  size_t _range_delta);
+    SliceSampling(size_t const _ndim, size_t const nbits_per_dim, size_t _range_delta);
 
     ~SliceSampling();
     void Initialize();
@@ -70,13 +69,13 @@ class SliceSampling
                    uint64_t const* xg,
                    uint64_t * xgprime);
     
-    int step_in(Posterior * integrand,
+    int step_in(ErrorEstimate * integrand,
                 uint64_t const* xg,
                 double y,
                 int initial_range,
                 uint64_t * xgp);
 
-    int step_out(Posterior * integrand, 
+    int step_out(ErrorEstimate * integrand, 
                  uint64_t const* xg,
                  double const y,
                  int const initial_range);
@@ -85,11 +84,10 @@ class SliceSampling
                                    size_t const ndim);
     
 
-    double choose_auxiliary_coord(Posterior * integrand,
-                                double const* x, 
-                                size_t const ndim);
+    double choose_auxiliary_coord(ErrorEstimate * integrand,
+                                  double const* x);
 
-    void sample(Posterior * integrand,
+    void sample(ErrorEstimate * integrand,
                 double const* starting_x,
                 int const initial_range,
                 size_t every_nth,

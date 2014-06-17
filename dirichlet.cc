@@ -213,16 +213,26 @@ double Dirichlet::log_pdf(double const* x)
     return Transformation::log_dirichlet(this->alpha, x);
 }
 
+
+double Dirichlet::log2_pdf(double const* x)
+{
+    return Transformation::log2_dirichlet(this->alpha, x);
+}
+
+
+// generates a sample point from the 4-D dirichlet distribution
+// bizarre -- i did all of this unnecessarily
 void Dirichlet::sample(double * x_star) const
 {
     gsl_ran_dirichlet(seed, this->ndim, this->alpha, x_star);
-    double r3[3];
-    Transformation::composition_to_r3_sigmoid(x_star, r3);
+    // double r3[3];
+    // Transformation::composition_to_r3_sigmoid(x_star, r3);
 
-    Transformation::SigmoidVals sigmoid_vals[3];
-    Transformation::sigmoid_value_and_gradient(r3, sigmoid_vals);
+    // Transformation::SigmoidVals sigmoid_vals[3];
+    // Transformation::sigmoid_value_and_gradient(r3, sigmoid_vals);
     
-    Transformation::sigmoid_composition(sigmoid_vals, x_star);
+    // Transformation::sigmoid_composition(sigmoid_vals, x_star);
+    // assert(true);
 }
 
 

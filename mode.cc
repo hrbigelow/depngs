@@ -15,6 +15,8 @@ int mode_usage()
             "-m INT      number bytes of memory to use [%Zu]\n"
             "-p FILE     alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-q INT      %s\n"
+            "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
+            "-f INT      number of sample points used for final quantiles estimation [10000]\n"
             "-v <empty>  if present, be verbose [absent]\n"
             "\n"
             "Output fields are:\n"
@@ -51,10 +53,13 @@ int main_mode(int argc, char ** argv)
     char const* pileup_input_file;
     char const* posterior_output_file;
 
+    size_t tuning_num_points = 1e3;
+    size_t final_num_points = 1e4;
+
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:p:q:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:p:qT:f::v")) >= 0)
     {
         switch(c)
         {
@@ -63,6 +68,8 @@ int main_mode(int argc, char ** argv)
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
         case 'p': strcpy(prior_alphas_file, optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
+        case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'v': verbose = true; break;
         default: return mode_usage(); break;
         }
@@ -86,6 +93,9 @@ int main_mode(int argc, char ** argv)
                             jpd_data_params_file,
                             posterior_output_file,
                             "/dev/null",
+                            tuning_num_points,
+                            final_num_points,
+                            verbose,
                             &mode_worker);
 
 }

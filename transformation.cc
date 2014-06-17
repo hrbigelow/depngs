@@ -16,8 +16,7 @@ namespace Transformation
 
 
     double const sigmoid_truncation_epsilon = 1e-10;
-    double const sigmoid_truncation_epsilon_inv = 
-        1.0 - sigmoid_truncation_epsilon;
+    double const sigmoid_truncation_epsilon_inv = 1.0 - sigmoid_truncation_epsilon;
     double const log_epsilon = gsl_sf_log(sigmoid_truncation_epsilon);
     double const log_epsilon_inv = gsl_sf_log(sigmoid_truncation_epsilon_inv);
 
@@ -115,6 +114,9 @@ namespace Transformation
 
     }                     
 
+
+
+    // compute the original 4D point from the sigmoid transformed point
     void sigmoid_composition(Transformation::SigmoidVals const sg[3],
                              double * comp)
     {
@@ -228,6 +230,7 @@ namespace Transformation
     //this needs to apply the truncation logic 
     //gsl_sf_log returns -nan if zero or close to zero with status 1,
     //inf if argument is larger than representable, with status 0
+    /*
     void composition_to_r3_sigmoid(double const* c, double * r)
     {
         
@@ -250,7 +253,7 @@ namespace Transformation
 
         // gsl_set_error_handler(original_handler);
     }
-
+    */
 
     double log_dirichlet(double const alpha[4],
                          double const x[4])
@@ -267,6 +270,24 @@ namespace Transformation
         //     assert(ld2 / ld < 1.00001);
         // }
         return ld;
+    }
+
+
+    double log2_dirichlet(double const alpha[4], double const x[4])
+    {
+        double ld =
+            + (alpha[0] - 1.0) * log2(x[0])
+            + (alpha[1] - 1.0) * log2(x[1])
+            + (alpha[2] - 1.0) * log2(x[2])
+            + (alpha[3] - 1.0) * log2(x[3]);
+        
+        // if (ld != 0)
+        // {
+        //     assert(ld / ld2 < 1.00001);
+        //     assert(ld2 / ld < 1.00001);
+        // }
+        return ld;
+        
     }
 
 
@@ -310,8 +331,10 @@ namespace Transformation
         {
             log_likelihood = pp->error_estimate->log_likelihood(comp) - pp->current_mode;
             log_prior = 
-                sigmoid_log_dirichlet(pp->error_estimate->composition_prior_alphas,
-                                      sigmoid_vals);
+                pp->error_estimate->uniform_prior
+                ? 0
+                : sigmoid_log_dirichlet(pp->error_estimate->composition_prior_alphas,
+                                        sigmoid_vals);
 
             *neg_log_value = -1.0 * (log_likelihood + log_prior);
         }
@@ -320,8 +343,16 @@ namespace Transformation
         // if (1)
         {
             sigmoid_gradient(sigmoid_vals, comp_gradient);
-            sigmoid_log_dirichlet_gradient(pp->error_estimate->composition_prior_alphas,
-                                           sigmoid_vals, prior_gradient);
+
+            if (pp->error_estimate->uniform_prior)
+            {
+                std::fill(prior_gradient, prior_gradient + 3, 0.0);
+            }
+            else
+            {
+                sigmoid_log_dirichlet_gradient(pp->error_estimate->composition_prior_alphas,
+                                               sigmoid_vals, prior_gradient);
+            }
             
             pp->error_estimate->log_likelihood_gradient(comp, likelihood_gradient);
 
@@ -385,31 +416,5 @@ namespace Transformation
         log_neg_posterior_aux(r, Transformation::VALUE | Transformation::GRADIENT, 
                               neg_log_value, neg_gradient, params);
     }
-
-
-    //     void log_neg_gradient_numerical(const gsl_vector * r, 
-    //                                      void * params,
-    //                                      double epsilon,
-    //                                      gsl_vector * numerical_gradient)
-    //     {
-    //         gsl_vector * rdel = gsl_vector_alloc(3);
-    //         double low, high;
-        
-    //         for (size_t d = 0; d != 3; ++d)
-    //         {
-    //             gsl_vector_memcpy(rdel, r);
-
-    //             gsl_vector_set(rdel, d, gsl_vector_get(r, d) - epsilon);
-    //             low = log_neg_posterior(rdel, params);
-
-    //             gsl_vector_set(rdel, d, gsl_vector_get(r, d) + epsilon);
-    //             high = log_neg_posterior(rdel, params);
-
-    //             gsl_vector_set(numerical_gradient, d, (high - low) / (2.0 * epsilon));
-            
-    //         }
-    //         gsl_vector_free(rdel);
-
-    //     }
 
 } // END namespace Transformation

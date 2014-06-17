@@ -8,16 +8,13 @@
 #include "tools.h"
 #include "hilbert.h"
 #include "sampling.h"
-#include "posterior.h"
-// #include "integrands.h"
+#include "error_estimate.h"
 
 SliceSampling::SliceSampling(size_t const _ndim, 
                              size_t const _nbits_per_dim,
-                             bool const _assume_log_integrand,
                              size_t _range_delta) : 
     ndim(_ndim),
     nbits_per_dim(_nbits_per_dim),
-    assume_log_integrand(_assume_log_integrand),
     range_delta(_range_delta),
     initialized(false)
 {
@@ -192,7 +189,7 @@ void SliceSampling::grid_step(int const current_range,
    interval starts as a neighborhood of x with initial_range bits of
    width.  updates xcoord, xcoord_grid and yprime with latest values
 */
-int SliceSampling::step_in(Posterior * posterior,
+int SliceSampling::step_in(ErrorEstimate * posterior,
                            uint64_t const* xg,
                            double y,
                            int initial_range,
@@ -209,14 +206,7 @@ int SliceSampling::step_in(Posterior * posterior,
         current_range -= this->range_delta;
         this->grid_step(current_range, xg, xgp);
         contract_from_grid_coords(xgp, this->ndim, xrp, this->nbits_per_dim);
-        if (this->assume_log_integrand)
-        {
-            yp = posterior->log_pdf(xrp);
-        }
-        else
-        {
-            yp = posterior->pdf(xrp);
-        }
+        yp = posterior->log_pdf_trunc(xrp);
     }
     while (yp < y && (! std::equal(xg, xg + this->ndim, xgp)));
     
@@ -232,7 +222,7 @@ int SliceSampling::step_in(Posterior * posterior,
    neighborhood of x with a neighborhood of intitial_range
    bits. returns the range found.
 */
-int SliceSampling::step_out(Posterior * posterior, 
+int SliceSampling::step_out(ErrorEstimate * posterior, 
                             uint64_t const* xg,
                             double const y,
                             int const initial_range)
@@ -250,14 +240,7 @@ int SliceSampling::step_out(Posterior * posterior,
 
         this->grid_step(current_range, xg, xgp);
         contract_from_grid_coords(xgp, this->ndim, xrp, this->nbits_per_dim);
-        if (this->assume_log_integrand)
-        {
-            yp = posterior->log_pdf(xrp);
-        }
-        else
-        {
-            yp = posterior->pdf(xrp);
-        }
+        yp = posterior->log_pdf_trunc(xrp);
     }
     while (current_range != static_cast<int>(this->total_bits) && yp >= y);
 
@@ -289,27 +272,17 @@ void SliceSampling::initialize_starting_point(double const* starting_x,
 }    
 
 
-/* selects an auxiliary coordinate between U(0, f(x)).  If
-   assume_log_integrand is true, the auxiliary coordinate is also
-   sampled in log space, and the integrand given is assumed to be
-   log(integrand-of-interest)
+/* selects an auxiliary coordinate between U(0, f(x)).  The auxiliary
+   coordinate is also sampled in log space, and the integrand given is
+   assumed to be log(integrand-of-interest)
+   !!! untested code
  */
-double SliceSampling::choose_auxiliary_coord(Posterior * posterior,
-                                           double const* x, 
-                                           size_t const ndim)
+double SliceSampling::choose_auxiliary_coord(ErrorEstimate * posterior,
+                                             double const* x)
 {
 
     mpf_urandomb(this->uniform, this->rand_state, 64);
-    double y;
-    
-    if (this->assume_log_integrand)
-    {
-        y = posterior->log_pdf(x) + gsl_sf_log(mpf_get_d(this->uniform));
-    }
-    else
-    {
-        y = posterior->pdf(x) * mpf_get_d(this->uniform);
-    }
+    double y = posterior->log_pdf_trunc(x) + log(mpf_get_d(this->uniform));
     return y;
 }
 
@@ -322,7 +295,7 @@ double SliceSampling::choose_auxiliary_coord(Posterior * posterior,
    shall be populated with 4-tuples of normalized points, rather than 3.
    The 4th is just auto-filled in
 */
-void SliceSampling::sample(Posterior * posterior,
+void SliceSampling::sample(ErrorEstimate * posterior,
                            double const* starting_x,
                            int initial_range,
                            size_t every_nth,
@@ -343,15 +316,20 @@ void SliceSampling::sample(Posterior * posterior,
         exit(1);
     }
 
+    // grid coordinate coorresponding to xrp
     uint64_t * xg = new uint64_t[this->ndim];
+
+    // grid coordinate representing 'previous' xg, in the markov process
     uint64_t * xgp = new uint64_t[this->ndim];
+
+    // coordinate in real space, that the posterior is actually evaluated in
     double * xrp = new double[this->ndim];
 
     //initialize
     int current_range = initial_range;
     std::copy(starting_x, starting_x + this->ndim, xrp);
     expand_to_grid_coords(xrp, ndim, xg, this->nbits_per_dim);
-    double y = this->choose_auxiliary_coord(posterior, xrp, this->ndim);
+    double y = this->choose_auxiliary_coord(posterior, xrp);
 
     size_t sample_count = 0;
 
@@ -381,7 +359,7 @@ void SliceSampling::sample(Posterior * posterior,
         std::copy(xgp, xgp + this->ndim, xg);
 
         //choose y coordinate from new x coordinate
-        y = this->choose_auxiliary_coord(posterior, xrp, this->ndim);
+        y = this->choose_auxiliary_coord(posterior, xrp);
         
     }
 
