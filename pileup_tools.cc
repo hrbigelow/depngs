@@ -56,6 +56,68 @@ int PileupSummary::quality_code_offset;
 FastqType PileupSummary::fastq_type;
 
 
+PileupSummary::PileupSummary(int indel_histo_size) : 
+    // indel_histo_size(indel_histo_size),
+        bases(NULL), bases_upper(NULL), quality_codes(NULL)
+    {
+        counts.raw_counts = NULL;
+        counts.stats_index = NULL;
+        counts.fbqs_cpd = NULL;
+        counts.num_data = 0;
+        memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
+        memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
+        /*
+        indel_counts = new int[indel_histo_size * 2 + 1];
+        indel_seqs = new std::map<std::string, int>[indel_histo_size * 2 + 1];
+        indel_counts += indel_histo_size;
+        indel_seqs += indel_histo_size;
+        for (int i = -indel_histo_size; i <= indel_histo_size; ++i)
+        {
+            indel_counts[i] = 0;
+            indel_seqs[i] = std::map<std::string, int>();
+        }
+        */
+        sum_of_counts = 0;
+    }
+
+
+PileupSummary::~PileupSummary()
+{
+    /* delete &indel_counts[-indel_histo_size]; */
+    /* delete [] &indel_seqs[-indel_histo_size]; */
+    if (bases != NULL)
+    {
+        delete[] bases;
+        bases = NULL;
+    }
+    if (bases_upper != NULL)
+    {
+        delete[] bases_upper;
+        bases_upper = NULL;
+    }
+    if (quality_codes != NULL)
+    {
+        delete[] quality_codes;
+        quality_codes = NULL;
+    }
+    if (this->counts.raw_counts != NULL)
+    {
+        delete[] this->counts.raw_counts;
+        this->counts.raw_counts = NULL;
+    }
+    if (this->counts.stats_index != NULL)
+    {
+        delete[] this->counts.stats_index;
+        this->counts.stats_index = NULL;
+    }
+    if (this->counts.fbqs_cpd != NULL)
+    {
+        delete[] this->counts.fbqs_cpd;
+        this->counts.fbqs_cpd = NULL;
+    }
+}
+
+
 //load and parse a single line.  Assumes the line has all required fields.
 //consumes the current line including newline character.
 void PileupSummary::load_line(char const* read_pointer)
@@ -79,17 +141,13 @@ void PileupSummary::load_line(char const* read_pointer)
 
     read_pointer += read_pos;
 
-    if (this->quality_codes != NULL &&
-        this->bases != NULL &&
-        this->bases_upper != NULL)
-    {
-        delete this->quality_codes;
-        delete this->bases;
-        delete this->bases_upper;
-    }
-
+    if (this->quality_codes != NULL) delete[] this->quality_codes;
     this->quality_codes = new char[total_read_depth + 1];
+
+    if (this->bases != NULL) delete[] this->bases;
     this->bases = new char[total_read_depth + 1];
+
+    if (this->bases_upper != NULL) delete[] this->bases_upper;
     this->bases_upper = new char[total_read_depth + 1];
 
     const int max_indel_size = 1000;
@@ -258,13 +316,13 @@ void PileupSummary::parse(size_t min_quality_score)
 {
     
     // populate raw_counts_flat with a sparse set of counts
-    unsigned long * raw_counts_flat = new unsigned long[Nucleotide::num_bqs];
-    std::fill(raw_counts_flat, raw_counts_flat + Nucleotide::num_bqs, 0);
-    
-    size_t rd = static_cast<size_t>(this->read_depth);
-    size_t nd = 0;
+    unsigned long *raw_counts_flat = new unsigned long[Nucleotide::num_bqs];
     unsigned long *rc_tmp = new unsigned long[Nucleotide::num_bqs];
     size_t *rc_ind_tmp = new size_t[Nucleotide::num_bqs];
+
+    std::fill(raw_counts_flat, raw_counts_flat + Nucleotide::num_bqs, 0);
+    size_t rd = static_cast<size_t>(this->read_depth);
+    size_t nd = 0;
     size_t effective_read_depth = 0;
 
     for (size_t r = 0; r < rd; ++r)
@@ -299,30 +357,27 @@ void PileupSummary::parse(size_t min_quality_score)
 
     this->counts.num_data = nd;
     if (this->counts.raw_counts != NULL)
-    {
-        delete this->counts.raw_counts;
-    }
+        delete[] this->counts.raw_counts;
+
     this->counts.raw_counts = new unsigned long[nd];
 
     if (this->counts.stats_index != NULL)
-    {
-        delete this->counts.stats_index;
-    }
+        delete[] this->counts.stats_index;
+
     this->counts.stats_index = new size_t[nd];
 
     if (this->counts.fbqs_cpd != NULL)
-    {
-        delete this->counts.fbqs_cpd;
-    }
+        delete[] this->counts.fbqs_cpd;
+
     this->counts.fbqs_cpd = new double[nd * 4];
 
     this->read_depth = effective_read_depth;
     std::copy(rc_tmp, rc_tmp + nd, this->counts.raw_counts);
     std::copy(rc_ind_tmp, rc_ind_tmp + nd, this->counts.stats_index);
 
-    delete raw_counts_flat;
-    delete rc_tmp;
-    delete rc_ind_tmp;
+    delete[] raw_counts_flat;
+    delete[] rc_tmp;
+    delete[] rc_ind_tmp;
 }
 
 

@@ -147,34 +147,17 @@ char * print_vcf_line(sample_details * samples,
         if (samples[s].is_next)
         {
             double mean_point[4] = { 0.0, 0.0, 0.0, 0.0 };
-            const size_t np = input->worker[s]->final_num_points;
-            if (samples[s].has_sample_points)
+            const size_t np = samples[s].num_sample_points;
+
+            // compute mean
+            double * point = samples[s].sample_points;
+            for (size_t p = 0; p != np; ++p)
             {
-                // compute mean
-                double * point = samples[s].sample_points;
-                for (size_t p = 0; p != np; ++p)
-                {
-                    mean_point[0] += point[0];
-                    mean_point[1] += point[1];
-                    mean_point[2] += point[2];
-                    mean_point[3] += point[3];
-                    point += 4;
-                }
-            }
-            else
-            {
-                // compute weighted means
-                double * point = input->lattice->points;
-                double * weight = samples[s].discrete_values;
-                for (size_t l = 0; l != input->lattice->num_points; ++l)
-                {
-                    mean_point[0] += point[0] * *weight;
-                    mean_point[1] += point[1] * *weight;
-                    mean_point[2] += point[2] * *weight;
-                    mean_point[3] += point[3] * *weight;
-                    point += 4;
-                    ++weight;
-                }
+                mean_point[0] += point[0];
+                mean_point[1] += point[1];
+                mean_point[2] += point[2];
+                mean_point[3] += point[3];
+                point += 4;
             }
             mean_point[0] /= static_cast<double>(np);
             mean_point[1] /= static_cast<double>(np);

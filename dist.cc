@@ -28,29 +28,29 @@ int dist_usage()
             "Options:\n\n"
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
-            "-x STRING   (optional) name of output discrete composition file.  If absent, do not output discrete compositions\n"
             "-v STRING   (optional) name of output vcf file.  If absent, do not output VCF file\n"
             "-S STRING   (optional) name of sample_pairings.rdb file (see description below).  Required if -d option is given.\n"
-            "-e STRING   (optional) name of eval_points.rdb file, with evaluation points in A C G T format (see below)\n"
-            "-E STRING   Evaluation mode (Discrete,Sampling,Mixed). see below [Discrete]\n"
             "-y REAL     Minimum mutational distance to report as changed [0.2]\n"
+            "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
+            "-x INT      number of sample points used for first-pass distance checking [100]\n"
+            "-X REAL     quantile used to test first-pass distance [0.01]\n"
+            "-f INT      number of sample points used for final quantiles estimation [1000]\n"
+            "-q INT      minimum quality score to include bases as evidence [%s]\n"
+            "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
+
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
             "-V <empty>  if present, be verbose [absent]\n"
-            "-q INT      minimum quality score to include bases as evidence [%s]\n"
-            "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
-            "\n"
             "\n"
             "These options affect how sampling is done.\n"
             "\n"
             "-D STRING   distance quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
             "-C STRING   composition quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
-            "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
-            "-f INT      number of sample points used for final quantiles estimation [10000]\n"
             "-P INT      number of random sample point pairings to estimate Sampling/Sampling distance distribution [10000]\n"
             "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
             "-i INT      maximum number of proposal tuning iterations [10]\n"
-            "-M FLOAT    autocorrelation maximum value [6]\n"
+            "-M REAL     autocorrelation maximum value [6]\n"
+            "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
             "-p STRING   alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-l INT      maximum length of a pileup line in bytes.  {Nuisance parameter} [100000]\n"
             "\n"
@@ -59,22 +59,12 @@ int dist_usage()
             "defining which pairs of samples are to be compared.  <sample_id> correspond\n"
             "with those in samples.rdb\n"
             "\n"
-            "eval_points.rdb has lines of <A_frequency><tab><C_frequency><tab><G_frequency><tab><T_frequency>\n"
-            "The components need not sum to 1, but will be normalized internally\n"
-            "If this option is provided, the posterior value be evaluated and output at all of these points.\n"
-            "\n"
-            "Evaluation mode meanings:\n"
-            "    Discrete:  just evaluate the posterior at the points provided in eval_points.rdb'\n"
-            "    Sampling:  use Metropolis-Hastings or slice sampling to generate sample points.  Report marginal quantiles\n"
-            "    Mixed   :  use Discrete evaluation, and if the result is too ambiguous, use Sampling as a fallback\n"
-            "               In this case, report both formats\n"
-            "\n"
             "contig_order.rdb has lines of <contig><tab><ordering>\n"
             "It must be consistent and complete with the orderings of the contigs mentioned in\n"
             "all pileup input files\n"
             ,
-            1024 * 1024 * 1024 * 4l, // 4 GB memory
-            Usage::quality_string
+            Usage::quality_string,
+            1024 * 1024 * 1024 * 4l // 4 GB memory
             );
     return 1;
 }
@@ -91,13 +81,16 @@ int main_dist(int argc, char ** argv)
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
     size_t tuning_num_points = 1e3;
-    size_t final_num_points = 1e4;
+    size_t prelim_num_points = 1e2;
+    float prelim_quantile = 0.01;
+    size_t final_num_points = 1e3;
     size_t num_sample_point_pairs = 1e4;
 
     size_t max_pileup_line_size = 1e6;
 
     size_t target_autocor_offset = 6;
     size_t max_tuning_iterations = 10;
+    double gradient_tolerance = 1e-5;
 
     double autocor_max_value = 6;
     char const* prior_alphas_file = NULL;
@@ -109,13 +102,10 @@ int main_dist(int argc, char ** argv)
 
     char const* dist_file = NULL;
     char const* comp_file = NULL;
-    char const* discomp_file = NULL;
     char const* vcf_file = NULL;
 
     char const* sample_pairings_file = NULL;
 
-    char const* eval_points_file = NULL;
-    char const* evaluation_mode_string = "Discrete";
     float min_dist_to_report = 0.2;
 
     char const* fastq_type = "None";
@@ -123,26 +113,26 @@ int main_dist(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:x:v:S:e:E:y:t:m:T:f:P:a:i:M:p:q:VD:C:F:l:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:v:S:y:t:m:T:x:X:f:P:a:i:M:z:p:q:VD:C:F:l:")) >= 0)
     {
         switch(c)
         {
         case 'd': dist_file = optarg; break;
         case 'c': comp_file = optarg; break;
-        case 'x': discomp_file = optarg; break;
         case 'v': vcf_file = optarg; break;
         case 'S': sample_pairings_file = optarg; break;
-        case 'e': eval_points_file = optarg; break;
-        case 'E': evaluation_mode_string = optarg; break;
         case 'y': min_dist_to_report = atof(optarg); break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
         case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'x': prelim_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'X': prelim_quantile = atof(optarg); break;
         case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'P': num_sample_point_pairs = static_cast<size_t>(atof(optarg)); break;
         case 'a': target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
         case 'i': max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
         case 'M': autocor_max_value = atof(optarg); break;
+        case 'z': gradient_tolerance = atof(optarg); break;
         case 'p': prior_alphas_file = optarg; break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
         case 'V': verbose = true; break;
@@ -231,7 +221,6 @@ int main_dist(int argc, char ** argv)
 
     FILE * dist_fh = open_if_present(dist_file, "w");
     FILE * comp_fh = open_if_present(comp_file, "w");
-    FILE * discomp_fh = open_if_present(discomp_file, "w");
     FILE * vcf_fh = open_if_present(vcf_file, "w");
 
     double * dist_quantiles;
@@ -278,11 +267,8 @@ int main_dist(int argc, char ** argv)
         assert(num_prior_alphas == 4);
     }
 
-    
     // parse pairings file
-    size_t num_pairings;
-    size_t * pair_sample1;
-    size_t * pair_sample2;
+    size_t num_pairings, *pair_sample1, *pair_sample2;
 
     {
         FILE * sample_pairings_fh = open_if_present(sample_pairings_file, "r");
@@ -335,123 +321,6 @@ int main_dist(int argc, char ** argv)
         fclose(contig_order_fh);
     }
 
-    eval_dist_matrix lattice;
-
-    bool use_discrete, use_sampling;
-
-    // evaluation_mode
-    if (strcmp(evaluation_mode_string, "Discrete") == 0)
-    {
-        use_discrete = true;
-        use_sampling = false;
-    }
-    else if (strcmp(evaluation_mode_string, "Sampling") == 0)
-    {
-        use_discrete = false;
-        use_sampling = true;
-    }
-    else if (strcmp(evaluation_mode_string, "Mixed") == 0)
-    {
-        use_discrete = true;
-        use_sampling = true;
-    }
-    else
-    {
-        fprintf(stderr, "Error: option -E must be one of (Discrete|Sampling|Mixed)\n");
-        exit(7);
-    }
-
-    if (comp_file != NULL && ! use_sampling)
-    {
-        fprintf(stderr,
-                "Error: You specified %s evaluation mode, but "
-                "provided an unnecessary -c <comp_file> option %s\n",
-                evaluation_mode_string, comp_file);
-        exit(10);
-    }
-
-    if (discomp_file != NULL && ! use_discrete)
-    {
-        fprintf(stderr,
-                "Error: You specified %s evaluation mode, but provided an unnecessary -x file option %s\n",
-                evaluation_mode_string, discomp_file);
-        exit(10);
-    }
-
-
-    // parse eval_points_file
-    if (use_discrete)
-    {
-        if (eval_points_file == NULL)
-        {
-            fprintf(stderr, 
-                    "Error: You specified %s evaluation mode, but "
-                    "did not provide an evaluation points file %s\n",
-                    evaluation_mode_string, eval_points_file);
-            exit(10);
-        }
-
-        size_t num_components;
-        lattice.points = ParseNumbersFile(eval_points_file, & num_components);
-        assert(num_components % 4 == 0);
-        lattice.num_points = num_components / 4;
-        lattice.inclusion_threshold = MIN(1.0 / static_cast<double>(lattice.num_points), 0.01);
-        lattice.max_points_to_print = MIN(lattice.num_points,5);
-        lattice.min_value_to_print = 1e-3;
-
-        // normalize
-        double * point;
-        for (point = lattice.points; point != lattice.points + num_components; point += 4)
-        {
-            normalize(point, 4, point);
-        }
-
-        // compute distance matrix
-        // this needs to be done more efficiently in the case of equally spaced grids.
-        size_t num_points_squared = lattice.num_points * lattice.num_points;
-        double * matrix_tmp = new double[num_points_squared];
-        lattice.dist_index = new size_t[num_points_squared];
-        std::set<double> dist_set;
-
-        double * c1, * c2;
-        for (size_t p1 = 0; p1 != lattice.num_points; ++p1)
-        {
-            c1 = lattice.points + (p1 * 4);
-            for (size_t p2 = 0; p2 != lattice.num_points; ++p2)
-            {
-                c2 = lattice.points + (p2 * 4);
-                double dist = 
-                    sqrt(gsl_pow_2(c1[0] - c2[0]) +
-                         gsl_pow_2(c1[1] - c2[1]) +
-                         gsl_pow_2(c1[2] - c2[2]) +
-                         gsl_pow_2(c1[3] - c2[3]));
-                matrix_tmp[p1 * lattice.num_points + p2] = dist;
-                dist_set.insert(dist);
-            }
-        }
-        for (size_t p1 = 0; p1 != lattice.num_points; ++p1)
-        {
-            for (size_t p2 = 0; p2 != lattice.num_points; ++p2)
-            {
-                size_t i = p1 * lattice.num_points + p2;
-                std::set<double>::iterator dit = dist_set.find(matrix_tmp[i]);
-                assert(dit != dist_set.end());
-                lattice.dist_index[i] = std::distance(dist_set.begin(), dit);
-            }
-        }
-        lattice.num_distances = dist_set.size();
-        lattice.distances = new double[lattice.num_distances];
-        std::set<double>::iterator dit;
-        size_t d = 0;
-        for (dit = dist_set.begin(); dit != dist_set.end(); ++dit)
-        {
-            lattice.distances[d] = (*dit);
-            ++d;
-        }
-        delete matrix_tmp;
-    }
-
-    double sampling_fallback_threshold = 0.99;
 
     std::vector<std::vector<char *> > pileup_lines(num_samples);
     std::vector<std::vector<char *>::iterator> current(num_samples);
@@ -462,7 +331,6 @@ int main_dist(int argc, char ** argv)
     size_t single_buffer_size = max_mem / (num_samples * 2); // approximate...
     size_t max_dist_line_size = distance_quantiles_locus_bytes(num_dist_quantiles);
     size_t max_comp_line_size = marginal_quantiles_locus_bytes(num_comp_quantiles);
-    size_t max_discomp_line_size = discrete_comp_locus_bytes(lattice.num_points);
     size_t max_vcf_line_size = vcf_locus_bytes(num_samples);
 
     if (single_buffer_size < max_pileup_line_size)
@@ -493,11 +361,10 @@ int main_dist(int argc, char ** argv)
             new dist_worker_input(t, num_samples, num_pairings, num_sample_point_pairs,
                                   dist_quantiles, num_dist_quantiles,
                                   comp_quantiles, num_comp_quantiles,
-                                  & lattice,
-                                  sampling_fallback_threshold,
-                                  use_discrete,
-                                  use_sampling,
-                                  NULL,
+                                  min_dist_to_report,
+                                  prelim_num_points,
+                                  prelim_quantile,
+                                  final_num_points,
                                   NULL,
                                   NULL,
                                   NULL,
@@ -516,6 +383,7 @@ int main_dist(int argc, char ** argv)
                                       sample_label[s],
                                       NULL,
                                       NULL,
+                                      gradient_tolerance,
                                       tuning_num_points,
                                       final_num_points,
                                       verbose);
@@ -712,12 +580,10 @@ int main_dist(int argc, char ** argv)
             // therefore, generate one dist line for every locus position and pairing
             size_t dist_output_size = max_dist_line_size * (total_loci * num_pairings);
             size_t comp_output_size = max_comp_line_size * (max_sample_loci * num_samples);
-            size_t discomp_output_size = max_discomp_line_size * (max_sample_loci * num_samples);
             size_t vcf_output_size = max_vcf_line_size * (max_sample_loci * num_samples);
 
             worker_inputs[t]->out_dist = (dist_fh != NULL) ? new char[dist_output_size + 1] : NULL;
             worker_inputs[t]->out_comp = (comp_fh != NULL) ? new char[comp_output_size + 1] : NULL;
-            worker_inputs[t]->out_discomp = (discomp_fh != NULL) ? new char[discomp_output_size + 1] : NULL;
             worker_inputs[t]->out_vcf = (vcf_fh != NULL) ? new char[vcf_output_size + 1] : NULL;
 
             // dispatch threads
@@ -737,7 +603,7 @@ int main_dist(int argc, char ** argv)
         {
             for (size_t t = 0; t < num_threads; ++t) {
                 fwrite(worker_inputs[t]->out_dist, 1, strlen(worker_inputs[t]->out_dist), dist_fh);
-                delete worker_inputs[t]->out_dist;
+                delete[] worker_inputs[t]->out_dist;
             }        
             fflush(dist_fh);
         }
@@ -745,23 +611,15 @@ int main_dist(int argc, char ** argv)
         {
             for (size_t t = 0; t < num_threads; ++t) {
                 fwrite(worker_inputs[t]->out_comp, 1, strlen(worker_inputs[t]->out_comp), comp_fh);
-                delete worker_inputs[t]->out_comp;
+                delete[] worker_inputs[t]->out_comp;
             }        
             fflush(comp_fh);
-        }
-        if (discomp_fh != NULL)
-        {
-            for (size_t t = 0; t < num_threads; ++t) {
-                fwrite(worker_inputs[t]->out_discomp, 1, strlen(worker_inputs[t]->out_discomp), discomp_fh);
-                delete worker_inputs[t]->out_discomp;
-            }        
-            fflush(discomp_fh);
         }
         if (vcf_fh != NULL)
         {
             for (size_t t = 0; t < num_threads; ++t) {
                 fwrite(worker_inputs[t]->out_vcf, 1, strlen(worker_inputs[t]->out_vcf), vcf_fh);
-                delete worker_inputs[t]->out_vcf;
+                delete[] worker_inputs[t]->out_vcf;
             }        
             fflush(vcf_fh);
         }
@@ -781,17 +639,16 @@ int main_dist(int argc, char ** argv)
 
     if (dist_fh != NULL) { fclose(dist_fh); }
     if (comp_fh != NULL) { fclose(comp_fh); }
-    if (discomp_fh != NULL) { fclose(discomp_fh); }
     if (vcf_fh != NULL) { fclose(vcf_fh); }
 
     // cleanup
     for (size_t s = 0; s != num_samples; ++s)
     {
         fclose(pileup_input_fh[s]);
-        delete chunk_buffer[s];
-        delete jpd_input_file[s];
-        delete pileup_input_file[s];
-        delete sample_label[s];
+        delete[] chunk_buffer[s];
+        delete[] jpd_input_file[s];
+        delete[] pileup_input_file[s];
+        delete[] sample_label[s];
     }
     for (size_t t = 0; t != num_threads; ++t)
     {
@@ -804,20 +661,14 @@ int main_dist(int argc, char ** argv)
     {
         delete (*cit).first;
     }
-    delete pair_sample1;
-    delete pair_sample2;
+    delete[] pair_sample1;
+    delete[] pair_sample2;
 
-    delete chunk_buffer;
-    delete pileup_input_fh;
-    delete dist_quantiles;
-    delete comp_quantiles;
-    delete chunk_read_size;
-    if (lattice.points != NULL)
-    {
-        delete lattice.points;
-        delete lattice.dist_index;
-        delete lattice.distances;
-    }
+    delete[] chunk_buffer;
+    delete[] pileup_input_fh;
+    delete[] dist_quantiles;
+    delete[] comp_quantiles;
+    delete[] chunk_read_size;
 
     return 0;
 }

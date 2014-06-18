@@ -11,19 +11,6 @@
 #include <gsl/gsl_math.h>
 #include <algorithm>
 
-
-eval_dist_matrix::eval_dist_matrix() :
-    points(NULL),
-    num_points(0),
-    dist_index(NULL),
-    num_distances(0),
-    distances(NULL),
-    inclusion_threshold(0),
-    max_points_to_print(0),
-    min_value_to_print(0)
-{}
-
-
 dist_worker_input::dist_worker_input(size_t thread_num,
                                      size_t num_samples,
                                      size_t num_sample_pairs,
@@ -32,7 +19,10 @@ dist_worker_input::dist_worker_input(size_t thread_num,
                                      size_t num_dist_quantiles,
                                      double *comp_quantiles,
                                      size_t num_comp_quantiles,
-                                     eval_dist_matrix *lattice,
+                                     float min_high_conf_dist,
+                                     size_t prelim_num_points,
+                                     float prelim_quantile,
+                                     size_t final_num_points,
                                      char *out_dist,
                                      char *out_comp,
                                      char *out_vcf,
@@ -44,11 +34,13 @@ dist_worker_input::dist_worker_input(size_t thread_num,
     num_sample_point_pairings(num_sample_point_pairings),
     dist_quantiles(dist_quantiles), num_dist_quantiles(num_dist_quantiles),
     comp_quantiles(comp_quantiles), num_comp_quantiles(num_comp_quantiles),
-    lattice(lattice),
-    out_dist(out_dist), out_comp(out_comp),
-    out_vcf(out_vcf),
-    pair_sample1(pair_sample1),
-    pair_sample2(pair_sample2), contig_order(contig_order)
+    min_high_conf_dist(min_high_conf_dist),
+    prelim_num_points(prelim_num_points),
+    prelim_quantile(prelim_quantile),
+    final_num_points(final_num_points),
+    out_dist(out_dist), out_comp(out_comp), out_vcf(out_vcf),
+    pair_sample1(pair_sample1), pair_sample2(pair_sample2), 
+    contig_order(contig_order)
 { 
     this->worker = new posterior_wrapper *[this->num_samples];
     this->beg = new std::vector<char *>::iterator[this->num_samples];
@@ -65,13 +57,10 @@ dist_worker_input::dist_worker_input() :
     num_sample_point_pairings(0),
     dist_quantiles(NULL), num_dist_quantiles(0),
     comp_quantiles(NULL), num_comp_quantiles(0),
-    beg(NULL),
-    end(NULL),
-    out_dist(NULL), out_comp(NULL),
-    out_discomp(NULL),
-    out_vcf(NULL),
-    pair_sample1(NULL),
-    pair_sample2(NULL),
+    min_high_conf_dist(0),
+    beg(NULL), end(NULL),
+    out_dist(NULL), out_comp(NULL), out_vcf(NULL),
+    pair_sample1(NULL), pair_sample2(NULL),
     contig_order(NULL)
 {
 }
@@ -101,41 +90,23 @@ size_t distance_quantiles_locus_bytes(size_t num_quantiles)
 }
 
 
-
-// compute and print out distance quantiles, based on quasi-random
-// pairings of two samplings for efficiency, the 'random' pairing is
-// done simply by cycling through both sets of sample points, but
-// starting in the middle for the second set.
-// return the next write position.
-
-
-char *print_distance_quantiles(const double *points1,
-                               const double *points2,
-                               const char *contig,
-                               size_t position,
-                               dist_worker_input *wi,
-                               char *out_dist_buf,
-                               size_t pair_index)
+// calculate distance quantiles
+void calc_distance_quantiles(const double *points1,
+                             const double *points2,
+                             size_t num_sample_points,
+                             size_t num_random_pairs,
+                             gsl_rng *randgen,
+                             double *dist_quantiles,
+                             size_t num_dist_quantiles,
+                             double *dist_quantile_values)
 {
-    size_t s1 = wi->pair_sample1[pair_index];
-    size_t s2 = wi->pair_sample2[pair_index];
-
-    // if (position == 58526522)
-    // {
-    //     size_t x = 0;
-    //     ++x;
-    // }
-
-    size_t num_random_pairs = wi->num_sample_point_pairings;
-    size_t num_sample_points1 = wi->worker[s1]->final_num_points;
-    size_t num_sample_points2 = wi->worker[s2]->final_num_points;
     double *square_dist = new double[num_random_pairs];
 
     size_t pi1, pi2 = 0;
     for (size_t p = 0; p != num_random_pairs; ++p)
     {
-        pi1 = (p % num_sample_points1) * 4;
-        pi2 = gsl_rng_uniform_int(wi->randgen, num_sample_points2) * 4;
+        pi1 = (p % num_sample_points) * 4;
+        pi2 = gsl_rng_uniform_int(randgen, num_sample_points) * 4;
         square_dist[p] = 
             gsl_pow_2(points1[pi1] - points2[pi2])
             + gsl_pow_2(points1[pi1 + 1] - points2[pi2 + 1])
@@ -157,6 +128,35 @@ char *print_distance_quantiles(const double *points1,
     double *cut;
     double qval;
 
+    for (size_t q = 0; q != num_dist_quantiles; ++q)
+    {
+        cut = square_dist + static_cast<size_t>(std::round(dist_quantiles[q] * num_random_pairs));
+        std::nth_element(start, cut, end);
+        qval = (cut == end) ? -1.0 : sqrt(*cut);
+        start = cut;
+        dist_quantile_values[q] = qval;
+    }
+    delete[] square_dist;
+}
+
+
+
+
+// compute and print out distance quantiles, based on quasi-random
+// pairings of two samplings for efficiency, the 'random' pairing is
+// done simply by cycling through both sets of sample points, but
+// starting in the middle for the second set.
+// return the next write position.
+char *print_distance_quantiles(const char *contig,
+                               size_t position,
+                               dist_worker_input *wi,
+                               size_t pair_index,
+                               double *dist_quantile_values,
+                               char *out_dist_buf)
+{
+    size_t s1 = wi->pair_sample1[pair_index];
+    size_t s2 = wi->pair_sample2[pair_index];
+
     out_dist_buf += sprintf(out_dist_buf, "%s\t%s\t%s\t%Zu", 
                             wi->worker[s1]->label_string,
                             wi->worker[s2]->label_string,
@@ -164,20 +164,13 @@ char *print_distance_quantiles(const double *points1,
     
     for (size_t q = 0; q != wi->num_dist_quantiles; ++q)
     {
-        cut = square_dist + static_cast<size_t>(std::round(wi->dist_quantiles[q] * num_random_pairs));
-        std::nth_element(start, cut, end);
-        qval = (cut == end) ? -1.0 : sqrt(*cut);
-        start = cut;
-        out_dist_buf += sprintf(out_dist_buf, "\t%7.4f", qval);
+        out_dist_buf += sprintf(out_dist_buf, "\t%7.4f", dist_quantile_values[q]);
     }
 
     out_dist_buf += sprintf(out_dist_buf, "\n");
 
-    delete square_dist;
-
     return out_dist_buf;
 }
-
 
 
 
@@ -195,64 +188,88 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
     char contig[100];
     size_t position;
-    double *mode1, *mode2;
+    const double *mode1, *mode2, *end1;
+    double *dist_quantile_values = new double[input->num_dist_quantiles];
+    double min_dist_squared = input->min_high_conf_dist * input->min_high_conf_dist;
 
     sscanf(*sd[global_s].current, "%s\t%zu", contig, &position);
 
     for (size_t p = 0; p != input->num_sample_pairs; ++p)
     {
-        size_t s1 = input->pair_sample1[p];
-        size_t s2 = input->pair_sample2[p];
-        sample_details &sd1 = sd[input->pair_sample1[p]];
-        sample_details &sd2 = sd[input->pair_sample2[p]];
+        size_t s1 = input->pair_sample1[p], s2 = input->pair_sample2[p];
+        sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
 
-        mode1 = input->worker[s1]->mode_point, end1 = mode1 + 4;
-        mode2 = input->worker[s2]->mode_point;
+        if (! (sd1->is_next && sd2->is_next) 
+            && input->min_high_conf_dist > 0) continue;
+        
+        mode1 = sd1->is_next ? input->worker[s1]->mode_point : NULL_MODE, end1 = mode1 + 4;
+        mode2 = sd2->is_next ? input->worker[s2]->mode_point : NULL_MODE;
 
         float mode_square_dist = 0;
-        while (mode1 != end)
-            mode_square_dist += *mode1++ * *mode2++;
+        while (mode1 != end1)
+            mode_square_dist += gsl_pow_2(*mode1++ - *mode2++);
 
-        if (mode_square_dist < input->min_high_conf_dist_squared)
+        if (mode_square_dist < min_dist_squared)
         {
             // modes don't differ enough
             continue;
         }
+
         // preliminary sampling
-        if (sd1.is_next && ! sd1.num_sample_points)
+        if (sd1->is_next && ! sd1->num_sample_points)
         {
-            input->worker[s1]->tune(sd1.locus, sd1.sample_points,
-                                    &sd1.samp_method, &sd1.autocor_offset);
-
-            input->worker[s1]->sample(sd1.locus, 
-                                      sd1.sample_points, 
-                                      input->num_prelim_points,
-                                      sd1.autocor_offset,
-                                      sd1.samp_method);
-            sd1.num_sample_points = input->num_prelim_points;
+            input->worker[s1]->tune(sd1);
+            input->worker[s1]->sample(sd1, input->prelim_num_points);
+            sd1->num_sample_points = input->prelim_num_points;
         }
-        if (sd2.is_next && ! sd2.num_sample_points)
+        if (sd2->is_next && ! sd2->num_sample_points)
         {
-            input->worker[s2]->tune(sd2.locus, sd2.sample_points,
-                                    &sd2.samp_method, &sd2.autocor_offset);
-
-            input->worker[s2]->sample(sd2.locus, 
-                                      sd2.sample_points, 
-                                      input->num_prelim_points,
-                                      sd2.autocor_offset,
-                                      sd2.samp_method);
-            sd2.num_sample_points = input->num_prelim_points;
+            input->worker[s2]->tune(sd2);
+            input->worker[s2]->sample(sd2, input->prelim_num_points);
+            sd2->num_sample_points = input->prelim_num_points;
         }
 
-        
+        calc_distance_quantiles(sd1->is_next ? sd1->sample_points : null_points,
+                                sd2->is_next ? sd2->sample_points : null_points,
+                                input->prelim_num_points,
+                                input->prelim_num_points * 10, // ad-hoc
+                                input->randgen,
+                                &input->prelim_quantile, 1,
+                                dist_quantile_values);
 
-        const double *points1 = sd1.is_next ? sd1.sample_points : null_points;
-        const double *points2 = sd2.is_next ? sd2.sample_points : null_points;
+        if (dist_quantile_values[0] < input->min_high_conf_dist)
+        {
+            // after prelim testing, still not enough difference
+            continue;
+        }
         
-        out_buf = 
-            print_distance_quantiles(points1, points2, contig, position, input, out_buf, p);
+        if (sd1->num_sample_points == input->prelim_num_points)
+        {
+            input->worker[s1]->sample(sd1, input->final_num_points);
+            sd1->num_sample_points = input->final_num_points;
+        }
+        if (sd2->num_sample_points == input->prelim_num_points)
+        {
+            input->worker[s2]->sample(sd2, input->final_num_points);
+            sd2->num_sample_points = input->final_num_points;
+        }
+
+        calc_distance_quantiles(sd1->is_next ? sd1->sample_points : null_points,
+                                sd2->is_next ? sd2->sample_points : null_points,
+                                input->final_num_points, 
+                                input->num_sample_point_pairings,
+                                input->randgen,
+                                input->dist_quantiles,
+                                input->num_dist_quantiles,
+                                dist_quantile_values);
+        
+        if (dist_quantile_values[0] >= input->min_high_conf_dist)
+        {
+            out_buf = 
+                print_distance_quantiles(contig, position, input, p, dist_quantile_values, out_buf);
         }
     }
+    delete[] dist_quantile_values;
     return out_buf;
 }
 
@@ -295,11 +312,12 @@ void init_locus(dist_worker_input *input,
     sd->locus = new PileupSummary(0);
     sd->locus->load_line(*sd->current);
     sd->locus->parse(input->worker[s]->min_quality_score);
+    sd->num_sample_points = 0;
 
     input->worker[s]->model->locus_data = &sd->locus->counts;
     input->worker[s]->params->pack(&sd->locus->counts);
-                    
-    this->worker[s]->find_mode();
+   
+    input->worker[s]->find_mode();
 }
 
 
@@ -351,10 +369,7 @@ void advance_loci_aux(dist_worker_input *input,
 
         if (*out_comp_buf != NULL && sd[s].num_sample_points)
         {
-            *out_comp_buf = 
-                input->worker[s]->print_quantiles(sd[s].locus, sd[s].algorithm_used,
-                                                  sd[s].sample_points, *out_comp_buf);
-
+            *out_comp_buf = input->worker[s]->print_quantiles(&sd[s], *out_comp_buf);
 
             /*
             for (size_t p = 0; p != input->worker[s]->final_num_points; ++p)
@@ -439,7 +454,8 @@ void *dist_worker(void *args)
     {
         samples[s].locus = NULL;
         samples[s].current = input->beg[s];
-        samples[s].sample_points = new double[input->worker[s]->final_num_points * 4];
+        samples[s].sample_points = new double[input->final_num_points * 4];
+        samples[s].num_sample_points = 0;
     }
 
 
@@ -460,24 +476,22 @@ void *dist_worker(void *args)
     // !!! here, use worker[0] as a proxy.  this is a design flaw
     // owing to the fact that there are multiple workers used, all with the same
     // basic settings
-    char null_algorithm[3];
-    double *null_points = new double[input->worker[0]->final_num_points * 4];
     PileupSummary null_locus(0);
-
+    input->worker[0]->model->locus_data = &null_locus.counts;
     input->worker[0]->params->pack(& null_locus.counts);
-    input->worker[0]->sample(& null_locus, null_points, null_algorithm);
+    sample_details null_sd;
+    null_sd.locus = &null_locus;
+    null_sd.sample_points = new double[input->final_num_points * 4];
+    input->worker[0]->find_mode();
+    input->worker[0]->tune(&null_sd);
+    input->worker[0]->sample(&null_sd, input->final_num_points);
 
     while (samples[global_s].current != input->end[global_s])
     {
-        // calculate pairwise distances with error bars for all pairs
-        // for the current position.  Note that it is possible for
-        // both samples in the pair to have no coverage, and the
-        // distance metric will be the null distance distribution.
-        // This is intentional.
-
         // print out distance quantiles for all sample pairs at the current locus
         out_dist_buf = next_distance_quantiles_aux(input, samples, global_s, 
-                                                   null_points, out_dist_buf);
+                                                   null_sd.sample_points,
+                                                   out_dist_buf);
 
         // main loop for computing individual compositions
         // this is the last stop before we move forward
@@ -487,13 +501,13 @@ void *dist_worker(void *args)
         
     }   
 
+    delete[] null_sd.sample_points;
     for (size_t s = 0; s != input->num_samples; ++s)
     {
-        delete samples[s].sample_points;
+        delete[] samples[s].sample_points;
     }
 
-    delete samples;
-    delete null_points;
+    delete[] samples;
 
     pthread_exit((void*) 0);
 }

@@ -5,12 +5,13 @@
 #include <float.h>
 
 //currently, initializes mode point and log_scaling_factor
-void Posterior::initialize(double mode_tolerance, size_t max_function_evals,
+void Posterior::initialize(double gradient_tolerance, 
+                           size_t max_function_evals,
                            double const* initial_point,
                            bool verbose)
 {
 
-    this->ee->find_mode_point(1e-20, max_function_evals, 
+    this->ee->find_mode_point(gradient_tolerance, max_function_evals, 
                               initial_point,
                               this->zero_boundary,
                               verbose,

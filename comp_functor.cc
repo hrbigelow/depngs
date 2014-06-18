@@ -26,10 +26,11 @@ posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
                                      char const* label_string,
                                      FILE * cdfs_output_fh,
                                      pthread_mutex_t * file_writing_mutex,
+                                     double gradient_tolerance,
                                      size_t tuning_num_points,
                                      size_t final_num_points,
                                      bool verbose) :
-    mode_tolerance(1e-60),
+    gradient_tolerance(gradient_tolerance),
     max_modefinding_iterations(3000),
     max_tuning_iterations(10),
     tuning_num_points(tuning_num_points),
@@ -90,14 +91,23 @@ posterior_wrapper::~posterior_wrapper()
 
 
 
-void posterior_wrapper::find_mode()
+void posterior_wrapper::find_mode(void)
 {
-    this->model->find_mode_point(this->mode_tolerance,
-                                 this->max_modefinding_iterations,
-                                 this->initial_point,
-                                 this->on_zero_boundary,
-                                 this->verbose,
-                                 this->mode_point);
+    if (this->model->locus_data->num_data == 0)
+    {
+        memcpy(this->mode_point, NULL_MODE, sizeof(double) * 4);
+        this->on_zero_boundary[0] = false;
+        this->on_zero_boundary[1] = false;
+        this->on_zero_boundary[2] = false;
+        this->on_zero_boundary[3] = false;
+    }
+    else
+        this->model->find_mode_point(this->gradient_tolerance,
+                                     this->max_modefinding_iterations,
+                                     this->initial_point,
+                                     this->on_zero_boundary,
+                                     this->verbose,
+                                     this->mode_point);
 }
 
 
@@ -213,41 +223,36 @@ size_t posterior_wrapper::tune_ss(double * sample_points_buf)
 }
 
 
-void posterior_wrapper::tune(PileupSummary *locus, double *sample_points_buf,
-                             sampling_method *sm, size_t *autocor_offset)
+void posterior_wrapper::tune(sample_details *sd)
 {
     // try MH first.
-    *autocor_offset = this->tune_mh(locus, sample_points_buf);
+    sd->autocor_offset = this->tune_mh(sd->locus, sd->sample_points);
 
-    if (*autocor_offset <= this->target_autocor_offset)
-        *sm = METROPOLIS_HASTINGS;
+    if (sd->autocor_offset <= this->target_autocor_offset)
+        sd->samp_method = METROPOLIS_HASTINGS;
     else
     {
-        *autocor_offset = this->tune_ss(sample_points_buf);
-        *sm = (*autocor_offset <= this->target_autocor_offset)
+        sd->autocor_offset = this->tune_ss(sd->sample_points);
+        sd->samp_method = (sd->autocor_offset <= this->target_autocor_offset)
             ? SLICE_SAMPLING
             : FAILED;
     }
 }
 
 
-void posterior_wrapper::sample(PileupSummary *locus, 
-                               double *sample_points_buf, 
-                               size_t num_points, 
-                               size_t autocor_offset,
-                               sampling_method sm)
+void posterior_wrapper::sample(sample_details *sd, size_t num_points)
 {
-    switch(sm)
+    switch(sd->samp_method)
     {
     case METROPOLIS_HASTINGS:
-        this->sampler->sample(num_points, 0, autocor_offset, NULL, NULL, sample_points_buf);
+        this->sampler->sample(num_points, 0, sd->autocor_offset, NULL, NULL, sd->sample_points);
         break;
     case SLICE_SAMPLING:
         this->slice_sampler->sample(this->model, 
                                     this->mode_point,
                                     this->initial_sampling_range, 
-                                    autocor_offset,
-                                    sample_points_buf,
+                                    sd->autocor_offset,
+                                    sd->sample_points,
                                     num_points);
         break;
     case FAILED:
@@ -339,22 +344,19 @@ void posterior_wrapper::values(double * points, size_t num_points,
 }
 
 
-char * posterior_wrapper::print_quantiles(PileupSummary * locus, 
-                                          char * algorithm_used, 
-                                          double * sample_points_buf,
-                                          char * out_buffer)
+char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
 {
     char line_label[2048];
-    size_t effective_depth = locus->read_depth; // !!! fix this
+    size_t effective_depth = sd->locus->read_depth; // !!! fix this
 
     sprintf(line_label,
-            "%s\t%s\t%s\t%i\t%c\t%Zu\t%Zu",
+            "%s\t%c\t%s\t%i\t%c\t%Zu\t%Zu",
             this->label_string, 
-            algorithm_used, 
-            locus->reference, 
-            locus->position, 
-            locus->reference_base, 
-            locus->read_depth, 
+            (char)sd->samp_method, 
+            sd->locus->reference, 
+            sd->locus->position, 
+            sd->locus->reference_base, 
+            sd->locus->read_depth, 
             effective_depth
             );
 
@@ -362,14 +364,14 @@ char * posterior_wrapper::print_quantiles(PileupSummary * locus,
 
     out_buffer = 
         print_marginal_quantiles(out_buffer,
-                                 sample_points_buf,
+                                 sd->sample_points,
                                  this->final_num_points,
                                  this->mode_point,
                                  line_label, 
                                  dimension_labels, 
                                  "+", 
-                                 quantiles,
-                                 num_quantiles);
+                                 this->quantiles,
+                                 this->num_quantiles);
     return out_buffer;
 }
 
@@ -452,11 +454,15 @@ char * posterior_wrapper::process_line_comp(char const* pileup_line,
     PileupSummary locus(0);
     locus.load_line(pileup_line);
     locus.parse(this->min_quality_score);
-    char algorithm_used[10];
-    this->sample(& locus, sample_points_buf, algorithm_used);
+    this->find_mode();
 
-    out_buffer = 
-        this->print_quantiles(& locus, algorithm_used, sample_points_buf, out_buffer);
+    sample_details sd;
+    sd.locus = &locus;
+    sd.sample_points = sample_points_buf;
+    this->tune(&sd);
+    this->sample(&sd, this->final_num_points);
+
+    out_buffer = this->print_quantiles(&sd, out_buffer);
     
     if (cdfs_output_fh != NULL)
     {
@@ -502,10 +508,10 @@ char * posterior_wrapper::process_line_mode(char const* pileup_line,
 
     size_t effective_depth = locus.read_depth;
     this->model->locus_data = & locus.counts;
-    // this->posterior->initialize(this->mode_tolerance, this->max_modefinding_iterations, 
+    // this->posterior->initialize(this->gradient_tolerance, this->max_modefinding_iterations, 
     //                             initial_point, verbose);
 
-    this->model->find_mode_point(1e-20,
+    this->model->find_mode_point(this->gradient_tolerance,
                                  this->max_modefinding_iterations,
                                  this->initial_point,
                                  this->on_zero_boundary,

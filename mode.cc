@@ -12,6 +12,7 @@ int mode_usage()
             "Options:\n\n"
             "-l STRING   %s\n"
             "-t INT      number of threads to use [1]\n"
+            "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
             "-p FILE     alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-q INT      %s\n"
@@ -43,6 +44,7 @@ int main_mode(int argc, char ** argv)
 
     size_t num_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
+    double gradient_tolerance = 1e-5;
 
     char prior_alphas_file[100];
     strcpy(prior_alphas_file, "/dev/null");
@@ -59,13 +61,14 @@ int main_mode(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:p:qT:f::v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:z:p:qT:f::v")) >= 0)
     {
         switch(c)
         {
         case 'l': strcpy(label_string, optarg); break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
+        case 'z': gradient_tolerance = atof(optarg); break;
         case 'p': strcpy(prior_alphas_file, optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
         case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
@@ -93,6 +96,7 @@ int main_mode(int argc, char ** argv)
                             jpd_data_params_file,
                             posterior_output_file,
                             "/dev/null",
+                            gradient_tolerance,
                             tuning_num_points,
                             final_num_points,
                             verbose,

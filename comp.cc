@@ -15,6 +15,7 @@ int comp_usage()
             "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
+            "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
             "-f INT      number of sample points used for final quantiles estimation [10000]\n"
             "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
             "-i INT      maximum number of proposal tuning iterations [10]\n"
@@ -51,6 +52,7 @@ int main_comp(int argc, char ** argv)
     size_t num_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
+    double gradient_tolerance = 1e-5;
     size_t tuning_num_points = 1e3;
     size_t final_num_points = 1e4;
 
@@ -76,13 +78,14 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:T:f:a:s:i:M:Q:p:q:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:z:T:f:a:s:i:M:Q:p:q:v")) >= 0)
     {
         switch(c)
         {
         case 'l': strcpy(label_string, optarg); break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
+        case 'z': gradient_tolerance = atof(optarg); break;
         case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'a': target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
@@ -117,6 +120,7 @@ int main_comp(int argc, char ** argv)
                             jpd_data_params_file,
                             posterior_output_file,
                             cdfs_output_file,
+                            gradient_tolerance,
                             tuning_num_points,
                             final_num_points,
                             verbose,

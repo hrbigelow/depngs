@@ -14,14 +14,30 @@ class PileupSummary;
 
 enum sampling_method
     {
-        METROPOLIS_HASTINGS,
-        SLICE_SAMPLING,
-        FAILED
+        METROPOLIS_HASTINGS = 'M',
+        SLICE_SAMPLING = 'S',
+        FAILED = '-'
     };
+
+
+struct sample_details
+{
+    PileupSummary *locus;
+    bool is_next;
+    double *sample_points;
+    unsigned num_sample_points;
+    sampling_method samp_method;
+    size_t autocor_offset;
+    std::vector<char *>::iterator current;
+};
+
+
+// the mode that we use when there is no data
+const double NULL_MODE[] = { 0.25, 0.25, 0.25, 0.25 };
 
 struct posterior_wrapper
 {
-    double mode_tolerance;
+    double gradient_tolerance;
     size_t max_modefinding_iterations;
     size_t max_tuning_iterations;
     size_t tuning_num_points;
@@ -64,22 +80,22 @@ struct posterior_wrapper
                       char const* label_string,
                       FILE * cdfs_output_fh,
                       pthread_mutex_t * file_writing_mutex,
+                      double gradient_tolerance,
                       size_t tuning_num_points,
                       size_t final_num_points,
                       bool verbose);
 
     ~posterior_wrapper();
 
+    void find_mode(void);
+    void tune(sample_details *sd);
     size_t tune_mh(PileupSummary * locus, double * sample_points_buf);
     size_t tune_ss(double * sample_points_buf);
+    void sample(sample_details *sd, size_t num_points);
     void sample(PileupSummary * locus, double * sample_points_buf, char * algorithm_used);
     void values(double * points, size_t num_points, double * values);
 
-    char * print_quantiles(PileupSummary * locus, 
-                           char * algorithm_used, 
-                           double * sample_points_buf,
-                           char * out_buffer);
-
+    char * print_quantiles(sample_details *sd, char *out_buffer);
 
     char * process_line_comp(char const* pileup_line, char * out_buffer, double * sample_points_buf);
     char * process_line_mode(char const* pileup_line, char * out_buffer);

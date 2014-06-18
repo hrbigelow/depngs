@@ -2,6 +2,7 @@
 #define _VCF_H
 
 #include "dist_worker.h"
+#include "comp_functor.h"
 
 size_t vcf_locus_bytes(size_t num_samples);
 

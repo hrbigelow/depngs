@@ -207,9 +207,9 @@ Metropolis::sample(size_t num_samples_to_take,
 
     this->set_current_point(z_tau);
 
-    if (proposal_values != NULL) { delete proposal_values; }
-    delete z_tau;
-    delete z_star;
+    if (proposal_values != NULL) { delete[] proposal_values; }
+    delete[] z_tau;
+    delete[] z_star;
 }
 
 
