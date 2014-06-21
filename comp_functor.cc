@@ -18,6 +18,16 @@
 // input: the null-terminated pileup line
 // side-effects: populate the appropriate line buffer with the output
 
+
+sample_details::sample_details(void) :
+    locus(NULL), is_next(false), sample_points(NULL),
+    num_sample_points(0), samp_method(FAILED),
+    mode_computed(false),
+    autocor_offset(1000),
+    current(NULL)
+{}
+
+
 posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
                                      double * prior_alphas,
                                      size_t min_quality_score,
@@ -451,7 +461,7 @@ char * posterior_wrapper::process_line_comp(char const* pileup_line,
                                             double * sample_points_buf)
 {
 
-    PileupSummary locus(0);
+    PileupSummary locus;
     locus.load_line(pileup_line);
     locus.parse(this->min_quality_score);
     this->find_mode();
@@ -486,7 +496,7 @@ char * posterior_wrapper::process_line_mode(char const* pileup_line,
                                             char * out_buffer)
 {
 
-    PileupSummary locus(0);
+    PileupSummary locus;
     locus.load_line(pileup_line);
     locus.parse(this->min_quality_score);
     this->params->pack(& locus.counts);

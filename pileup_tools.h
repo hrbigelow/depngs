@@ -12,39 +12,48 @@
  */
 const int num_base_symbols = 10;
 
+struct less_char_ptr
+{
+    bool operator()(const char *a, const char *b)
+    {
+        return strcmp(a, b) < 0;
+    }
+};
+
+typedef std::map<const char*, unsigned, less_char_ptr> CHAR_MAP;
 
 class PileupSummary {
 
 public:
 
     static char code_to_redux[];
-    static char const nucleotides[];
+    static const char nucleotides[];
     static int quality_code_offset;
     static FastqType fastq_type;
 
-    PileupSummary(int indel_histo_size);
+    PileupSummary();
     ~PileupSummary();
 
     void load_line(char const* line);
 
-    char reference[100];
+    char reference[100], reference_base;
     int position;
-    char reference_base;
-    size_t read_depth;
-    // int indel_histo_size;
+
+    // all reads that span this locus, including reads
+    // containing gaps, and low-quality bases
+    size_t read_depth; 
+
+    // reads that do not have an indel at this locus, 
+    // and have a above-threshold quality base
+    size_t read_depth_filtered; 
+
     int base_counts[num_base_symbols]; //ACGTNacgtn
     int base_qual_sums[num_base_symbols]; //qualities for corresponding counts
     int sum_of_counts;
-    // int * indel_counts;
-    char * bases;
-    char * bases_upper;
-    char * quality_codes;
+    char *bases, *bases_upper, *bases_raw, *quality_codes;
 
     packed_counts counts;
-
-    std::string const* index_mapping;
-
-    std::map<std::string, int> * indel_seqs;
+    CHAR_MAP insertions, deletions;
 
     size_t quality(size_t read_num) const;
 

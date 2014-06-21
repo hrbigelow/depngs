@@ -184,7 +184,7 @@ int main_bqslocus(int argc, char ** argv)
         for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
 
-            PileupSummary locus(0);
+            PileupSummary locus;
             locus.load_line((*pit));
             locus.parse(min_quality_score);
             size_t effective_depth = 

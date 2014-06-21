@@ -27,8 +27,10 @@ struct sample_details
     double *sample_points;
     unsigned num_sample_points;
     sampling_method samp_method;
+    bool mode_computed;
     size_t autocor_offset;
     std::vector<char *>::iterator current;
+    sample_details(void);
 };
 
 

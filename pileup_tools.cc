@@ -11,26 +11,6 @@ char const PileupSummary::nucleotides[] = "ACGTN.acgtn,";
 
 //maps every character to itself except the letters 'ACGTN.acgtn,'
 //are mapped to 'N' (78)
-/*
-char PileupSummary::code_to_redux[] = {
-0, 1,  2,  3,  4,  5,  6,  7,  8,  9,  10,  11,  12,  13,  14,  15,
-16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 
-32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 78, 45, 78, 47, 
-48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 
-64, 78, 66, 78, 68, 69, 70, 78, 72, 73, 74, 75, 76, 77, 78, 79, 
-80,81,82,83,  78,85,86,87,88,89,90,91,92,93,94,95, 
-96, 78, 98, 78, 100,101,102, 78,104,105,106,107,108,109, 78,111, 
-112,113,114,115, 78,117,118,119,120,121,122,123,124,125,126,127,
-128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,
-144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,
-160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,
-176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,
-192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,
-208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,
-224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,
-240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255
-};
-*/
 
 char PileupSummary::code_to_redux[] = {
  '\x0', '\x1', '\x2', '\x3', '\x4', '\x5', '\x6', '\x7', '\x8', '\x9', '\xA', '\xB', '\xC', '\xD', '\xE', '\xF',
@@ -55,10 +35,10 @@ int PileupSummary::quality_code_offset;
 
 FastqType PileupSummary::fastq_type;
 
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
 
-PileupSummary::PileupSummary(int indel_histo_size) : 
-    // indel_histo_size(indel_histo_size),
-        bases(NULL), bases_upper(NULL), quality_codes(NULL)
+PileupSummary::PileupSummary(void) : 
+    bases(NULL), bases_upper(NULL), bases_raw(NULL), quality_codes(NULL)
     {
         counts.raw_counts = NULL;
         counts.stats_index = NULL;
@@ -66,71 +46,46 @@ PileupSummary::PileupSummary(int indel_histo_size) :
         counts.num_data = 0;
         memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
         memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
-        /*
-        indel_counts = new int[indel_histo_size * 2 + 1];
-        indel_seqs = new std::map<std::string, int>[indel_histo_size * 2 + 1];
-        indel_counts += indel_histo_size;
-        indel_seqs += indel_histo_size;
-        for (int i = -indel_histo_size; i <= indel_histo_size; ++i)
-        {
-            indel_counts[i] = 0;
-            indel_seqs[i] = std::map<std::string, int>();
-        }
-        */
         sum_of_counts = 0;
     }
 
 
 PileupSummary::~PileupSummary()
 {
-    /* delete &indel_counts[-indel_histo_size]; */
-    /* delete [] &indel_seqs[-indel_histo_size]; */
-    if (bases != NULL)
-    {
-        delete[] bases;
-        bases = NULL;
-    }
-    if (bases_upper != NULL)
-    {
-        delete[] bases_upper;
-        bases_upper = NULL;
-    }
-    if (quality_codes != NULL)
-    {
-        delete[] quality_codes;
-        quality_codes = NULL;
-    }
-    if (this->counts.raw_counts != NULL)
-    {
-        delete[] this->counts.raw_counts;
-        this->counts.raw_counts = NULL;
-    }
-    if (this->counts.stats_index != NULL)
-    {
-        delete[] this->counts.stats_index;
-        this->counts.stats_index = NULL;
-    }
-    if (this->counts.fbqs_cpd != NULL)
-    {
-        delete[] this->counts.fbqs_cpd;
-        this->counts.fbqs_cpd = NULL;
-    }
+    if (bases) { delete[] bases; bases = NULL; }
+    if (bases_upper) { delete[] bases_upper; bases_upper = NULL; }
+    if (bases_raw) { delete[] bases_raw; bases_raw = NULL; }
+    if (quality_codes) { delete[] quality_codes; quality_codes = NULL; }
+    if (this->counts.raw_counts) { delete[] this->counts.raw_counts; this->counts.raw_counts = NULL; }
+    if (this->counts.stats_index) { delete[] this->counts.stats_index; this->counts.stats_index = NULL; }
+    if (this->counts.fbqs_cpd) { delete[] this->counts.fbqs_cpd; this->counts.fbqs_cpd = NULL; }
+
+    CHAR_MAP::iterator it;
+    for (it = this->insertions.begin(); it != this->insertions.end(); ++it)
+        free((void *)(*it).first); // need free here since this is strdup'ed
+
+    for (it = this->deletions.begin(); it != this->deletions.end(); ++it)
+        free((void *)(*it).first);
+
 }
 
 
-//load and parse a single line.  Assumes the line has all required fields.
-//consumes the current line including newline character.
+// load and parse a single line.  Assumes the line has all required fields.
+// consumes the current line including newline character.
+// assume the line is zero-terminated, not newline terminated
 void PileupSummary::load_line(char const* read_pointer)
 {
 
-    size_t total_read_depth;
-    int read_pos;
+    size_t matched_depth;
+    int read_pos, qual_pos;
 
     int scanned_fields =
-        sscanf(read_pointer, "%s\t%i\t%c\t%zi\t%n", this->reference, 
-               &this->position, &this->reference_base, 
-               &total_read_depth, &read_pos);
-
+        sscanf(read_pointer, "%s\t%i\t%c\t%zi\t%n%*[^\t]\t%n", 
+               this->reference, 
+               &this->position, 
+               &this->reference_base, 
+               &matched_depth, 
+               &read_pos, &qual_pos);
     
     if (scanned_fields != 4)
     {
@@ -142,16 +97,23 @@ void PileupSummary::load_line(char const* read_pointer)
     read_pointer += read_pos;
 
     if (this->quality_codes != NULL) delete[] this->quality_codes;
-    this->quality_codes = new char[total_read_depth + 1];
+    this->quality_codes = new char[matched_depth + 1];
 
     if (this->bases != NULL) delete[] this->bases;
-    this->bases = new char[total_read_depth + 1];
+    this->bases = new char[matched_depth + 1];
 
     if (this->bases_upper != NULL) delete[] this->bases_upper;
-    this->bases_upper = new char[total_read_depth + 1];
+    this->bases_upper = new char[matched_depth + 1];
+
+    if (this->bases_raw) delete[] this->bases_raw;
+    
+    int rawlen = qual_pos - read_pos - 1;
+    this->bases_raw = new char[rawlen + 1]; // includes the extra space
+    strncpy(this->bases_raw, read_pointer, rawlen);
+    this->bases_raw[rawlen] = '\0';
 
     const int max_indel_size = 1000;
-    char indel_sequence[max_indel_size];
+    char indel_sequence[max_indel_size + 1];
 
     char pileup_ccode;
     int indel_size;
@@ -211,33 +173,20 @@ void PileupSummary::load_line(char const* read_pointer)
                 sscanf(read_pointer, "%i%n", &indel_size, &read_pos);
                 read_pointer += read_pos;
 
-                memcpy(indel_sequence, read_pointer, indel_size);
-                read_pointer += indel_size;
-
-                indel_sequence[indel_size] = '\0';
-
-                // fgets(indel_sequence, indel_size + 1, file);
-                /*
-                for (int i = 0; i != indel_size; ++i)
-                {
-                    indel_sequence[i] = toupper(indel_sequence[i]);
-                }
-                indel_bin = std::min(this->indel_histo_size, indel_size) * 
-                    (pileup_redux == '+' ? 1 : -1);
-
-                std::map<std::string, int> & indel = this->indel_seqs[indel_bin];
-                std::string indel_str(indel_sequence);
-                if (indel.find(indel_str) == indel.end())
-                {
-                    indel.insert(std::make_pair(indel_str, 0));
-                }
-                indel[indel_str]++;
-                */
-            }
-
-            //indel size histogram considers matches to be 'zero-length indels'
-            // this->indel_counts[indel_bin]++;
+                // insertion
+                memcpy(indel_sequence, read_pointer, MIN(indel_size, max_indel_size));
+                indel_sequence[MIN(indel_size, max_indel_size)] = '\0';
+                char *p = indel_sequence;
+                while (*p != '\0') { *p = toupper(*p); ++p; }
                 
+                CHAR_MAP *container = pileup_redux == '+' ? &this->insertions : &this->deletions;
+                CHAR_MAP::iterator it;
+                ((it = container->find(indel_sequence)) == container->end())
+                    ? (void)container->insert(CHAR_MAP::value_type(strdup(indel_sequence), 1))
+                    : (void)(*it).second++;
+
+                read_pointer += indel_size;
+            }
         }
 
         else if (pileup_redux == '^')
@@ -253,8 +202,12 @@ void PileupSummary::load_line(char const* read_pointer)
         }
         else if (pileup_redux == '*')
         {
-            //what is this?  '*' is not documented, but according to Heng Li, represents a deletion.
-            //fprintf(stderr, "asterisk found!\n");
+            /*
+              see: http://samtools.sourceforge.net/samtools.shtml
+              "Similarly, a pattern ‘-[0-9]+[ACGTNacgtn]+’ represents
+              a deletion from the reference. The deleted bases will be
+              presented as ‘*’ in the following lines."
+             */
             this->bases[current_read++] = '*';
         }
         else if (pileup_redux == '\t' ||
@@ -264,11 +217,10 @@ void PileupSummary::load_line(char const* read_pointer)
             sscanf(read_pointer, " %n", & read_pos); //eat white space
             read_pointer += read_pos;
 
-            memcpy(this->quality_codes, read_pointer, total_read_depth);
-            read_pointer += total_read_depth;
+            memcpy(this->quality_codes, read_pointer, matched_depth);
+            read_pointer += matched_depth;
 
-            this->quality_codes[total_read_depth] = '\0';
-            // fgets(this->quality_codes, total_read_depth + 1, file);
+            this->quality_codes[matched_depth] = '\0';
 
         }
         else 
@@ -280,9 +232,10 @@ void PileupSummary::load_line(char const* read_pointer)
             
     }
 
-    //now iterate through the bases and qualities, packing them
+    // now iterate through the bases and qualities, packing them to
+    // only include those bases that are in a CIGAR 'M' state.
     size_t num_seen_gaps = 0;
-    for (size_t read_pos = 0; read_pos != total_read_depth; ++read_pos)
+    for (size_t read_pos = 0; read_pos != matched_depth; ++read_pos)
     {
         if (this->bases[read_pos] == '*')
         {
@@ -296,10 +249,11 @@ void PileupSummary::load_line(char const* read_pointer)
         assert(this->quality_codes[read_pos] != '~');
     }
 
-    this->read_depth = total_read_depth - num_seen_gaps;
-    this->bases[this->read_depth] = '\0';
-    this->bases_upper[this->read_depth] = '\0';
-    this->quality_codes[this->read_depth] = '\0';
+    this->read_depth = matched_depth;
+    size_t last = matched_depth - num_seen_gaps;
+    this->bases[last] = '\0';
+    this->bases_upper[last] = '\0';
+    this->quality_codes[last] = '\0';
 
 }
 
@@ -321,9 +275,7 @@ void PileupSummary::parse(size_t min_quality_score)
     size_t *rc_ind_tmp = new size_t[Nucleotide::num_bqs];
 
     std::fill(raw_counts_flat, raw_counts_flat + Nucleotide::num_bqs, 0);
-    size_t rd = static_cast<size_t>(this->read_depth);
-    size_t nd = 0;
-    size_t effective_read_depth = 0;
+    size_t rd = static_cast<size_t>(this->read_depth), nd = 0;
 
     for (size_t r = 0; r < rd; ++r)
     {
@@ -348,7 +300,8 @@ void PileupSummary::parse(size_t min_quality_score)
     {
         if (raw_counts_flat[flat_index] != 0)
         {
-            effective_read_depth += raw_counts_flat[flat_index];
+
+            this->read_depth_filtered += raw_counts_flat[flat_index];
             rc_tmp[nd] = raw_counts_flat[flat_index];
             rc_ind_tmp[nd] = flat_index;
             ++nd;
@@ -371,7 +324,6 @@ void PileupSummary::parse(size_t min_quality_score)
 
     this->counts.fbqs_cpd = new double[nd * 4];
 
-    this->read_depth = effective_read_depth;
     std::copy(rc_tmp, rc_tmp + nd, this->counts.raw_counts);
     std::copy(rc_ind_tmp, rc_ind_tmp + nd, this->counts.stats_index);
 
@@ -403,7 +355,7 @@ void * fastq_type_worker(void * args)
 {
     fastq_type_input * input = static_cast<fastq_type_input *>(args);
 
-    PileupSummary locus(0);
+    PileupSummary locus;
     std::vector<char *>::iterator it;
     for (it = input->beg; it != input->end; ++it)
     {

@@ -1,24 +1,3 @@
-/*
-
-bindepth format is:
-
-file: contig-dictionary contig-data [, contig-data ...]
-
-  contig-dictionary: num-contigs contig [, contig] junk
-    dict-bytes: size_t holding total number of bytes the dictionary occupies
-    num-contigs: size_t representing the number of contigs
-    contig: contig-name contig-size
-    junk: uninitialized bytes filling up to dict-bytes
-
-      contig-name: 20 char, null-terminated character string
-      contig-size: size_t representing contig size
-
-   contig-data: depth [, depth]
-      depth: float representing the depth.
-
- */
-
-
 #include "bindepth.h"
 
 #include <cstdlib>

@@ -46,7 +46,7 @@ void * fastq_tally_worker(void * args)
 {
     fastq_tally_input * input = static_cast<fastq_tally_input *>(args);
 
-    PileupSummary locus(0);
+    PileupSummary locus;
     std::vector<char *>::iterator it;
     for (it = input->beg; it != input->end; ++it)
     {

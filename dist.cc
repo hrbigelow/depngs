@@ -29,7 +29,8 @@ int dist_usage()
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
             "-v STRING   (optional) name of output vcf file.  If absent, do not output VCF file\n"
-            "-S STRING   (optional) name of sample_pairings.rdb file (see description below).  Required if -d option is given.\n"
+            "-i STRING   (optional) name of output indel distance file.  If absent, do not perform indel distance calculation.\n"
+            "-S STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
             "-y REAL     Minimum mutational distance to report as changed [0.2]\n"
             "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
             "-x INT      number of sample points used for first-pass distance checking [100]\n"
@@ -48,7 +49,7 @@ int dist_usage()
             "-C STRING   composition quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
             "-P INT      number of random sample point pairings to estimate Sampling/Sampling distance distribution [10000]\n"
             "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
-            "-i INT      maximum number of proposal tuning iterations [10]\n"
+            "-I INT      maximum number of proposal tuning iterations [10]\n"
             "-M REAL     autocorrelation maximum value [6]\n"
             "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
             "-p STRING   alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
@@ -74,7 +75,7 @@ extern int optind;
 
 
 
-int main_dist(int argc, char ** argv)
+int main_dist(int argc, char **argv)
 {
 
     size_t num_threads = 1;
@@ -93,33 +94,35 @@ int main_dist(int argc, char ** argv)
     double gradient_tolerance = 1e-5;
 
     double autocor_max_value = 6;
-    char const* prior_alphas_file = NULL;
+    const char *prior_alphas_file = NULL;
 
     size_t min_quality_score = 5;
 
-    char const* dist_quantiles_file = NULL;
-    char const* comp_quantiles_file = NULL;
+    const char *dist_quantiles_file = NULL;
+    const char *comp_quantiles_file = NULL;
 
-    char const* dist_file = NULL;
-    char const* comp_file = NULL;
-    char const* vcf_file = NULL;
+    const char *dist_file = NULL;
+    const char *comp_file = NULL;
+    const char *vcf_file = NULL;
+    const char *indel_dist_file = NULL;
 
-    char const* sample_pairings_file = NULL;
+    const char *sample_pairings_file = NULL;
 
     float min_dist_to_report = 0.2;
 
-    char const* fastq_type = "None";
+    const char *fastq_type = "None";
 
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:v:S:y:t:m:T:x:X:f:P:a:i:M:z:p:q:VD:C:F:l:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:v:i:S:y:t:m:T:x:X:f:P:a:I:M:z:p:q:VD:C:F:l:")) >= 0)
     {
         switch(c)
         {
         case 'd': dist_file = optarg; break;
         case 'c': comp_file = optarg; break;
         case 'v': vcf_file = optarg; break;
+        case 'i': indel_dist_file = optarg; break;
         case 'S': sample_pairings_file = optarg; break;
         case 'y': min_dist_to_report = atof(optarg); break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
@@ -130,7 +133,7 @@ int main_dist(int argc, char ** argv)
         case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'P': num_sample_point_pairs = static_cast<size_t>(atof(optarg)); break;
         case 'a': target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
-        case 'i': max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
+        case 'I': max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
         case 'M': autocor_max_value = atof(optarg); break;
         case 'z': gradient_tolerance = atof(optarg); break;
         case 'p': prior_alphas_file = optarg; break;
@@ -148,20 +151,20 @@ int main_dist(int argc, char ** argv)
         return dist_usage();
     }
 
-    char const* samples_file = argv[optind];
-    char const* contig_order_file = argv[optind + 1];
+    const char *samples_file = argv[optind];
+    const char *contig_order_file = argv[optind + 1];
 
     // consistency checks
-    if ((dist_file == NULL) != (sample_pairings_file == NULL))
+    if (! sample_pairings_file && (dist_file || indel_dist_file))
     {
         // either provide dist_file and sample_pairings_file, or none at all
-        fprintf(stderr, "Error: You must provide option -d and -S together, or leave both blank\n");
+        fprintf(stderr, "If -d or -i are given, you must also provide -S.\n");
         exit(5);
     }
 
-    if (dist_file == NULL && comp_file == NULL)
+    if (! dist_file && ! comp_file && ! indel_dist_file)
     {
-        fprintf(stderr, "Error: You must provide at least one of -d or -c.  "
+        fprintf(stderr, "Error: You must provide at least one of -d or -c or -i.  "
                 "Otherwise, there is nothing to calculate\n");
         exit(5);
     }
@@ -172,12 +175,12 @@ int main_dist(int argc, char ** argv)
     std::vector<char *> jpd_input_file;
     std::vector<char *> pileup_input_file;
 
-    FILE * samples_fh = open_if_present(samples_file, "r");
+    FILE *samples_fh = open_if_present(samples_file, "r");
     while (! feof(samples_fh))
     {
-        char * jpd = new char[1000];
-        char * pileup = new char[1000];
-        char * label = new char[100];
+        char *jpd = new char[1000];
+        char *pileup = new char[1000];
+        char *label = new char[100];
         fscanf(samples_fh, "%s\t%s\t%s\n", label, jpd, pileup);
         sample_label.push_back(label);
         jpd_input_file.push_back(jpd);
@@ -197,7 +200,7 @@ int main_dist(int argc, char ** argv)
     if (ftype == None)
     {
         size_t chunk_size = 1024 * 1024 * 64;
-        char * chunk_buffer_in = new char[chunk_size + 1];
+        char *chunk_buffer_in = new char[chunk_size + 1];
         ftype = FastqFileType(pileup_input_file[0], chunk_buffer_in, chunk_size, num_threads);
         
         if (ftype == None)
@@ -213,18 +216,19 @@ int main_dist(int argc, char ** argv)
     PileupSummary::SetFtype(ftype);
 
 
-    FILE ** pileup_input_fh = new FILE *[num_samples];
+    FILE **pileup_input_fh = new FILE *[num_samples];
     for (size_t s = 0; s != num_samples; ++s)
     {
         pileup_input_fh[s] = open_if_present(pileup_input_file[s], "r");
     }
 
-    FILE * dist_fh = open_if_present(dist_file, "w");
-    FILE * comp_fh = open_if_present(comp_file, "w");
-    FILE * vcf_fh = open_if_present(vcf_file, "w");
+    FILE *dist_fh = open_if_present(dist_file, "w");
+    FILE *comp_fh = open_if_present(comp_file, "w");
+    FILE *vcf_fh = open_if_present(vcf_file, "w");
+    FILE *indel_dist_fh = open_if_present(indel_dist_file, "w");
 
-    double * dist_quantiles;
-    double * comp_quantiles;
+    double *dist_quantiles;
+    double *comp_quantiles;
     double default_quantiles[] = { 0.005, 0.05, 0.5, 0.95, 0.995 };
 
     size_t num_dist_quantiles;
@@ -251,7 +255,7 @@ int main_dist(int argc, char ** argv)
         comp_quantiles = ParseNumbersFile(comp_quantiles_file, & num_comp_quantiles);
     }
 
-    double * prior_alphas;
+    double *prior_alphas;
     double default_prior_alpha = 1.0; // this will cause underflow if evaluated on a boundary.
     // with metropolis-hastings, this is not a problem, but with 
 
@@ -271,9 +275,9 @@ int main_dist(int argc, char ** argv)
     size_t num_pairings, *pair_sample1, *pair_sample2;
 
     {
-        FILE * sample_pairings_fh = open_if_present(sample_pairings_file, "r");
+        FILE *sample_pairings_fh = open_if_present(sample_pairings_file, "r");
         std::vector<size_t> pair1, pair2;
-        std::vector<size_t> * trg[] = { & pair1, & pair2 };
+        std::vector<size_t> *trg[] = { & pair1, & pair2 };
         char label[2][100];
         while (! feof(sample_pairings_fh))
         {
@@ -310,10 +314,10 @@ int main_dist(int argc, char ** argv)
     std::map<char const*, size_t, ltstr> contig_order;
     // parse contig_order file
     {
-        FILE * contig_order_fh = open_if_present(contig_order_file, "r");
+        FILE *contig_order_fh = open_if_present(contig_order_file, "r");
         while (! feof(contig_order_fh))
         {
-            char * contig = new char[100];
+            char *contig = new char[100];
             size_t order;
             fscanf(contig_order_fh, "%s\t%zu\n", contig, & order);
             contig_order.insert(std::make_pair(contig, order));
@@ -325,8 +329,8 @@ int main_dist(int argc, char ** argv)
     std::vector<std::vector<char *> > pileup_lines(num_samples);
     std::vector<std::vector<char *>::iterator> current(num_samples);
     std::vector<std::vector<char *>::iterator> bound(num_samples);
-    char ** chunk_buffer = new char *[num_samples];
-    size_t * chunk_read_size = new size_t[num_samples];
+    char **chunk_buffer = new char *[num_samples];
+    size_t *chunk_read_size = new size_t[num_samples];
 
     size_t single_buffer_size = max_mem / (num_samples * 2); // approximate...
     size_t max_dist_line_size = distance_quantiles_locus_bytes(num_dist_quantiles);
@@ -352,7 +356,7 @@ int main_dist(int argc, char ** argv)
     }
     std::vector<char *>::iterator least_upper_bound = bound[0]; // set to arbitrary 'least'
 
-    dist_worker_input ** worker_inputs = new dist_worker_input*[num_threads];
+    dist_worker_input **worker_inputs = new dist_worker_input*[num_threads];
     
     // initialize all generic structures in the worker_inputs
     for (size_t t = 0; t != num_threads; ++t)
@@ -365,6 +369,7 @@ int main_dist(int argc, char ** argv)
                                   prelim_num_points,
                                   prelim_quantile,
                                   final_num_points,
+                                  NULL,
                                   NULL,
                                   NULL,
                                   NULL,
@@ -390,7 +395,7 @@ int main_dist(int argc, char ** argv)
         }
     }
 
-    char * last_fragment;
+    char *last_fragment;
     less_locus_position less_locus;
     equal_locus_position equal_locus;
     less_locus.contig_order = &contig_order;
@@ -552,7 +557,7 @@ int main_dist(int argc, char ** argv)
 
         // prepare workers.  divide up each interval according to the
         // interval with the most loci.
-        pthread_t * threads = new pthread_t[num_threads];
+        pthread_t *threads = new pthread_t[num_threads];
 
         for (size_t t = 0; t != num_threads; ++t)
         {
@@ -581,10 +586,12 @@ int main_dist(int argc, char ** argv)
             size_t dist_output_size = max_dist_line_size * (total_loci * num_pairings);
             size_t comp_output_size = max_comp_line_size * (max_sample_loci * num_samples);
             size_t vcf_output_size = max_vcf_line_size * (max_sample_loci * num_samples);
+            size_t indel_dist_output_size = dist_output_size;
 
             worker_inputs[t]->out_dist = (dist_fh != NULL) ? new char[dist_output_size + 1] : NULL;
             worker_inputs[t]->out_comp = (comp_fh != NULL) ? new char[comp_output_size + 1] : NULL;
             worker_inputs[t]->out_vcf = (vcf_fh != NULL) ? new char[vcf_output_size + 1] : NULL;
+            worker_inputs[t]->out_indel_dist = (indel_dist_fh != NULL) ? new char[indel_dist_output_size + 1] : NULL;
 
             // dispatch threads
             int rc = pthread_create(&threads[t], NULL, &dist_worker, static_cast<void *>(worker_inputs[t]));
@@ -622,6 +629,14 @@ int main_dist(int argc, char ** argv)
                 delete[] worker_inputs[t]->out_vcf;
             }        
             fflush(vcf_fh);
+        }
+        if (indel_dist_fh != NULL)
+        {
+            for (size_t t = 0; t < num_threads; ++t) {
+                fwrite(worker_inputs[t]->out_indel_dist, 1, strlen(worker_inputs[t]->out_indel_dist), indel_dist_fh);
+                delete[] worker_inputs[t]->out_indel_dist;
+            }        
+            fflush(indel_dist_fh);
         }
 
         delete[] threads;
