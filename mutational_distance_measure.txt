@@ -1,0 +1,84 @@
+What we want to know is whether or not there is a genotypic
+difference at a given locus between two samples.  The traditional
+approach of 1) Estimating base composition for each sample
+individually and then 2) Calculating the distance between these
+two base compositions is not optimal in cases in which there is a
+good deal of uncertainty in the two samples' base composition
+estimation.
+
+The reason this is not optimal is that there is a reduction of
+information in the process of calculating composition.  The
+evidence itself merely gives a distribution with a given shape.
+Confidence intervals can be calculated from that shape.  The
+distribution itself exists in normalized 4D (or a subspace of
+constrained 3D where A + C + G <= 1, all positive)
+
+Confidence intervals themselves are hard to express except in 1D,
+one pair of confidence intervals per base.
+
+Instead, to get a more realistic measure of uncertainty in
+compositional distance between two samples, I propose inverting
+this workflow.  First, calculate the distribution of base
+composition for each sample.  Then, generate a sufficient number
+of random pairings of these sample points from each distribution,
+computing mutational distance (euclidean distance) between the
+pairs.  Then, calculate confidence intervals (quantiles) on the
+resulting 1D euclidean distance distribution.
+
+The question of whether a sample is constrained to have a
+diploid, or a diploid/triploid genotype (in the case of samples
+that may have gain of zygosity / duplication), one may want to
+calculate base composition not by sampling freely from a
+posterior over normalized 4D, but over a finite set of discrete
+points in that space.  In this case, instead of treating each
+sample point equally as a point coming from a smooth density, it
+is treated as a weighted point.
+
+Given this type of sampling, the 1D distance distribution would
+instead involve pairing these points and calculating weighted
+distance.  But, besides this, the approach is the same.
+
+
+Analyzing the results
+
+
+The approach described above thus provides a set of quantiles on
+euclidean mutational distance, for each single base locus, for the
+given pair of samples.  One may ask, how many of the loci have
+different genotypes and how many are the same.  Given the quantiles,
+this question translates into: "How many loci have a mutational
+distance Y or greater, with probability X?" or: "How many loci have a
+mutational distance Y or less, with probability X?"
+
+To familiarize, take a few examples:
+
+Example 1: Sample A has 100x coverage, and nearly all high quality A
+calls.  Sample B has 100x coverage, and roughly 50%/50% A and C calls,
+also high quality.  In this case, both individual posterior
+distributions will be "tight" and the 1D distance distribution will be
+centered around sqrt(0.5), or 0.71, the distance between points (in
+the (A, C, G, T) way of writing it:
+
+Sample A: (1, 0, 0, 0)
+Sample B: (0.5, 0.5, 0, 0)
+
+In this hypothetical example, since both individual distributions are
+tight, we can say with 99.9% probability that the distance is 0.70 or
+greater.  Likewise, we can say with 99.9% probability that the
+distance is 0.72 or less.  In other words, we know the mutational
+distance very well.
+
+
+Example 2: Sample A has 100x coverage and nearly all high quality G
+calls.  Sample B has zero coverage.  In this case, the posterior for
+sample A is tight, and centered around (0, 0, 1, 0), but the posterior
+for sample B is uniformly distributed, i.e. equal density everywhere.
+Thus, the distance measure distribution will consist of many pairs of
+points, with one point very close to (0, 0, 1, 0) and the other
+anywhere in the space.  Some points at random will be nearly at (0, 0,
+1, 0), while others will be as far away from it as possible.
+
+Thus, the resulting 1D distance distrubtion will be uninformative.  We
+can only say that the distance is zero or greater with 99.9%
+confidence, and that it is 1.41 or less with 99.9% confidence.  The
+median distance will be

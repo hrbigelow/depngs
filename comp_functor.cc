@@ -28,14 +28,14 @@ sample_details::sample_details(void) :
 {}
 
 
-posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
-                                     double * prior_alphas,
+posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
+                                     double *prior_alphas,
                                      size_t min_quality_score,
-                                     double * quantiles,
+                                     double *quantiles,
                                      size_t num_quantiles,
-                                     char const* label_string,
-                                     FILE * cdfs_output_fh,
-                                     pthread_mutex_t * file_writing_mutex,
+                                     const char *label_string,
+                                     FILE *cdfs_output_fh,
+                                     pthread_mutex_t *file_writing_mutex,
                                      double gradient_tolerance,
                                      size_t tuning_num_points,
                                      size_t final_num_points,
@@ -67,8 +67,8 @@ posterior_wrapper::posterior_wrapper(char const* jpd_data_params_file,
     std::copy(quantiles, quantiles + num_quantiles, this->quantiles);
 
     this->initial_point = { 0.25, 0.25, 0.25, 0.25 };
-    size_t const full_ndim = 4;
-    size_t const truncated_ndim = 3;
+    const size_t full_ndim = 4;
+    const size_t truncated_ndim = 3;
 
     this->prior_alpha0 = std::accumulate(prior_alphas, prior_alphas + 4, 0.0);
     
@@ -124,7 +124,7 @@ void posterior_wrapper::find_mode(void)
 // tune the posterior, return the cumulative autocorrelation offset
 // sample_points_buf is used as a space for writing sample points
 // during the tuning process.
-size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_buf)
+size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_buf)
 {
 
     this->sampler->set_current_point(this->mode_point);
@@ -145,7 +145,7 @@ size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_
     //metropolis hastings
     double proposal_mean, proposal_variance;
     size_t cumul_autocor_offset = 0;
-    size_t const full_ndim = 4;
+    const size_t full_ndim = 4;
     double estimated_mean[full_ndim];
 
     
@@ -213,7 +213,7 @@ size_t posterior_wrapper::tune_mh(PileupSummary * locus, double * sample_points_
 }
 
 // uses sample_points_buf as a scratch space for tuning the slice_sampler
-size_t posterior_wrapper::tune_ss(double * sample_points_buf)
+size_t posterior_wrapper::tune_ss(double *sample_points_buf)
 {
     //SliceSampling slice_sampler(truncated_ndim, num_bits_per_dim, is_log_integrand, 1);
 
@@ -223,7 +223,7 @@ size_t posterior_wrapper::tune_ss(double * sample_points_buf)
                                 initial_sampling_range, 1, sample_points_buf,
                                 tuning_num_points);
     
-    size_t const truncated_ndim = 3;
+    const size_t truncated_ndim = 3;
 
     size_t best_autocor_offset =
         best_autocorrelation_offset(sample_points_buf, truncated_ndim, 
@@ -273,7 +273,7 @@ void posterior_wrapper::sample(sample_details *sd, size_t num_points)
 // generate sample points according to the parameters set in posterior_wrapper
 // alt_sample_points must be of size this->final_num_points * 4
 // write 
-void posterior_wrapper::sample(PileupSummary * locus, double * sample_points_buf, char * algorithm_used)
+void posterior_wrapper::sample(PileupSummary *locus, double *sample_points_buf, char *algorithm_used)
 {
     size_t cumul_autocor_offset = this->tune_mh(locus, sample_points_buf);
     // double proposal_mean, proposal_variance;
@@ -310,13 +310,13 @@ void posterior_wrapper::sample(PileupSummary * locus, double * sample_points_buf
 
 // generate a set of normalized values of the posterior at the
 // specified points
-void posterior_wrapper::values(double * points, size_t num_points,
-                               double * values)
+void posterior_wrapper::values(double *points, size_t num_points,
+                               double *values)
 {
-    double * point = points;
-    double * end = points + (num_points * 4);
-    double * val = values;
-    double * vend = values + num_points;
+    double *point = points;
+    double *end = points + (num_points * 4);
+    double *val = values;
+    double *vend = values + num_points;
 
     for (; point != end; point += 4, ++val)
     {
@@ -370,7 +370,7 @@ char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
             effective_depth
             );
 
-    char const* dimension_labels[] = { "A", "C", "G", "T" };
+    const char *dimension_labels[] = { "A", "C", "G", "T" };
 
     out_buffer = 
         print_marginal_quantiles(out_buffer,
@@ -404,18 +404,18 @@ struct first_comp_more
 
 // prints an abbreviated format of base composition as represented by
 // a discrete set of posterior points.
-char * print_discrete_comp(PileupSummary * locus,
-                           char const* sample_label,
-                           double * discrete_values,
-                           size_t num_discrete_values,
-                           size_t num_items_to_print,
-                           double min_value_to_print,
-                           char * out_buf)
+char *print_discrete_comp(PileupSummary *locus,
+                          const char *sample_label,
+                          double *discrete_values,
+                          size_t num_discrete_values,
+                          size_t num_items_to_print,
+                          double min_value_to_print,
+                          char *out_buf)
 {
 
-    std::pair<double, size_t> * val_ord = new std::pair<double, size_t>[num_discrete_values];
-    std::pair<double, size_t> * vo = val_ord;
-    double * val = discrete_values;
+    std::pair<double, size_t> *val_ord = new std::pair<double, size_t>[num_discrete_values];
+    std::pair<double, size_t> *vo = val_ord;
+    double *val = discrete_values;
     for (size_t d = 0; d != num_discrete_values; ++d)
     {
         (*vo).first = *val;
@@ -434,7 +434,7 @@ char * print_discrete_comp(PileupSummary * locus,
                        locus->reference_base,
                        locus->read_depth);
     
-    char const* sep = "";
+    const char *sep = "";
     vo = val_ord;
     for (size_t d = 0; d != num_items_to_print; ++d)
     {
@@ -456,15 +456,28 @@ char * print_discrete_comp(PileupSummary * locus,
 // returns next write position after writing to out_buffer
 // sample_points_buf is a scratch space for writing sample points
 // must be this->final_num_points * 4 size
-char * posterior_wrapper::process_line_comp(char const* pileup_line,
-                                            char * out_buffer,
-                                            double * sample_points_buf)
+char *posterior_wrapper::process_line_comp(const char *pileup_line,
+                                           char *out_buffer,
+                                           double *sample_points_buf,
+                                           float test_quantile,
+                                           float min_test_quantile_value)
 {
 
     PileupSummary locus;
     locus.load_line(pileup_line);
     locus.parse(this->min_quality_score);
+    this->model->locus_data = &locus.counts;
+    this->params->pack(&locus.counts);
     this->find_mode();
+
+    // first-pass test.  if the mode point indicates that there is no
+    // chance of a higher confidence non-reference base composition, 
+    // skip all further tests and do not output anything.
+    const char *nucs = "ACGTacgt", *query;
+    int ref_ind = (query = strchr(nucs, locus.reference_base)) ? (query - nucs) % 4 : -1;
+    if (ref_ind >= 0 && 
+        this->mode_point[ref_ind] < 1.0 - min_test_quantile_value)
+        return out_buffer; 
 
     sample_details sd;
     sd.locus = &locus;
@@ -472,11 +485,32 @@ char * posterior_wrapper::process_line_comp(char const* pileup_line,
     this->tune(&sd);
     this->sample(&sd, this->final_num_points);
 
+    // second-pass test.
+    double d_test_quantile = (double)test_quantile;
+    double test_quantile_value;
+    if (ref_ind >= 0)
+        compute_marginal_quantiles(sd.sample_points,
+                                   this->final_num_points,
+                                   ref_ind,
+                                   &d_test_quantile,
+                                   1,
+                                   &test_quantile_value);
+
+    
+    // invert the value threshold.  we want to test for distance of
+    // reference base away from 1, rather than presence of
+    // non-reference base.
+    if (ref_ind >= 0 && test_quantile_value >= (1.0 - min_test_quantile_value))
+        return out_buffer;
+
+
+    // if the reference base is not in "ACGTacgt", we always print the
+    // locus.
     out_buffer = this->print_quantiles(&sd, out_buffer);
     
     if (cdfs_output_fh != NULL)
     {
-        size_t const full_ndim = 4;
+        const size_t full_ndim = 4;
         pthread_mutex_lock(file_writing_mutex);
         print_numerical_cdfs(cdfs_output_fh, 
                              this->label_string, 
@@ -492,8 +526,8 @@ char * posterior_wrapper::process_line_comp(char const* pileup_line,
 
 
 
-char * posterior_wrapper::process_line_mode(char const* pileup_line,
-                                            char * out_buffer)
+char *posterior_wrapper::process_line_mode(const char *pileup_line,
+                                           char *out_buffer)
 {
 
     PileupSummary locus;
@@ -517,7 +551,7 @@ char * posterior_wrapper::process_line_mode(char const* pileup_line,
 
 
     size_t effective_depth = locus.read_depth;
-    this->model->locus_data = & locus.counts;
+    this->model->locus_data = &locus.counts;
     // this->posterior->initialize(this->gradient_tolerance, this->max_modefinding_iterations, 
     //                             initial_point, verbose);
 
@@ -549,15 +583,17 @@ char * posterior_wrapper::process_line_mode(char const* pileup_line,
 
 
 
-void * comp_worker(void * args)
+void *comp_worker(void *args)
 {
-    wrapper_input * input = static_cast<wrapper_input *>(args);
+    wrapper_input *input = static_cast<wrapper_input *>(args);
     std::vector<char *>::iterator it;
-    char ** out = input->out_start;
-    double * sample_points_buf = new double[input->worker->final_num_points * 4];
+    char **out = input->out_start;
+    double *sample_points_buf = new double[input->worker->final_num_points * 4];
     for (it = input->beg; it != input->end; ++it)
     {
-        input->worker->process_line_comp(*it, *out, sample_points_buf);
+        input->worker->process_line_comp(*it, *out, sample_points_buf,
+                                         input->test_quantile,
+                                         input->min_test_quantile_value);
         ++out;
     }
     delete sample_points_buf;
@@ -566,11 +602,11 @@ void * comp_worker(void * args)
 
 
 
-void * mode_worker(void * args)
+void *mode_worker(void *args)
 {
-    wrapper_input * input = static_cast<wrapper_input *>(args);
+    wrapper_input *input = static_cast<wrapper_input *>(args);
     std::vector<char *>::iterator it;
-    char ** out = input->out_start;
+    char **out = input->out_start;
     for (it = input->beg; it != input->end; ++it)
     {
         input->worker->process_line_mode(*it, *out);

@@ -12,7 +12,7 @@
 
 
 
-WeightedSample::WeightedSample(size_t const _ndim, double const * _x, double const _val, double const _weight) : 
+WeightedSample::WeightedSample(size_t const _ndim, const double *_x, const double _val, const double _weight) : 
     ndim(_ndim), val(_val), weight(_weight)
 { 
     x = new double[ndim];
@@ -115,7 +115,7 @@ class SortDimension
     size_t key_dimension;
 public:
     SortDimension(size_t kd) : key_dimension(kd) { }
-    bool operator()(double const* a, double const* b)
+    bool operator()(const double *a, const double *b)
     {
         return a[this->key_dimension] < b[this->key_dimension];
     }
@@ -123,21 +123,22 @@ public:
 
 
 
-void find_integral_bounds(double * sample_points,
-                          size_t num_points,
-                          size_t sort_dimension,
-                          double const* quantiles,
-                          size_t num_quantiles,
-                          double * quantile_values)
+// compute marginal quantiles on a given dimension of the sample
+// points
+void compute_marginal_quantiles(double *sample_points,
+                                size_t num_points,
+                                size_t sort_dimension,
+                                const double *quantiles,
+                                size_t num_quantiles,
+                                double *quantile_values)
 {
     // copy appropriate dimension
-    double * dim_points = new double[num_points];
-    double * start = dim_points;
-    double * end = start + num_points;
-    double * cut;
+    double *dim_points = new double[num_points];
+    double *start = dim_points, *end = start + num_points;
+    double *cut;
 
-    double * ps = sample_points + sort_dimension;
-    double * p = dim_points;
+    double *ps = sample_points + sort_dimension;
+    double *p = dim_points;
     for ( ; p != end; ++p, ps += 4)
     {
         *p = *ps;
@@ -145,7 +146,7 @@ void find_integral_bounds(double * sample_points,
 
     for (size_t f = 0; f != num_quantiles; ++f)
     {
-        cut = dim_points + static_cast<size_t>(std::round(quantiles[f] * num_points));
+        cut = dim_points + static_cast<size_t>(std::round(quantiles[f] *num_points));
         std::nth_element(start, cut, end);
         quantile_values[f] = cut == end ? 0.0 : *cut;
         start = cut;
@@ -159,22 +160,22 @@ void find_integral_bounds(double * sample_points,
 
 
 /*
-  void print_cdf_comparison(FILE * out_fh, 
+  void print_cdf_comparison(FILE *out_fh, 
   AnalyticalIntegrand const* integrand,
-  double * sample_points,
+  double *sample_points,
   size_t num_points,
-  double const* quantiles,
+  const double *quantiles,
   size_t const num_quantiles,
   size_t const num_dimensions)
   {
 
-  double * quantile_buffer = new double[num_quantiles * num_dimensions];
-  double ** quantile_values = new double *[num_dimensions];
+  double *quantile_buffer = new double[num_quantiles *num_dimensions];
+  double **quantile_values = new double *[num_dimensions];
 
   for (size_t d = 0; d != num_dimensions; ++d)
   {
-  quantile_values[d] = quantile_buffer + (d * num_quantiles);
-  find_integral_bounds(sample_points, num_points, 
+  quantile_values[d] = quantile_buffer + (d *num_quantiles);
+  compute_marginal_quantiles(sample_points, num_points, 
   d, quantiles, 
   num_quantiles, quantile_values[d]);
   }
@@ -205,7 +206,7 @@ void find_integral_bounds(double * sample_points,
 
 //find the mode of a 1D distribution as approximated from a set of sample points
 /*
-  double window_averaged_mode(std::vector<double *> * points,
+  double window_averaged_mode(std::vector<double *> *points,
   size_t sort_dimension,
   size_t window_size)
   {
@@ -216,7 +217,7 @@ void find_integral_bounds(double * sample_points,
   //at the closest point.
   size_t npoints = (*points).size();
 
-  double * density = new double[npoints];
+  double *density = new double[npoints];
   std::vector<double *>::iterator start = (*points).begin();
   std::vector<double *>::iterator end = (*points).end();
   std::vector<double *>::iterator left;
@@ -263,41 +264,38 @@ size_t marginal_quantiles_locus_bytes(size_t num_quantiles)
 }
 
 // return next write position after writing to out_buf
-char * print_marginal_quantiles(char * out_buf, 
-                                double * sample_points,
-                                size_t num_points,
-                                double const* mode_point,
-                                char const* line_label,
-                                char const** dimension_labels,
-                                char const* sums_label,
-                                double const* quantiles, 
-                                size_t num_quantiles)
+char *print_marginal_quantiles(char *out_buf, 
+                               double *sample_points,
+                               size_t num_points,
+                               const double *mode_point,
+                               const char *line_label,
+                               const char **dimension_labels,
+                               const char *sums_label,
+                               const double *quantiles, 
+                               size_t num_quantiles)
 {
 
     size_t num_dimensions = 4;
 
-    double * quantile_sums = new double[num_quantiles];
+    double *quantile_sums = new double[num_quantiles];
     std::fill(quantile_sums, quantile_sums + num_quantiles, 0.0);
 
-    double * quantile_values = new double[num_quantiles];
+    double *quantile_values = new double[num_quantiles];
 
     double mean_sum = 0.0;
     double mode_point_sum = 0.0;
 
-    double * mean = new double[num_dimensions];
+    double *mean = new double[num_dimensions];
     std::multimap<double, size_t, std::greater<double> > dim_to_mean;
 
     //calculate mean
-    double * point = sample_points;
+    double *point = sample_points;
     size_t p = 0;
     std::fill(mean, mean + num_dimensions, 0.0);
     for ( ; p != num_points; ++p, point += num_dimensions)
-    {
         for (size_t d = 0; d != num_dimensions; ++d)
-        {
             mean[d] += point[d];
-        }
-    }
+
     for (size_t d = 0; d != num_dimensions; ++d)
     {
         mean[d] /= num_points;
@@ -306,7 +304,7 @@ char * print_marginal_quantiles(char * out_buf,
     }
 
     //calculate mean rank order
-    size_t * mean_rank_order = new size_t[num_dimensions];
+    size_t *mean_rank_order = new size_t[num_dimensions];
     std::multimap<double, size_t, std::greater<double> >::iterator dtm_iter;
     
     size_t d = 0;
@@ -320,7 +318,7 @@ char * print_marginal_quantiles(char * out_buf,
     for (size_t d = 0; d != num_dimensions; ++d)
     {
         out_buf += sprintf(out_buf, "%s\t%s\t%Zu", line_label, dimension_labels[d], mean_rank_order[d]);
-        find_integral_bounds(sample_points, num_points, d, quantiles, num_quantiles, quantile_values);
+        compute_marginal_quantiles(sample_points, num_points, d, quantiles, num_quantiles, quantile_values);
 
         mode_point_sum += mode_point[d];
 
@@ -363,19 +361,19 @@ struct less_ptr
 // transform a list of unordered tuples of (a,c,g,t) composition,
 // and output their component-wise ranks as:
 // i a_i, c_i, g_i, t_i, ra_i, rc_i, rg_i, rt_i
-void print_numerical_cdfs(FILE * out_fh, 
-                          char const* label,
-                          double * sample_points,
+void print_numerical_cdfs(FILE *out_fh, 
+                          const char *label,
+                          double *sample_points,
                           size_t num_points,
                           size_t ndim)
 {
     // reshape sample_points so each dimension is held together
-    double ** dim_points = new double*[num_points * ndim];
-    double ** end = dim_points + (num_points * ndim);
-    double ** p = dim_points;
+    double **dim_points = new double*[num_points * ndim];
+    double **end = dim_points + (num_points * ndim);
+    double **p = dim_points;
     for (size_t d = 0; d != ndim; ++d)
     {
-        double * ps = sample_points + d;
+        double *ps = sample_points + d;
         for ( ; p != end; ++p, ps += 4)
         {
             *p = ps;

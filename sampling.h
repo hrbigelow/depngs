@@ -39,12 +39,12 @@ struct WeightedSample
 typedef std::map<WeightedSample, WeightedSample> WEIGHTED_SAMPLE_MAP;
 
 
-void find_integral_bounds(double * sample_points,
-                          size_t num_points,
-                          size_t sort_dimension,
-                          double const* quantiles,
-                          size_t num_quantiles,
-                          double * quantile_values);
+void compute_marginal_quantiles(double * sample_points,
+                                size_t num_points,
+                                size_t sort_dimension,
+                                double const* quantiles,
+                                size_t num_quantiles,
+                                double * quantile_values);
 
 
 // void print_cdf_comparison(FILE * out_fh,

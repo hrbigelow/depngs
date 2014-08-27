@@ -1,0 +1,133 @@
+posterior_wrapper::sample
+  posterior_wrapper::tune_mh
+    Posterior::initialize
+      ErrorEstimate::find_mode_point
+        Transformation::sigmoid_value_and_gradient
+      ErrorEstimate::log_likelihood
+      ErrorEstimate::log_dirichlet_prior
+        Transformation::log_dirichlet  (with constant alphas (uniform))
+    Metropolis::sample
+      Metropolis::step
+
+        Metropolis::propose
+          Dirichlet::sample
+            Transformation::composition_to_r3_sigmoid
+            Transformation::sigmoid_value_and_gradient
+            Transformation::sigmoid_composition
+
+        Metropolis::accept
+          Posterior::log_pdf
+            ErrorEstimate::log_likelihood
+            ErrorEstimate::log_dirichlet_prior
+          Dirichlet::log_pdf
+            Transformation::log_dirichlet
+      
+      gsl_stats_mean
+      gsl_stats_variance_m
+
+
+
+Metropolis::accept computes a ratio of ratios, log transformed.
+
+
+Identity:
+
+logB(X) = log2(X) / log2(B)
+log2(X) = logB(X) / logB(2)
+
+So, logB(2) = 1 / log2(B)
+
+
+
+
+ratio_log  = (y_star_log - proposal_y_star_log) - (y_tau_log - proposal_y_tau_log)
+ratio_log2 = (y_star_log2 - proposal_y_star_log2) - (y_tau_log2 - proposal_y_tau_log2)
+
+
+
+What to do about uniform priors?  Metropolis is agnostic about it
+
+it's probably unrealistic to expect a posterior that is *not* in log space.
+
+though, the infrastructure of the burn_in, proposal, etc in metropolis.cc is useful, and should be retained.
+
+it's just that 
+
+
+what to do about the uniform vs. non-uniform prior?
+
+metropolis would have to be made back into a generic function...
+
+doesn't look too hard.
+
+what the features would be:
+1) log2 evaluated
+2) a uniform prior
+3) assume independence chain mh
+4) assume 4 dimensions
+5) as always, would be evaluated in sigmoid space
+
+Slice sampling 
+
+It appears that slice sampling is hard-coded to occur in a cube.
+
+It's not clear what defines the domain of evaluation points in slice sampling.
+
+In Metropolis, it is the sigmoid transformation in ErrorEstimate that automatically normalizes the 4D
+points into the 3D space.
+
+
+So, all that posterior.cc does is:
+
+1)  translate the point in the 3D unit cube to a sensible posterior value, and then
+    
+
+finding the mode point is the only thing that requires the gradient
+
+
+So, for independence chain metropolis, we don't need the sigmoid transformation.  just need to be able
+to evaluate log_pdf
+
+we still though, want to retain the ability to use non-1 alphas as a prior, with metropolis.
+
+how to achieve this polymorphism?
+
+we had a solution before:  use a flag.  but, that is a bit kludgy.  would be nice instead to explicity
+do it.
+
+But, to further complicate matters, finding the mode point requires
+the use of gradients computed on sigmoid space of the dirichlet prior.
+
+
+So, while metropolis could get by by adding a flag to 'error_estimate'
+to represent the uniform prior, what would be needed for slice sampling?
+
+For slice sampling, a second special feature of the error estimate
+would be needed -- the explicit definition of the function outside of
+its natural domain.  this technically isn't a violation
+
+
+
+to achieve the polymorphism, perhaps
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+What about slice sampling?  
+
+
+
+
+What about the ndim thing?
+
+propose

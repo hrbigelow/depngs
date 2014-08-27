@@ -1,0 +1,37 @@
+If you have an infinite urn with N types of balls, and some frequency
+(F1, ..., FN) of each type of balls in the urn, and you draw some
+number of balls, you will get a count (C1, ..., Cn) of each type of
+ball.  The counts you get inform your belief in the likelihood that
+the frequency (F1, ..., Fn) characterizing the urn, takes on various
+values.
+
+The Dirichlet distribution in N dimensions, parameterized by the (C1,
+..., Cn) gives you this belief.
+
+It thus may be possible to conceptualize, for a given locus, the total
+number of reads covering it as 'N', and each read being a 'type', one of:
+
+1.  a normal read (no indels at that locus)
+2.  a read with a 1-base deletion at that locus
+3.  a read with a 2-base deletion at that locus
+...
+10. a read with an 'A' insertion at that locus
+11. a read with an 'AC' insertion at that locus
+
+and so forth.
+
+Obviously, there are a large number of types.  However, at any given
+locus, we can consider only the types we observe.  The shape of a
+Dirichlet of fewer dimensions is identical to that of more dimensions
+whose Alpha's are zero. (prove this)
+
+So, this suggests a way to answer the question of how different two
+mixed populations are, with confidence intervals.  For the problem of
+indels, we need only consider the union of all types of insertions and
+deletions among the two samples at that locus, and then sample from
+two Dirichlet distributions.
+
+What would some cases be like?
+
+The Dirichlet is at least 2-dimensional.  So, if there is only one
+type among both of the situations, 

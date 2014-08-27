@@ -1,0 +1,205 @@
+.TH PILEUP_DEPTH_STATS 1 "Version 1"
+
+.SH NAME
+pileup_depth_stats \- compute histograms of window-smoothed,
+normalized depth signals across multiple samples
+
+.SH SYNOPSIS
+
+pileup_depth_stats [options] <index_file> <output_hist.rdb>
+
+.SH DESCRIPTION
+
+This tool helps to visualize and detect large-scale ploidy changes in
+whole chromosomes or large sections of chromosomes, from whole genome
+seq or possibly Exome-Seq pileup data.  It is not a ploidy caller and
+does not do segmentation, and it doesn't make any assumptions about
+ploidies being integral in number.  Instead, it produces tabular
+output of histograms and optionally smoothed depth of coverage,
+suitable for further analysis within a database or other workflow.
+
+In overview, the depth data are globally normalized, window-smoothed,
+then locally normalized.  Histograms of the final depth signal are
+then taken on a per-contig basis.  \fBGlobal normalization\fP divides
+the read-depth by a sample-level average depth.  It is meant to
+correct for differences in total library yield between different
+samples.  \fBWindow smoothing\fP helps to smooth out small scale
+fluctuations in depth of coverage that do not correlate with sequence
+context, and are presumably due to stochasticity in the sequencing
+process.  Finally, \fBlocal normalization\fP adjusts for
+sequence-context-dependent differences in depth of coverage that are
+consistent across samples.  It is hoped that signals from underlying
+ploidy changes will become more apparent once these sources of noise
+are corrected out.
+
+In more detail, the following computations are performed.
+
+.IP 1.
+Read raw depth data from samples 's' and loci 'l' into an array d[s][l].
+
+.IP 2.
+Compute the \fBglobally normalized\fP depth gd[s][l] = d[s][l] /
+global_average_depth[s].
+
+.IP 3.
+Compute \fBwindow averaged\fP depth wd[s][l] = avg(gd[s][li]) over li
+loci within the window centered on l.
+
+.IP 4.
+Compute \fBlocal normalized\fP wdn[s][l] = wd[s][l] /
+wgt_avg(wd[si][l] * ploidy_mult[si][l]) for all si samples that are
+marked with a 'Y' (use as normalizer).
+
+.IP 5.
+Generate histograms from wdn[s][l], one histogram for each sample x
+contig combination.  Optionally, output selected values of wdn[s][l].
+
+\fBNOTE:\fP ploidy_mult[si][l] is the ploidy multiplier for sample si
+at locus l.  The locus simply specifies chromosome.  The ploidy
+multiplier is 2 for all non-sex chromosomes by default.  For sex
+chromosomes, it is either 2, 0 for X, Y if the sample is female, or 1,
+1 for X, Y if the sample is male.  This must be specified in the 5th
+column of the index input.  The effect of this rule is that both
+haploid and diploid chromosomes should produce a histogram peaking
+around the value of 1.
+
+
+.SH OPTIONS
+
+Defaults are given in brackets.
+
+.TP
+.B \-w
+window size for averaging depth [1]
+
+.TP
+.B \-m
+maximum memory to use in bytes [1e9].  At start of program, this much
+memory is allocated to hold chunks of each input file.  A larger
+buffer allows fewer 'read' system calls.
+
+.TP
+.B \-b bins_per_unit
+bins per unit-sized depth range for histogram binning [10].  A 'unit'
+here is the numerical value of the window-averaged, globally and
+locally normalized depth.  If the global normalization constants
+(which are in units of read-depth) are accurate, then the value of the
+post-normalized unit will represent 'average depth', and the histogram
+should peak at a value of 1.  Given that window averaging and various
+normalization is performed, the values being histogrammed will be
+finely grained.  This option allows binning at the appropriate
+granularity.
+
+.TP
+.B \-n nbins
+number of depth units for histogram [100].  Total number of bins
+equals \fBbins_per_unit * nbins\fP.
+
+.TP
+.B \-a actual_depth.rdb
+output file name for printing actual window-averaged depth at loci
+[empty]. This file can potentially be gigantic if you are running
+without the \fB\-r\fP option to restrict the range.  See also
+\fB\-e\fP.
+
+.TP
+.B \-e
+output averaged depth for every nth locus (relevant only with -a) [1].
+To explore the actual depth of coverage at a manageable file size,
+start with a large value for this option, and then decrease it as
+needed to get the desired resolution.
+
+.TP
+.B \-l
+name of pseudo-sample representing local normalization [-1]. In the
+output, the local normalization quantity (weighted average of
+normalizer samples) itself may be of interest.  This option specifies
+the name of a 'pseudo-sample' that can serve as a place to print this
+information in both \fBoutput_hist.rdb\fP and optional
+\fBactual_depth.rdb\fP file.
+
+.TP
+.B \-c
+name of a single selected contig to process.  If empty, process all
+contigs [empty]
+
+.TP
+.B \-r
+selected range of loci, i.e. 50000-10000.  If empty, process whole
+contigs [empty]
+
+.TP
+.B \-p param_label
+parameter label string to attach to each output line. [na] This label
+should symbolize the settings in \fBindex_file\fP, i.e. the choice of
+which samples to use as normalizers, and what global normalization
+constants are used.  The presence of this parameter label in each
+output line allows aggregating multiple runs using different
+parameters into a single database table or other analysis.
+
+.TP
+.B \-g
+if local average is below this, locus is assigned 0 depth.  Should be
+in range [0,1].  [0.1].  In certain regions of a genome, the
+depth-of-coverage yield is very low across several samples.  Since
+the local average is supposed to represent the average over
+the 'normal' samples, if the local average is below this threshold, it
+likely means depth-of-coverage is dominated by artifact.  Set this
+threshold accordingly to zero-out such troublesome loci.
+  
+.IP \fBindex_file\fP
+has the format:
+  
+<sample_name>  <sample.bindepth>  <use_as_normalizer (Y/N)>  <global_average_depth>  <haploid_contigs>
+  ...
+
+  For example:
+
+  9       /path/to/sample9.bdepth     N    31.0213   none
+  10      /path/to/sample10.bdepth    N    29.6055   none
+  11      /path/to/sample11.bdepth    Y    42.0222   X Y
+  12      /path/to/sample12.bdepth    Y    31.131    X Y
+  13      /path/to/sample13.bdepth    N    30.5938   none
+  14      /path/to/sample14.bdepth    N    28.7995   none
+
+Fields are tab-separated.  \fBsample_name\fP is used in the output to
+refer to the data in \fBsample.bindepth\fP.  The third field,
+\fBuse_as_normalizer\fP specifies whether to include this sample in
+the calculation of local normalization.  It is intended that only
+samples that are expected to have normal ploidy (diploid chromosomes
+unless stated in the \fBhaploid_contigs\fP field be designated as
+a 'Y' in this field.  \fBglobal_average_depth\fP can be computed
+iteratively, starting with a constant value across all samples, then
+using histogram peaks to compute a second pass estimate.
+\fBhaploid_contigs\fP is a space-separated list of contig names that
+are expected to have haploid content.  All other contigs are assumed
+to be diploid for the purposes of normalization.
+
+.TP
+.B output_hist.rdb
+has the tab-separated format with lines of:
+
+\fBsample_name\fP \fBcontig\fP \fBbin_center\fP \fBcounts\fP \fBwindow_size\fP \fBparam_label\fP
+...
+
+.IP
+\fBsample_name\fP is as specified in the first column of input
+\fBindex_file\fP.  \fBcontig\fP is the name of the contig as provided
+in the pileup file, with any prepended 'chr' removed.
+\fBbin_center\fP gives the physical center of the histogram
+bin. \fBcounts\fP are the number of loci in this sample falling into
+the bin given. \fBwindow_size\fP and \fBparam_label\fP are simply the
+regurgitated values that the user provided in the \fB\-w\fP and
+\fB\-p\fP options.  They are useful for easily aggregating data with
+different input parameters or window sizes.  The \fBparam_label\fP
+string is intended as a shorthand for identifying the particular
+settings in the \fBindex_file\fP.
+
+
+ 
+
+.SH BUGS
+
+.SH SEE ALSO
+.BR pileup_to_bindepth (1)
+

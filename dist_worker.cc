@@ -23,6 +23,7 @@ dist_worker_input::dist_worker_input(size_t thread_num,
                                      size_t prelim_num_points,
                                      float prelim_quantile,
                                      size_t final_num_points,
+                                     int print_pileup_fields,
                                      char *out_dist,
                                      char *out_comp,
                                      char *out_vcf,
@@ -39,6 +40,7 @@ dist_worker_input::dist_worker_input(size_t thread_num,
     prelim_num_points(prelim_num_points),
     prelim_quantile(prelim_quantile),
     final_num_points(final_num_points),
+    print_pileup_fields(print_pileup_fields),
     out_dist(out_dist), out_comp(out_comp), out_vcf(out_vcf), out_indel_dist(out_indel_dist),
     pair_sample1(pair_sample1), pair_sample2(pair_sample2), 
     contig_order(contig_order)
@@ -135,14 +137,6 @@ void compute_dist_quantiles(const double *points1,
 }
 
 
-struct indel_event
-{
-    unsigned count1, count2;
-    const char *seq;
-    bool is_insertion;
-};
-
-
 // compute and print out distance quantiles, based on quasi-random
 // pairings of two samplings for efficiency, the 'random' pairing is
 // done simply by cycling through both sets of sample points, but
@@ -182,6 +176,19 @@ char *print_distance_quantiles(const char *contig,
     return out_dist_buf;
 }
 
+
+// summarizes the counts of each indel in the pair of samples
+// together, occurring at a particular locus.  the indel event is
+// associated with a single base locus, even though, for example, a
+// deletion may span multiple loci.  by convention, the locus that
+// occurs just before the inserted or deleted dna is the locus
+// associated with the indel event.
+struct indel_event
+{
+    unsigned count1, count2;
+    const char *seq; // the sequence that is either deleted or inserted
+    bool is_insertion; // whether or not this is an insertion
+};
 
 
 char *print_indel_distance_quantiles(const char *contig,
@@ -342,13 +349,23 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
         if (dist_quantile_values[0] >= input->min_high_conf_dist)
         {
             out_buf = 
-                print_distance_quantiles(contig, position, input, p, dist_quantile_values, NULL, out_buf);
+                print_distance_quantiles(contig, position, input, p, dist_quantile_values, 
+                                         (input->print_pileup_fields ? sd : NULL),
+                                         out_buf);
         }
     }
     delete[] dist_quantile_values;
     return out_buf;
 }
 
+
+
+// id1, e1 is the range over the first sample's insertions (or
+// deletions), id2, e2 is the range over the second sample's
+// insertions (or deletions). this function is called once for
+// insertions, once for deletions, on each locus.  initializes as many
+// indel_event's as needed.  automatically detects co-occurring
+// insertions (deletions) and singly-occuring ones.
 indel_event *set_indel_events_aux(CHAR_MAP::iterator id1,
                                   CHAR_MAP::iterator e1,
                                   CHAR_MAP::iterator id2,
@@ -382,11 +399,11 @@ indel_event *count_indel_types(sample_details *sd1,
     }
     else
     {
-        if (sd1->locus->position == 761957)
-        {
-            int i = 0;
-            ++i;
-        }
+        // if (sd1->locus->position == 761957)
+        // {
+        //     int i = 0;
+        //     ++i;
+        // }
 
         *num_counts = 0;
 

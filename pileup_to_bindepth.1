@@ -1,0 +1,63 @@
+.TH PILEUP_TO_BINDEPTH 1 "Version 1"
+
+.SH NAME
+pileup_to_bindepth \- convert a Samtools Pileup file to bindepth format
+
+.SH SYNOPSIS
+
+pileup_to_bindepth <bufsize> <contig_dict.rdb> <sample.pileup> <sample.bdepth>
+
+.SH DESCRIPTION
+
+Simply converts a Samtools Pileup formatted file into
+so-called 'bindepth' format for use with tools that may want to
+analyze depth-of-coverage.
+
+\fBbindepth format\fP is a binary format that allows random, O(1)
+access to read depth information at all loci in a pileup file.  It
+consists of a binary header encoding the contig names, ordering, and
+lengths, followed by a single contiguous stream of 4-byte floats
+encoding the read depth of coverage at each locus, as reported in the
+pileup input file 4th field.  While zero-depth loci are not present in
+a pileup file, they are present in the bindepth file as zeros.
+
+The bindepth syntax diagram is:
+
+  file              : contig-dictionary contig-data [, contig-data ...]
+  contig-dictionary : num-contigs contig [, contig ...]
+  num-contigs       : size_t representing the number of contigs
+  contig            : contig-name contig-size
+  contig-name       : 20 char, null-terminated character string
+  contig-size       : size_t representing contig size
+  contig-data       : depth [, depth]
+  depth             : float representing read depth-of-coverage at that locus
+
+\fBNOTE:\fP float is used for depth instead of int, in order to
+accommodate the case where a post-processed quantity other than
+literal read-depth-of-coverage is used.
+
+.IP \fBcontig_dict.rdb\fP
+The contig dictionary file defines the expected contig ordering as
+present in the input pileup file and what is to be provided in the
+bindepth output file. The format is a tab-separated fields of contig_name,
+contig_size.  File must end in a newline:
+
+  chr1   249250621
+  chr2   243199373
+  chr3   198022430
+  ...
+
+.PP
+The order of the contigs listed in sample.pileup must match the order
+given in \fBcontig_dict.rdb\fP.
+
+bindepth files are used as input for running \fBpileup_depth_stats\fP,
+but can be used to easily parse depth data for analysis.
+
+.SH BUGS
+Because raw floats are written without regard for machine endianness,
+the resulting sample.bdepth file is not portable if written by one
+machine and read by another of differing endianness.
+
+.SH SEE ALSO
+.BR pileup_depth_stats (1)

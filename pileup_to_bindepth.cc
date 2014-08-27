@@ -14,7 +14,13 @@ int main(int argc, char *argv[])
 {
     if (argc != 5)
     {
-        printf("%s <bufsize> <contig_dict_file> <pileup_input_file> <output_file>\n", argv[0]);
+        printf("\n%s <bufsize> <contig_dict_file> <pileup_input_file> <output_file>\n\n", argv[0]);
+        printf("<bufsize> should be >= 1e7 for efficiently reading large pileup files\n\n");
+        printf("<contig_dict_file> has the format:\n\n"
+               "chr1\\t249250621\n"
+               "chr2\\t243199373\n"
+               "chr3\\t198022430\n"
+               "...\n\n");
         exit(1);
     }
     size_t bufsize = static_cast<size_t>(atof(argv[1]));

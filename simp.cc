@@ -24,7 +24,7 @@
 int simp_usage()
 {
     fprintf(stderr, 
-            "Usage: dep simp FTYPE jpd_params sim_comp > output.pileup\n"
+            "Usage: dep simp FTYPE input.jpd sim_comp.rdb > output.pileup\n"
             "sim_comp format:\n"
             "position fractionA fractionC fractionG fractionT sample_size\n"
             "FTYPE is one of 'Sanger (+33)' or 'Solexa (+64)'\n\n"

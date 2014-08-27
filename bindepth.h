@@ -7,8 +7,7 @@ bindepth format is:
 
 file: contig-dictionary contig-data [, contig-data ...]
 
-  contig-dictionary: num-contigs contig [, contig] junk
-    dict-bytes: size_t holding total number of bytes the dictionary occupies
+  contig-dictionary: num-contigs contig [, contig]
     num-contigs: size_t representing the number of contigs
     contig: contig-name contig-size
     junk: uninitialized bytes filling up to dict-bytes

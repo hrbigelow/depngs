@@ -16,8 +16,9 @@ int mode_usage()
             "-m INT      number bytes of memory to use [%Zu]\n"
             "-p FILE     alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-q INT      %s\n"
+            "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
             "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
-            "-f INT      number of sample points used for final quantiles estimation [10000]\n"
+            "-f INT      number of sample points used for final quantiles estimation [1000]\n"
             "-v <empty>  if present, be verbose [absent]\n"
             "\n"
             "Output fields are:\n"
@@ -50,18 +51,16 @@ int main_mode(int argc, char ** argv)
     strcpy(prior_alphas_file, "/dev/null");
 
     size_t min_quality_score = 5;
+    const char *fastq_type = "None";
 
     char const* jpd_data_params_file;
     char const* pileup_input_file;
     char const* posterior_output_file;
 
-    size_t tuning_num_points = 1e3;
-    size_t final_num_points = 1e4;
-
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:z:p:qT:f::v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:z:p:q:F:v")) >= 0)
     {
         switch(c)
         {
@@ -71,8 +70,7 @@ int main_mode(int argc, char ** argv)
         case 'z': gradient_tolerance = atof(optarg); break;
         case 'p': strcpy(prior_alphas_file, optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
-        case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
-        case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'F': fastq_type = optarg; break;
         case 'v': verbose = true; break;
         default: return mode_usage(); break;
         }
@@ -89,6 +87,7 @@ int main_mode(int argc, char ** argv)
     return run_comp_or_mode(max_mem,
                             num_threads,
                             min_quality_score,
+                            fastq_type,
                             label_string,
                             "/dev/null",
                             prior_alphas_file,
@@ -97,8 +96,10 @@ int main_mode(int argc, char ** argv)
                             posterior_output_file,
                             "/dev/null",
                             gradient_tolerance,
-                            tuning_num_points,
-                            final_num_points,
+                            0, // unused by 'mode'
+                            0, // unused by 'mode'
+                            0, // test_quantile (unused by mode?)
+                            0, // min_test_quantile_value (unused by mode?)
                             verbose,
                             &mode_worker);
 

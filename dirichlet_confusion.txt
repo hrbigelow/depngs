@@ -1,0 +1,16 @@
+From http://en.wikipedia.org/wiki/Conjugate_prior#cite_note-beta-interp-4
+
+
+The exact interpretation of the parameters of a beta distribution in
+terms of number of successes and failures depends on what function is
+used to extract a point estimate from the distribution. The mode of a
+beta distribution is \frac{\alpha - 1}{\alpha + \beta - 2}, which
+corresponds to \alpha - 1 successes and \beta - 1 failures; but the
+mean is \frac{\alpha}{\alpha + \beta}, which corresponds to \alpha
+successes and \beta failures. The use of \alpha - 1 and \beta - 1 has
+the advantage that a uniform {\rm Beta}(1,1) prior corresponds to 0
+successes and 0 failures, but the use of \alpha and \beta is somewhat
+more convenient mathematically and also corresponds well with the fact
+that Bayesians generally prefer to use the posterior mean rather than
+the posterior mode as a point estimate. The same issues apply to the
+Dirichlet distribution.

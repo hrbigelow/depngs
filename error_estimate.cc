@@ -280,27 +280,6 @@ void ErrorEstimate::contract_from_hypercube(double const x[3], double * contract
 }
 
 
-/*
-double ErrorEstimate::ScaledPosterior(double const* sample_composition,
-                                      double log_scaling_factor) const
-{
-
-    double log_scaled =
-        this->log_likelihood(sample_composition) 
-        + this->log_dirichlet_prior(sample_composition) 
-        - log_scaling_factor;
-    
-    double value = (log_scaled > -1023.0) ? gsl_sf_exp(log_scaled) : 0.0;
-
-    assert(! isnan(value));
-    assert(! isinf(value));
-    return value;
-    
-}
-*/
-
-
-
 //finds mode point of this posterior, returning true on success
 //returns number of iterations
 size_t ErrorEstimate::find_mode_point(double gradient_tolerance, 

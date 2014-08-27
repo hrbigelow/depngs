@@ -60,28 +60,28 @@ struct posterior_wrapper
     double prior_alpha0;
     size_t min_quality_score;
     size_t num_quantiles;
-    double * quantiles;
-    FILE * cdfs_output_fh;
-    pthread_mutex_t * file_writing_mutex;
+    double *quantiles;
+    FILE *cdfs_output_fh;
+    pthread_mutex_t *file_writing_mutex;
     bool compute_anomaly;
     std::vector<double *> sample_points_sortable;
 
-    char * label_string;
+    char *label_string;
 
-    NucleotideStats * params;
-    ErrorEstimate * model;
-    Dirichlet * prior;
-    Metropolis * sampler;
-    SliceSampling * slice_sampler;
+    NucleotideStats *params;
+    ErrorEstimate *model;
+    Dirichlet *prior;
+    Metropolis *sampler;
+    SliceSampling *slice_sampler;
 
-    posterior_wrapper(char const* jpd_data_params_file,
-                      double * prior_alphas,
+    posterior_wrapper(const char *jpd_data_params_file,
+                      double *prior_alphas,
                       size_t min_quality_score,
-                      double * quantiles,
+                      double *quantiles,
                       size_t num_quantiles,
-                      char const* label_string,
-                      FILE * cdfs_output_fh,
-                      pthread_mutex_t * file_writing_mutex,
+                      const char *label_string,
+                      FILE *cdfs_output_fh,
+                      pthread_mutex_t *file_writing_mutex,
                       double gradient_tolerance,
                       size_t tuning_num_points,
                       size_t final_num_points,
@@ -91,40 +91,47 @@ struct posterior_wrapper
 
     void find_mode(void);
     void tune(sample_details *sd);
-    size_t tune_mh(PileupSummary * locus, double * sample_points_buf);
-    size_t tune_ss(double * sample_points_buf);
+    size_t tune_mh(PileupSummary *locus, double *sample_points_buf);
+    size_t tune_ss(double *sample_points_buf);
     void sample(sample_details *sd, size_t num_points);
-    void sample(PileupSummary * locus, double * sample_points_buf, char * algorithm_used);
-    void values(double * points, size_t num_points, double * values);
+    void sample(PileupSummary *locus, double *sample_points_buf, char *algorithm_used);
+    void values(double *points, size_t num_points, double *values);
 
-    char * print_quantiles(sample_details *sd, char *out_buffer);
+    char *print_quantiles(sample_details *sd, char *out_buffer);
 
-    char * process_line_comp(char const* pileup_line, char * out_buffer, double * sample_points_buf);
-    char * process_line_mode(char const* pileup_line, char * out_buffer);
+    char *process_line_comp(const char *pileup_line, char *out_buffer, 
+                             double *sample_points_buf,
+                             float test_quantile,
+                             float min_test_quantile_value);
+
+    char *process_line_mode(const char *pileup_line, char *out_buffer);
 };
 
 
 size_t discrete_comp_locus_bytes(size_t num_discrete_values);
 
-char * print_discrete_comp(PileupSummary * locus,
-                           char const* sample_label,
-                           double * discrete_values,
+char *print_discrete_comp(PileupSummary *locus,
+                           const char *sample_label,
+                           double *discrete_values,
                            size_t num_discrete_values,
                            size_t num_discrete_points_to_print,
                            double min_value_to_print,
-                           char * out_buf);
+                           char *out_buf);
 
 
 struct wrapper_input
 {
-    posterior_wrapper * worker;
-    std::vector<char *>::iterator beg;
-    std::vector<char *>::iterator end;
-    char ** out_start;
+    posterior_wrapper *worker;
+    std::vector<char *>::iterator beg, end;
+    char **out_start;
+
+    // if any non-reference base has its test_quantile greater than
+    // min_quantile_value it will be reported.
+    float test_quantile, min_test_quantile_value; 
 };
 
 
-void * comp_worker(void * args);
-void * mode_worker(void * args);
+void *comp_worker(void *args);
+void *mode_worker(void *args);
 
 #endif // _COMP_FUNCTOR_H

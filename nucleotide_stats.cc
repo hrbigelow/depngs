@@ -304,11 +304,11 @@ NucleotideStats::per_locus_stats(packed_counts & locus)
  */
 
 
-// pack the subset of statistics for this model that are represented in
-// the stats_index of packed_counts
-void NucleotideStats::pack(packed_counts * c)
+// initialize fbqs_cpd field of c.  packs the subset of statistics for
+// this model that are represented in the c->stats_index
+void NucleotideStats::pack(packed_counts *c)
 {
-    double * buf = c->fbqs_cpd;
+    double *buf = c->fbqs_cpd;
     size_t D = c->num_data;
     size_t code;
     for (size_t i = 0; i != D; ++i)

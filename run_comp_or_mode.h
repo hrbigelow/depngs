@@ -6,6 +6,7 @@
 int run_comp_or_mode(size_t max_mem,
                      size_t num_threads,
                      size_t min_quality_score,
+                     const char *fastq_type,
                      char const* label_string,
                      char const* quantiles_file,
                      char const* prior_alphas_file,
@@ -16,6 +17,8 @@ int run_comp_or_mode(size_t max_mem,
                      double gradient_tolerance,
                      size_t tuning_num_points,
                      size_t final_num_points,
+                     double test_quantile,
+                     double min_test_quantile_value,
                      bool verbose,
                      void * (*worker)(void *));
 

@@ -16,14 +16,17 @@ int comp_usage()
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
             "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
-            "-f INT      number of sample points used for final quantiles estimation [10000]\n"
+            "-f INT      number of sample points used for final quantiles estimation [1000]\n"
+            "-X FLOAT    test quantile used for -y [0.01]\n"
+            "-y FLOAT    minimum test quantile value needed to output locus composition [0]\n"
             "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
             "-i INT      maximum number of proposal tuning iterations [10]\n"
             "-s INT      number of loci simulations for estimating anomaly score (if zero, no estimate provided) [0]\n"
             "-M FLOAT    autocorrelation maximum value [6]\n"
-            "-Q FILE     quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
-            "-p FILE     alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
+            "-C STRING   quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
+            "-p STRING   alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-q INT      %s\n"
+            "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
             "-v <empty>  if present, be verbose [absent]\n"
             "\n"
             "Output fields are:\n"
@@ -52,16 +55,22 @@ int main_comp(int argc, char ** argv)
     size_t num_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
-    double gradient_tolerance = 1e-5;
     size_t tuning_num_points = 1e3;
-    size_t final_num_points = 1e4;
+    size_t final_num_points = 1e3;
+
+    double test_quantile = 0.01;
+    double min_test_quantile_value = 0;
 
     size_t target_autocor_offset = 6;
     size_t max_tuning_iterations = 10;
+    double gradient_tolerance = 1e-5;
+
+    double autocor_max_value = 6;
+
+
 
     size_t nsim_loci = 0;
 
-    double autocor_max_value = 6;
     char quantiles_file[100];
     strcpy(quantiles_file, "/dev/null");
 
@@ -69,6 +78,7 @@ int main_comp(int argc, char ** argv)
     strcpy(prior_alphas_file, "/dev/null");
 
     size_t min_quality_score = 5;
+    const char *fastq_type = "None";
 
     char const* jpd_data_params_file;
     char const* pileup_input_file;
@@ -78,7 +88,7 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:z:T:f:a:s:i:M:Q:p:q:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:z:T:f:X:y:a:s:i:M:C:p:q:F:v")) >= 0)
     {
         switch(c)
         {
@@ -88,13 +98,16 @@ int main_comp(int argc, char ** argv)
         case 'z': gradient_tolerance = atof(optarg); break;
         case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'X': test_quantile = atof(optarg); break;
+        case 'y': min_test_quantile_value = atof(optarg); break;
         case 'a': target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
         case 'i': max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
         case 's': nsim_loci = static_cast<size_t>(atof(optarg)); break;
         case 'M': autocor_max_value = atof(optarg); break;
-        case 'Q': strcpy(quantiles_file, optarg); break;
+        case 'C': strcpy(quantiles_file, optarg); break;
         case 'p': strcpy(prior_alphas_file, optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
+        case 'F': fastq_type = optarg; break;
         case 'v': verbose = true; break;
         default: return comp_usage(); break;
         }
@@ -113,6 +126,7 @@ int main_comp(int argc, char ** argv)
     return run_comp_or_mode(max_mem,
                             num_threads,
                             min_quality_score,
+                            fastq_type,
                             label_string,
                             quantiles_file,
                             prior_alphas_file,
@@ -123,6 +137,8 @@ int main_comp(int argc, char ** argv)
                             gradient_tolerance,
                             tuning_num_points,
                             final_num_points,
+                            test_quantile,
+                            min_test_quantile_value,
                             verbose,
                             &comp_worker);
 

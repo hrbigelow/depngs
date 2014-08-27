@@ -11,7 +11,7 @@
 int simc_usage()
 {
     fprintf(stderr, 
-            "Usage: dep simc [options] basecomp_priors nsim > sim_comp\n"
+            "Usage: dep simc [options] basecomp_priors.rdb nsim > sim_comp.rdb\n"
             "Options:\n\n"
             "-d INT     sequencing depth\n\n"
             "\n"

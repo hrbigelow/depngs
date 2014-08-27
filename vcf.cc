@@ -45,9 +45,8 @@ HQ:  Ditto -- in fact, don't know what this is...
 
 
 For genotype, if the sample has sample points, use the mean of sample
-points as the best estimate for composition.  If the sample has
-discrete, weighted points, use the heaviest as best estimate.  Then,
-take the closest diploid composition as the diploid representation.
+points as the best estimate for composition.  Then, take the closest
+diploid composition as the diploid representation.
 
 After compiling all diploid representations, determine the presence of
 any ALT alleles. (this should be easy).
@@ -97,7 +96,7 @@ double diploid_points[10][4] = {
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
 
-// return an upper bound on the lenght of a vcf line with num_samples
+// return an upper bound on the length of a vcf line with num_samples
 size_t vcf_locus_bytes(size_t num_samples)
 {
     return 10 + 16 + 1 + 1 + 5 + 2 + 4 + 0 + 2 + (num_samples * 3)
@@ -106,7 +105,8 @@ size_t vcf_locus_bytes(size_t num_samples)
 
 
 /*
-  write the next vcf line to outbuf.  return next write position
+  write the next vcf line to outbuf.  return next write position.
+  
  */
 char * print_vcf_line(sample_details * samples,
                       dist_worker_input * input,

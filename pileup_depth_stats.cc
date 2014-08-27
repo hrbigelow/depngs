@@ -34,10 +34,18 @@ char msg[] =
     "-p  STR   parameter label string to attach to each output line. [na]\n"
     "-g  REAL  if local average is below this, locus is assigned 0 depth.  Should be in range [0,1].  [0.1]\n"
     "\n\n"
-    "<index_file> has the format:\n\n"
-    "<sample1_name>\t<sample1.bindepth>\t<Y/N>\t<global_average_depth>\n"
-    "<sample2_name>\t<sample2.bindepth>\t<Y/N>\t<global_average_depth>\n"
-    "...\n";
+    "<index_file> has the format (tab-separated fields):\n\n"
+    "<sample1_name>\t</path/to/sample1.bindepth>\t<use_as_normalizer(Y/N)>\t<global_average_depth>\t<space_delim_haploid_contigs>\n"
+    "<sample2_name>\t</path/to/sample2.bindepth>\t<use_as_normalizer(Y/N)>\t<global_average_depth>\t<space_delim_haploid_contigs>\n"
+    "...\n\n"
+    "<use_as_normalizer(Y/N)> is used to mark those samples that are expected to have normal\n"
+    "ploidy for all contigs.  These samples will be used for local normalization.\n\n"
+    "<global_average_depth>: if this is the first run on these samples, this should be set to the value 1\n"
+    "for every sample.  Then, subsequent runs can plug in the value at the peak of the histogram\n"
+    "for each sample.\n\n"
+    "<space_delim_haploid_contigs> is a space-delimited list of contig names that are expected\n"
+    "to have haploid content. It is typically either 'none' signifying a female, or 'X Y' signifying\n"
+    "a male sample (haploid X, haploid Y).\n\n";
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))

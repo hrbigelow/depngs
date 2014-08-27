@@ -38,6 +38,7 @@ int dist_usage()
             "-f INT      number of sample points used for final quantiles estimation [1000]\n"
             "-q INT      minimum quality score to include bases as evidence [%s]\n"
             "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
+            "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
 
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
@@ -89,6 +90,8 @@ int main_dist(int argc, char **argv)
 
     size_t max_pileup_line_size = 1e6;
 
+    int print_pileup_fields = 0;
+
     size_t target_autocor_offset = 6;
     size_t max_tuning_iterations = 10;
     double gradient_tolerance = 1e-5;
@@ -115,7 +118,7 @@ int main_dist(int argc, char **argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:v:i:S:y:t:m:T:x:X:f:P:a:I:M:z:p:q:VD:C:F:l:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:v:i:S:y:t:m:T:x:X:f:gP:a:I:M:z:p:q:VD:C:F:l:")) >= 0)
     {
         switch(c)
         {
@@ -142,6 +145,7 @@ int main_dist(int argc, char **argv)
         case 'D': dist_quantiles_file = optarg; break;
         case 'C': comp_quantiles_file = optarg; break;
         case 'F': fastq_type = optarg; break;
+        case 'g': print_pileup_fields = 1; break;
         case 'l': max_pileup_line_size = static_cast<size_t>(atof(optarg)); break;
         default: return dist_usage(); break;
         }
@@ -369,6 +373,7 @@ int main_dist(int argc, char **argv)
                                   prelim_num_points,
                                   prelim_quantile,
                                   final_num_points,
+                                  print_pileup_fields,
                                   NULL,
                                   NULL,
                                   NULL,
@@ -470,7 +475,6 @@ int main_dist(int argc, char **argv)
                     // do a shift.
                     assert(chunk_buffer[s][chunk_read_size[s] - 1] == '\0');
                     size_t new_read_offset = chunk_read_size[s] - left_shift;
-                    assert(strncmp(chunk_buffer[s] + left_shift, "chr", 3) == 0);
 
                     memmove(chunk_buffer[s], chunk_buffer[s] + left_shift, new_read_offset);
 
@@ -485,8 +489,6 @@ int main_dist(int argc, char **argv)
                                                                & fread_nsec);
 
                     total_fread_nsec += fread_nsec;
-
-                    // assert(strncmp(chunk_buffer[s] + new_read_offset, "chr", 3) == 0);
 
                     chunk_read_size[s] = new_read_offset + bytes_read;
 

@@ -34,7 +34,7 @@ struct dist_worker_input
     size_t final_num_points;
 
     gsl_rng *randgen;
-
+    int print_pileup_fields; // if 0, do not print extra pileup fields
 
     std::vector<char *>::iterator *beg; // ranges for all samples
     std::vector<char *>::iterator *end;
@@ -63,6 +63,7 @@ struct dist_worker_input
                       size_t prelim_num_points,
                       float prelim_quantile,
                       size_t final_num_points,
+                      int print_pileup_fields,
                       char *out_dist,
                       char *out_comp,
                       char *out_vcf,

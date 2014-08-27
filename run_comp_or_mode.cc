@@ -5,9 +5,12 @@
 #include "comp_functor.h"
 #include "samutil/file_utils.h"
 
+#include <gsl/gsl_errno.h>
+
 int run_comp_or_mode(size_t max_mem,
                      size_t num_threads,
                      size_t min_quality_score,
+                     char const* fastq_type,
                      char const* label_string,
                      char const* quantiles_file,
                      char const* prior_alphas_file,
@@ -18,6 +21,8 @@ int run_comp_or_mode(size_t max_mem,
                      double gradient_tolerance,
                      size_t tuning_num_points,
                      size_t final_num_points,
+                     double test_quantile,
+                     double min_test_quantile_value,
                      bool verbose,
                      void * (*worker)(void *))
 {
@@ -40,7 +45,7 @@ int run_comp_or_mode(size_t max_mem,
     }
 
     double * prior_alphas;
-    double default_prior_alpha = 0.1;
+    double default_prior_alpha = 1.0;
 
     if (strcmp(prior_alphas_file, "/dev/null") == 0)
     {
@@ -61,13 +66,24 @@ int run_comp_or_mode(size_t max_mem,
 
     char * chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
+    FastqType ftype = None;
+
+    if (strcmp(fastq_type, "Sanger") == 0) { ftype = Sanger; }
+    else if (strcmp(fastq_type, "Solexa") == 0) { ftype = Solexa; }
+    else if (strcmp(fastq_type, "Illumina13") == 0) { ftype = Illumina13; }
+    else if (strcmp(fastq_type, "Illumina15") == 0) { ftype = Illumina15; }
+    else { ftype = None; }
 
     if (ftype == None)
     {
-        fprintf(stderr, "Error: Couldn't determine quality scale for pileup input file %s\n",
-                pileup_input_file);
-        exit(1);
+        ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
+
+        if (ftype == None)
+        {
+            fprintf(stderr, "Error: Couldn't determine quality scale for pileup input file %s\n",
+                    pileup_input_file);
+            exit(1);
+        }
     }
 
     PileupSummary::SetFtype(ftype);
@@ -123,12 +139,15 @@ int run_comp_or_mode(size_t max_mem,
                                   gradient_tolerance,
                                   tuning_num_points,
                                   final_num_points,
-                                  false);
+                                  verbose);
     }
     
     // number of characters needed for a single inference
     size_t output_unit_size = 
         (strlen(label_string) + 112 + (10 * num_quantiles) + (14 + num_quantiles)) * 5;
+
+    // the functions in the workers require this.
+    gsl_set_error_handler_off();
 
     while (! feof(pileup_input_fh))
     {
@@ -159,6 +178,9 @@ int run_comp_or_mode(size_t max_mem,
                 ? pileup_lines.end()
                 : pileup_lines.begin() + ((t + 1) * worker_load);
             worker_inputs[t].out_start = output_lines + (t * worker_load);
+            worker_inputs[t].test_quantile = test_quantile;
+            worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
+
             int rc = pthread_create(&threads[t], NULL, 
                                     worker,
                                     static_cast<void *>(& worker_inputs[t]));
