@@ -1,0 +1,5 @@
+*.o
+obj
+pileup_depth_stats
+dep
+pileup_to_bindepth

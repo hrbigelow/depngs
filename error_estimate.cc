@@ -14,14 +14,16 @@
 #include "nucleotide_stats.h"
 #include "stats_tools.h"
 
+#include <immintrin.h>
+
 double expansion_rows_global[3][3] = { 
     { 1., 1., 1. }, 
     { 0., 2., 1. }, 
     { 0., 0., 3. } 
 };
 
-double const expansion_determinant = 6.0;
-double const contraction_determinint = 1.0 / 6.0;
+const double expansion_determinant = 6.0;
+const double contraction_determinint = 1.0 / 6.0;
 
 double contraction_rows_global[3][3] = { 
     { 1., -0.5, -1.0/6.0 }, 
@@ -41,7 +43,7 @@ ErrorEstimate::ErrorEstimate()
 }
 
 
-void ErrorEstimate::set_composition_prior_alphas(double const* alphas)
+void ErrorEstimate::set_composition_prior_alphas(const double *alphas)
 {
     std::copy(alphas, alphas + 4, this->composition_prior_alphas);
     this->uniform_prior = 
@@ -56,17 +58,51 @@ ErrorEstimate::~ErrorEstimate()
 }
 
 
+void ErrorEstimate::log_likelihood_gradient(const double *comp,
+                                            double *gradient) const
+{
+    std::fill(gradient, gradient + 4, 0.0);
+
+    double *l = this->locus_data->fbqs_cpd;
+    double *l_end = l + (this->locus_data->num_data * 4);
+    unsigned long *lc = this->locus_data->raw_counts;
+
+    //sum_g(frac{1}{ln(2)P(I|C)} P(b|C))
+
+    // iterate over each bqs category
+    __m256d vc, vl, vg, vm;
+    
+    for (; l != l_end; l += 4, lc++)
+    {
+        vc = _mm256_loadu_pd(comp);
+        vl = _mm256_loadu_pd(l);
+        vm = __builtin_ia32_mulpd256(vc, vl);
+       
+        double so =
+            l[0] * comp[0] 
+            + l[1] * comp[1] 
+            + l[2] * comp[2] 
+            + l[3] * comp[3];
+    
+        gradient[0] += (*lc) * l[0] / so;
+        gradient[1] += (*lc) * l[1] / so;
+        gradient[2] += (*lc) * l[2] / so;
+        gradient[3] += (*lc) * l[3] / so;
+    }
+}
+
 
 //calculate d/dC ( log P(C,I_1,...,I_D) )
-void ErrorEstimate::log_likelihood_gradient(double const* comp,
-                                            double * gradient) const
+/*
+void ErrorEstimate::log_likelihood_gradient(const double *comp,
+                                            double *gradient) const
 {
 
     std::fill(gradient, gradient + 4, 0.0);
 
-    double * l = this->locus_data->fbqs_cpd;
-    double * l_end = l + (this->locus_data->num_data * 4);
-    unsigned long * lc = this->locus_data->raw_counts;
+    double *l = this->locus_data->fbqs_cpd;
+    double *l_end = l + (this->locus_data->num_data * 4);
+    unsigned long *lc = this->locus_data->raw_counts;
 
     //sum_g(frac{1}{ln(2)P(I|C)} P(b|C))
 
@@ -82,9 +118,9 @@ void ErrorEstimate::log_likelihood_gradient(double const* comp,
         gradient[3] += (*lc) * (*(l+3)) / so;
     }
 }
+*/
 
-
-double ErrorEstimate::log_dirichlet_prior(double const* sample_composition) const
+double ErrorEstimate::log_dirichlet_prior(const double *sample_composition) const
 {
     // instead of auto-detecting whether this is a uniform prior,
     // decide at application level whether or not to use the dirichlet
@@ -102,12 +138,12 @@ double ErrorEstimate::log_dirichlet_prior(double const* sample_composition) cons
 // In this new formulation, we use the subset of the model that is packed into
 // the locus itself.  Also, we inline the 'single_observation' function
 /*
-double ErrorEstimate::log_likelihood(double const* comp) const
+double ErrorEstimate::log_likelihood(const double *comp) const
 {
     
-    double * l = this->locus_data->fbqs_cpd;
-    double * l_end = l + (this->locus_data->num_data * 4);
-    unsigned long * lc = this->locus_data->raw_counts;
+    double *l = this->locus_data->fbqs_cpd;
+    double *l_end = l + (this->locus_data->num_data * 4);
+    unsigned long *lc = this->locus_data->raw_counts;
     double sum_log_factors = 0.0;
 
     // this is the original calculation.  below is an optimized version
@@ -144,14 +180,14 @@ ln(X) = log2(X) / log2(e)
 */
 
 
-double ErrorEstimate::log_likelihood(double const* x) const
+double ErrorEstimate::log_likelihood(const double *x) const
 {
-    double * cpd_beg = this->locus_data->fbqs_cpd;
-    double * cpd_end = cpd_beg + (this->locus_data->num_data * 4);
-    unsigned long * ct_beg = this->locus_data->raw_counts;
+    double *cpd_beg = this->locus_data->fbqs_cpd;
+    double *cpd_end = cpd_beg + (this->locus_data->num_data * 4);
+    unsigned long *ct_beg = this->locus_data->raw_counts;
 
-    double * cpd;
-    unsigned long * ct;
+    double *cpd;
+    unsigned long *ct;
 
     // this is the original calculation.  below is an optimized version
     int s = 0;
@@ -191,7 +227,7 @@ double ErrorEstimate::log_likelihood(double const* x) const
 
 
 // 
-double ErrorEstimate::log_pdf(double const* comp)
+double ErrorEstimate::log_pdf(const double *comp)
 {
     return this->log_likelihood(comp)
         + (this->uniform_prior ? 0 : this->log_dirichlet_prior(comp));
@@ -199,7 +235,7 @@ double ErrorEstimate::log_pdf(double const* comp)
 
 
 //
-double ErrorEstimate::log_pdf_trunc(double const* comp)
+double ErrorEstimate::log_pdf_trunc(const double *comp)
 {
     return
         (normalized(comp, 4, 1e-10) && all_positive(comp, 4))
@@ -219,7 +255,7 @@ bool sort_first_desc(Key a, Key b)
 }
 
 
-void auxiliary_transform(double const matrix[3][3], double const x[3], double * transformed)
+void auxiliary_transform(const double matrix[3][3], const double x[3], double *transformed)
 {
     
     Key key[] = { Key(x[0], 0), Key(x[1], 1), Key(x[2], 2) };
@@ -246,7 +282,7 @@ void auxiliary_transform(double const matrix[3][3], double const x[3], double * 
 }
 
 
-bool within_hypercube(double const x[3])
+bool within_hypercube(const double x[3])
 {
     return 
         x[0] >= 0.0 && x[0] <= 1.0 &&
@@ -255,7 +291,7 @@ bool within_hypercube(double const x[3])
 }
 
 
-bool within_pyramid(double const x[3])
+bool within_pyramid(const double x[3])
 {
     return
         x[0] >= 0.0 &&
@@ -265,14 +301,14 @@ bool within_pyramid(double const x[3])
 }
 
 
-void ErrorEstimate::expand_to_hypercube(double const x[3], double * expanded) const
+void ErrorEstimate::expand_to_hypercube(const double x[3], double *expanded) const
 {
     assert(within_pyramid(x));
 
     auxiliary_transform(this->expansion_rows, x, expanded);
 }
 
-void ErrorEstimate::contract_from_hypercube(double const x[3], double * contracted) const
+void ErrorEstimate::contract_from_hypercube(const double x[3], double *contracted) const
 {
     assert(within_hypercube(x));
 
@@ -284,10 +320,10 @@ void ErrorEstimate::contract_from_hypercube(double const x[3], double * contract
 //returns number of iterations
 size_t ErrorEstimate::find_mode_point(double gradient_tolerance, 
                                       size_t max_iterations,
-                                      double const* initial_point,
-                                      bool * on_zero_boundary,
+                                      const double *initial_point,
+                                      bool *on_zero_boundary,
                                       bool verbose,
-                                      double * mode_point) const
+                                      double *mode_point) const
 {
 
     //the minimization is performed in 3 unconstrained dimensions
@@ -341,8 +377,8 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
 
 
     //gsl_vector * numerical_gradient = gsl_vector_alloc(sphere_ndim);
-    gsl_vector * last_point = gsl_vector_alloc(sphere_ndim);
-    gsl_vector * point_delta = gsl_vector_alloc(sphere_ndim);
+    gsl_vector *last_point = gsl_vector_alloc(sphere_ndim);
+    gsl_vector *point_delta = gsl_vector_alloc(sphere_ndim);
 
     gsl_vector_set_all(last_point, 0.0);
 
@@ -355,7 +391,7 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
 
     //double mode_gradient[4][3];
 
-    //double const sigmoid_epsilon = 1e-10;
+    //const double sigmoid_epsilon = 1e-10;
 
     Transformation::SigmoidVals sigmoid_vals[3];
 
@@ -370,7 +406,7 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
         //take a step
         gsl_multimin_fdfminimizer_iterate(first_minimizer);
 
-        gsl_vector * gradient = gsl_multimin_fdfminimizer_gradient(first_minimizer);
+        gsl_vector *gradient = gsl_multimin_fdfminimizer_gradient(first_minimizer);
 
         double x[3];
         x[0] = gsl_vector_get(first_minimizer->x, 0);

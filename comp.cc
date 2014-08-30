@@ -20,9 +20,9 @@ int comp_usage()
             "-X FLOAT    test quantile used for -y [0.01]\n"
             "-y FLOAT    minimum test quantile value needed to output locus composition [0]\n"
             "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
-            "-i INT      maximum number of proposal tuning iterations [10]\n"
+            "-I INT      maximum number of proposal tuning iterations [10]\n"
             "-s INT      number of loci simulations for estimating anomaly score (if zero, no estimate provided) [0]\n"
-            "-M FLOAT    autocorrelation maximum value [6]\n"
+            "-M FLOAT    autocorrelation maximum value [0.2]\n"
             "-C STRING   quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
             "-p STRING   alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-q INT      %s\n"
@@ -55,19 +55,23 @@ int main_comp(int argc, char ** argv)
     size_t num_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
-    size_t tuning_num_points = 1e3;
-    size_t final_num_points = 1e3;
+    struct posterior_settings pset = {
+        1e-5,   // gradient_tolerance
+        3000,   // max_modefinding_iterations
+        10,     // max_tuning_iterations
+        1000,    // tuning_num_points
+        1000,    // final_num_points
+        6,      // autocor_max_offset
+        0.2,    // autocor_max_value
+        30,     // initial_autocor_offset
+        6,      // target_autocor_offset
+        62,     // num_bits_per_dim
+        true,   // is_log_integrand
+        62 * 3  // initial_sampling_range
+    };
 
     double test_quantile = 0.01;
     double min_test_quantile_value = 0;
-
-    size_t target_autocor_offset = 6;
-    size_t max_tuning_iterations = 10;
-    double gradient_tolerance = 1e-5;
-
-    double autocor_max_value = 6;
-
-
 
     size_t nsim_loci = 0;
 
@@ -88,22 +92,22 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:z:T:f:X:y:a:s:i:M:C:p:q:F:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:z:T:f:X:y:a:s:I:M:C:p:q:F:v")) >= 0)
     {
         switch(c)
         {
         case 'l': strcpy(label_string, optarg); break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
-        case 'z': gradient_tolerance = atof(optarg); break;
-        case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
-        case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'z': pset.gradient_tolerance = atof(optarg); break;
+        case 'T': pset.tuning_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'f': pset.final_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'X': test_quantile = atof(optarg); break;
         case 'y': min_test_quantile_value = atof(optarg); break;
-        case 'a': target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
-        case 'i': max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
+        case 'a': pset.target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
+        case 'I': pset.max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
         case 's': nsim_loci = static_cast<size_t>(atof(optarg)); break;
-        case 'M': autocor_max_value = atof(optarg); break;
+        case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'C': strcpy(quantiles_file, optarg); break;
         case 'p': strcpy(prior_alphas_file, optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
@@ -134,9 +138,7 @@ int main_comp(int argc, char ** argv)
                             jpd_data_params_file,
                             posterior_output_file,
                             cdfs_output_file,
-                            gradient_tolerance,
-                            tuning_num_points,
-                            final_num_points,
+                            &pset,
                             test_quantile,
                             min_test_quantile_value,
                             verbose,

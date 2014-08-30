@@ -14,17 +14,12 @@
 
 Metropolis::Metropolis(ErrorEstimate * integrand,
                        Dirichlet * proposal,
-                       size_t ndim, 
-                       bool is_independence_chain,
                        size_t num_points) 
     : integrand(integrand), 
       proposal(proposal), 
-      ndim(ndim), 
-      is_independence_chain_mh(is_independence_chain),
       num_points(num_points)
 { 
-    current_point = new double[ndim];
-    sample_points = new double[ndim * num_points];
+    sample_points = new double[NUM_NUCS * num_points];
     this->randgen = gsl_rng_alloc(gsl_rng_taus);
     gsl_rng_set(this->randgen, 0);
 }
@@ -32,7 +27,6 @@ Metropolis::Metropolis(ErrorEstimate * integrand,
 
 Metropolis::~Metropolis()
 {
-    delete current_point;
     delete sample_points;
     gsl_rng_free(this->randgen);
 }
@@ -41,16 +35,9 @@ Metropolis::~Metropolis()
 //propose a new point z_star from a starting point z_tau
 //z_tau is unused here since Metropolis-Hastings is using one
 //unchanging proposal distribution
-void Metropolis::propose(double const* z_tau, double * z_star)
+void Metropolis::propose(double *z_star)
 {
-    if (this->is_independence_chain_mh)
-    {
-        this->proposal->sample(z_star);
-    }
-    else
-    {
-        this->proposal->sample_conditioned(z_tau, z_star);
-    }
+    this->proposal->sample(z_star);
 }
 
 
@@ -84,16 +71,8 @@ double Metropolis::accept(double const* z_star, double const* z_tau)
 
 void Metropolis::set_current_point(double const* point)
 {
-    std::copy(point, point + this->ndim, current_point);
+    std::copy(point, point + NUM_NUCS, current_point);
 }
-
-
-double * Metropolis::get_current_point() const
-{
-    return this->current_point;
-}
-
-
 
 
 //do we need to record the y values here?
@@ -103,13 +82,13 @@ double Metropolis::step(double const* z_tau, double * z_tau_next)
     //update the markov chain at each step.
     double proposal_value;
 
-    double * z_star = new double[this->ndim];
+    double z_star[NUM_NUCS];
     double uniform;
 
-    //from z_tau, propose a z_star
-    this->propose(z_tau, z_star);
+    //propose a z_star out of the blue
+    this->propose(z_star);
 
-    assert(normalized(z_star, this->ndim, 1e-10));
+    assert(normalized(z_star, NUM_NUCS, 1e-10));
 
     //from the integrand values, calculate and acceptance score
     proposal_value = this->accept(z_star, z_tau);
@@ -119,16 +98,14 @@ double Metropolis::step(double const* z_tau, double * z_tau_next)
     if (proposal_value > uniform)
     {
         //new jump is accepted; assign
-        std::copy(z_star, z_star + this->ndim, z_tau_next);
+        std::copy(z_star, z_star + NUM_NUCS, z_tau_next);
     }
 
     else
     {
         //old position kept; assign
-        std::copy(z_tau, z_tau + this->ndim, z_tau_next);
+        std::copy(z_tau, z_tau + NUM_NUCS, z_tau_next);
     }
-
-    delete z_star;
 
     return proposal_value;
 
@@ -136,15 +113,16 @@ double Metropolis::step(double const* z_tau, double * z_tau_next)
 
 
 // sample from the integrand using the Metropolis algorithm.
-// populates the sample buffer 
-// if alt_sample_points are provided, use those instead of internal
+// populates the sample buffer.  if alt_sample_points are provided,
+// use those instead of internal.  if proposal_mean and
+// proposal_variance are non-null, 
 void 
 Metropolis::sample(size_t num_samples_to_take,
                    size_t burn_in,
                    size_t every_nth,
-                   double *const proposal_mean,
-                   double *const proposal_variance,
-                   double * alt_sample_points)
+                   double *proposal_mean,
+                   double *proposal_variance,
+                   double *alt_sample_points)
 {
     if (num_samples_to_take > this->num_points)
     {
@@ -155,76 +133,67 @@ Metropolis::sample(size_t num_samples_to_take,
         exit(1);
     }
 
-    double * used_sample_points = (alt_sample_points == NULL) 
-        ? this->sample_points
-        : alt_sample_points;
+    double 
+        *point = alt_sample_points ? alt_sample_points : this->sample_points,
+        *point_end = point + (num_samples_to_take * NUM_NUCS);
 
     //update the markov chain at each step.
     srand(time(NULL));
-    double proposal_value, proposal_value_truncated;
-    size_t sample_count = 0;
+    double proposal_value;
     size_t step_count = 0;
 
-    double * z_tau = new double[this->ndim];
-    double * z_star = new double[this->ndim];
+    double z_tau[NUM_NUCS], z_star[NUM_NUCS];
 
-    std::copy(this->current_point, this->current_point + this->ndim, z_tau);
-    double * proposal_values = NULL;
-    if (proposal_mean != NULL)
-    {
+    std::copy(this->current_point, this->current_point + NUM_NUCS, z_tau);
+    double *proposal_values = NULL;
+    if (proposal_mean)
         proposal_values = new double[num_samples_to_take];
-    }
 
-    while (sample_count < num_samples_to_take)
+    while (point != point_end)
     {
         proposal_value = this->step(z_tau, z_star);
-        proposal_value_truncated = isinf(proposal_value) ? DBL_MAX : proposal_value;
 
-        if (proposal_mean != NULL)
-        {
-            proposal_values[step_count] = std::min(1.0, proposal_value_truncated);
-        }
+        if (proposal_mean && step_count < num_samples_to_take)
+            proposal_values[step_count] = 
+                std::min(1.0, isinf(proposal_value) ? DBL_MAX : proposal_value);
 
         if (step_count > burn_in && step_count % every_nth == 0)
         {
-            std::copy(z_tau, z_tau + this->ndim, used_sample_points
-                      + (sample_count * this->ndim));
-            ++sample_count;
+            std::copy(z_tau, z_tau + NUM_NUCS, point);
+            point += NUM_NUCS;
         }
 
         ++step_count;
 
         //update current position
-        std::copy(z_star, z_star + this->ndim, z_tau);
+        std::copy(z_star, z_star + NUM_NUCS, z_tau);
 
     }
 
-    if (proposal_values != NULL)
+    if (proposal_values)
     {
-        *proposal_mean = gsl_stats_mean(proposal_values, 1, step_count);
-        *proposal_variance = gsl_stats_variance_m(proposal_values, 1, step_count, *proposal_mean);
+        *proposal_mean = gsl_stats_mean(proposal_values, 1, num_samples_to_take);
+        *proposal_variance = gsl_stats_variance_m(proposal_values, 1, num_samples_to_take, *proposal_mean);
     }
 
     this->set_current_point(z_tau);
 
-    if (proposal_values != NULL) { delete[] proposal_values; }
-    delete[] z_tau;
-    delete[] z_star;
+    if (proposal_values) 
+        delete proposal_values;
 }
 
 
 
 //  other support functions
 void print_mean_covariance(FILE * fh, double const* mean, 
-                           double const* covariance, 
-                           size_t ndim)
+                           double const* covariance)
 {
-    for (size_t d1 = 0; d1 != ndim; ++d1)
+    for (size_t d1 = 0; d1 != NUM_NUCS; ++d1)
     {
         fprintf(fh, "%20.18g\t", mean[d1]);
-        for (size_t d2 = 0; d2 != ndim; ++d2)
+        for (size_t d2 = 0; d2 != NUM_NUCS; ++d2)
         {
-            fprintf(fh, "\t%20.18g", covariance[d1 * ndim + d2]);
+            fprintf(fh, "\t%20.18g", covariance[d1 * NUM_NUCS + d2]);
         }
         fprintf(fh, "\n");
     }

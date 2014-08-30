@@ -15,10 +15,10 @@ namespace Transformation
 {
 
 
-    double const sigmoid_truncation_epsilon = 1e-10;
-    double const sigmoid_truncation_epsilon_inv = 1.0 - sigmoid_truncation_epsilon;
-    double const log_epsilon = gsl_sf_log(sigmoid_truncation_epsilon);
-    double const log_epsilon_inv = gsl_sf_log(sigmoid_truncation_epsilon_inv);
+    const double sigmoid_truncation_epsilon = 1e-10;
+    const double sigmoid_truncation_epsilon_inv = 1.0 - sigmoid_truncation_epsilon;
+    const double log_epsilon = gsl_sf_log(sigmoid_truncation_epsilon);
+    const double log_epsilon_inv = gsl_sf_log(sigmoid_truncation_epsilon_inv);
 
     /*
       filipe's iterative transformation: take a pair of additive inverses in one variable, and
@@ -35,13 +35,13 @@ namespace Transformation
 
       
     */
-    void sigmoid_value_and_gradient(double const x[3],
+    void sigmoid_value_and_gradient(const double x[3],
                                     Transformation::SigmoidVals sg[3])
     {
         double enegx;
 
-        double const epsilon = sigmoid_truncation_epsilon;
-        double const epsilon_inv = 1.0 - epsilon;
+        const double epsilon = sigmoid_truncation_epsilon;
+        const double epsilon_inv = 1.0 - epsilon;
 
         //here we assert that if the value p[d] is near 0 or 1,
         //the partial derivatives p'[d] and q'[d] we will deem
@@ -50,7 +50,7 @@ namespace Transformation
         //partial approaches a positive constant towards infinity.
         //but, for purposes of handling the dirichlet prior, we
         //make this correction.
-        Transformation::SigmoidVals * sgp;
+        Transformation::SigmoidVals *sgp;
         
         for (size_t d = 0; d != 3; ++d)
         {
@@ -117,8 +117,8 @@ namespace Transformation
 
 
     // compute the original 4D point from the sigmoid transformed point
-    void sigmoid_composition(Transformation::SigmoidVals const sg[3],
-                             double * comp)
+    void sigmoid_composition(const Transformation::SigmoidVals sg[3],
+                             double *comp)
     {
         comp[0] = sg[2].p * sg[0].p;
         comp[1] = sg[2].q * sg[0].p;
@@ -136,10 +136,10 @@ namespace Transformation
 
     //if the transformation has reached a point where the gradients are flat,
     //this is deemed to be 'infinity', which means the point represents the boundary
-    void boundary_point(Transformation::SigmoidVals const sg[3],
-                        bool * on_zero_boundary)
+    void boundary_point(const Transformation::SigmoidVals sg[3],
+                        bool *on_zero_boundary)
     {
-        double const& e = Transformation::sigmoid_truncation_epsilon;
+        const double& e = Transformation::sigmoid_truncation_epsilon;
 
         on_zero_boundary[0] = sg[2].p == e || sg[0].p == e;
         on_zero_boundary[1] = sg[2].q == e || sg[0].p == e;
@@ -148,7 +148,7 @@ namespace Transformation
 
     }
 
-    void sigmoid_gradient(Transformation::SigmoidVals const sg[3],
+    void sigmoid_gradient(const Transformation::SigmoidVals sg[3],
                           double comp_gradient[4][3])
     {
         comp_gradient[0][0] = sg[2].p * sg[0].pgrad;
@@ -171,8 +171,8 @@ namespace Transformation
 
 
     //compute log(~Dir(sigmoid(x)))
-    double sigmoid_log_dirichlet(double const alpha[4],
-                                 Transformation::SigmoidVals const sg[3])
+    double sigmoid_log_dirichlet(const double alpha[4],
+                                 const Transformation::SigmoidVals sg[3])
     {
         double i[4];
         for (size_t c = 0; c != 4; ++c)
@@ -189,9 +189,9 @@ namespace Transformation
     }
     
     //compute d/dx of log(~Dir(sigmoid(x)))
-    void sigmoid_log_dirichlet_gradient(double const alpha[4],
-                                        Transformation::SigmoidVals const sg[3],
-                                        double * gradient)
+    void sigmoid_log_dirichlet_gradient(const double alpha[4],
+                                        const Transformation::SigmoidVals sg[3],
+                                        double *gradient)
     {
         double i[4];
         for (size_t c = 0; c != 4; ++c)
@@ -231,10 +231,10 @@ namespace Transformation
     //gsl_sf_log returns -nan if zero or close to zero with status 1,
     //inf if argument is larger than representable, with status 0
     /*
-    void composition_to_r3_sigmoid(double const* c, double * r)
+    void composition_to_r3_sigmoid(const double* c, double *r)
     {
         
-        // gsl_error_handler_t * original_handler = gsl_set_error_handler_off();
+        // gsl_error_handler_t *original_handler = gsl_set_error_handler_off();
         double arg[3];
         arg[0] = 1.0 / (c[0] + c[1]) - 1.0;
         arg[1] = (c[3] == 0 && c[2] == 0) ? 1 : c[3] / c[2];
@@ -255,8 +255,8 @@ namespace Transformation
     }
     */
 
-    double log_dirichlet(double const alpha[4],
-                         double const x[4])
+    double log_dirichlet(const double alpha[4],
+                         const double x[4])
     {
         double ld =
             + (alpha[0] - 1.0) * gsl_sf_log(x[0])
@@ -273,7 +273,7 @@ namespace Transformation
     }
 
 
-    double log2_dirichlet(double const alpha[4], double const x[4])
+    double log2_dirichlet(const double alpha[4], const double x[4])
     {
         double ld =
             + (alpha[0] - 1.0) * log2(x[0])
@@ -293,11 +293,11 @@ namespace Transformation
 
     
 
-    void log_neg_posterior_aux(gsl_vector const* r, 
+    void log_neg_posterior_aux(const gsl_vector *r, 
                                int eval_type, 
-                               double * neg_log_value,
-                               gsl_vector * neg_gradient_vec,
-                               void * params)
+                               double *neg_log_value,
+                               gsl_vector *neg_gradient_vec,
+                               void *params)
     {
         double comp[4];
         double comp_gradient[4][3];
@@ -313,7 +313,7 @@ namespace Transformation
         x[1] = gsl_vector_get(r, 1);
         x[2] = gsl_vector_get(r, 2);
 
-        Transformation::PassingParams * pp = 
+        Transformation::PassingParams *pp = 
             static_cast<Transformation::PassingParams *>(params);
 
         Transformation::SigmoidVals sigmoid_vals[3];
@@ -386,8 +386,8 @@ namespace Transformation
         }
     }
 
-    double log_neg_posterior_value(gsl_vector const* r, 
-                                   void * params)
+    double log_neg_posterior_value(const gsl_vector *r, 
+                                   void *params)
     {
         double neg_log_value;
         gsl_vector *neg_log_gradient = gsl_vector_alloc(3);
@@ -400,18 +400,18 @@ namespace Transformation
     }
 
 
-    void log_neg_posterior_gradient(const gsl_vector * r, 
-                                    void * params, 
-                                    gsl_vector * neg_gradient)
+    void log_neg_posterior_gradient(const gsl_vector *r, 
+                                    void *params, 
+                                    gsl_vector *neg_gradient)
     {
         double neg_log_value;
         log_neg_posterior_aux(r, Transformation::GRADIENT, &neg_log_value, neg_gradient, params);
     }
 
-    void log_neg_posterior_value_and_gradient(const gsl_vector * r, 
-                                              void * params, 
-                                              double * neg_log_value, 
-                                              gsl_vector * neg_gradient)
+    void log_neg_posterior_value_and_gradient(const gsl_vector *r, 
+                                              void *params, 
+                                              double *neg_log_value, 
+                                              gsl_vector *neg_gradient)
     {
         log_neg_posterior_aux(r, Transformation::VALUE | Transformation::GRADIENT, 
                               neg_log_value, neg_gradient, params);

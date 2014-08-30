@@ -1,6 +1,8 @@
 #ifndef _STATS_TOOLS_H
 #define _STATS_TOOLS_H
 
+#include "defs.h"
+
 #include <cstdlib>
 #include <gsl/gsl_sf_log.h>
 

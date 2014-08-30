@@ -4,8 +4,6 @@
 dep \- diversity estimation probabilistically
 
 .SH SYNOPSIS
-dep mode [options] input.jpd input.pileup output.mode
-.br
 dep comp [options] input.jpd input.pileup output.comp [output.points]
 .br
 dep dist [options] samples.rdb contig_order.rdb
@@ -42,27 +40,18 @@ base-marginal quantile values for each of the four nucleotides for the
 specified quantiles.
 
 .TP
-.B mode
-dep mode [options] input.jpd input.pileup output.mode
-
-Estimates single most likely base composition for each locus in
-input.pileup.  Uses the mode of the posterior via a gradient-based
-mode-finding algorithm.
-
-.TP
 .B dist
 dep dist [options] sample_index.rdb contig_order.rdb
 
 Estimates mutational distance at each locus and for each pair of
 samples specified in \fBsample_index.rdb\fP, reporting loci that
-differ by some minimum amount, as specified by a quantile and quantile
-value. The 1-D mutational distance distribution is generated from the
-two 4-D base composition estimates run on the pair of samples by
-generating random pairs of sample points, one from each 4-D
-distribution, and computing the euclidean distance between each pair
-of points. From the 1-D distribution, it computes confidence
-intervals. The same approach is taken to generate mutational distance
-for indels.
+differ by some minimum amount.  The 1-D mutational distance
+distribution is generated from the two 4-D base composition estimates
+run on the pair of samples by generating random pairs of sample
+points, one from each 4-D distribution, and computing the euclidean
+distance between each pair of points. From the 1-D distribution, it
+computes confidence intervals. The same approach is taken to generate
+mutational distance for indels.
 
 The vast majority of loci will not differ between samples.  To take
 advantage of this and avoid doing unnecessarily refined computations,
@@ -94,7 +83,7 @@ differing, calculating all quantile values.
 .RE
 
 .TP
-.B Posterior Probability Distribution used for \fImode\fP, \fIcomp\fP, and \fIdist\fP.
+.B Posterior Probability Distribution used for \fIcomp\fP and \fIdist\fP.
 
 The posterior probability distribution is a real-valued function
 defined over the 4D "nucleotide composition" space of (A,C,G,T) with
@@ -781,11 +770,9 @@ single-locus base composition marginal estimates.
 
 .TP
 .I min_test_quantile_value
-Minimum mutational distance needed in order to report a locus in
-.IR dist_file .
-This threshold is applied to the quantile value of the lowest quantile
-specified in
-.IR dist_quantiles_file .
+Minimum quantile value of \fItest_quantile\fP to report a locus in
+\fIcomp_file\fP (if running \fBcomp\fP) or to report a locus in
+\fIdist_file\fP (if running \fBdist\fP).
 
 .RE
 
@@ -852,7 +839,7 @@ back to a slower yet completely reliable Slice Sampling.
 
 .TP
 .I autocor_max_value
-Maximum autocorrelation value.  Default 0.6.  The maximum
+Maximum autocorrelation value.  Default 0.2.  The maximum
 autocorrelation to be considered as valid for the purpose of choosing
 an offset for sample point thinning.
 
@@ -883,61 +870,65 @@ the -V flag with successively looser tolerance (starting at 1e-20, til
 
 .B Command Options Table
 
-\fBoption\fP                      \fBmode\fP          \fBcomp\fP           \fBdist\fP
+\fBoption\fP                      \fBcomp\fP           \fBdist\fP
 .br
-num_threads               | -t [1]      | -t [1]       | -t [1]
-.br                       |             |              | 
-max_mem                   | -m [4e9]    | -m [4e9]     | -m [4e9]
-.br                       |             |              | 
-fastq_type                | -F [None]   | -F [None]    | -F [None]
-.br                       |             |              | 
-max_pileup_line_size      |             |              | -l [1e5]
-.br                       |             |              | 
-label                     | -l [mode]   | -l [comp]    | 
-.br                       |             |              | 
-verbose                   | -v [off]    | -v [off]     | -V [off]
-.br                       |             |              | 
-dist_file                 |             |              | -d [blank]
-.br                       |             |              | 
-comp_file                 |             |              | -c [blank]
-.br                       |             |              | 
-vcf_file                  |             |              | -v [blank]
-.br                       |             |              | 
-indel_dist_file           |             |              | -i [blank]
-.br                       |             |              | 
-sample_pairings_file      |             |              | -S [blank]
-.br                       |             |              | 
-min_quality_score         | -q [5]      | -q [5]       | -q [5]
-.br                       |             |              | 
-dist_quantiles_file       |             |              | -D [*note]
-.br                       |             |              | 
-comp_quantiles_file       |             | -C [*note]   | -C [*note]
-.br                       |             |              | 
-min_test_quantile_value   |             | -y [0]       | -y [0.2]
-.br                       |             |              | 
-tuning_num_points         |             | -T [1e3]     | -T [1e3]
-.br                       |             |              | 
-prelim_num_points         |             |              | -x [1e2]
-.br                       |             |              | 
-num_sample_point_pairs    |             |              | -p [1e4]
-.br                       |             |              | 
-final_num_points          |             | -f [1e3]     | -f [1e3]
-.br                       |             |              | 
-test_quantile             |             | -X [1e-2]    | -X [1e-2]
-.br                       |             |              | 
-target_autocor_offset     |             | -a [6]       | -a [6]
-.br                       |             |              | 
-max_tuning_iterations     |             | -i [10]      | -I [10]
-.br                       |             |              | 
-autocor_max_value         |             | -M [6]       | -M [6]
-.br                       |             |              | 
-gradient_tolerance        | -z [1e-5]   | -z [1e-5]    | -z [1e-5]
-.br                       |             |              | 
-prior_alphas_file         | -p [*note]  | -p [*note]   | -p [*note]
+num_threads               | -t [1]       | -t [1]
+.br
+max_mem                   | -m [4e9]     | -m [4e9]
+.br
+fastq_type                | -F [None]    | -F [None]
+.br
+max_pileup_line_size      |              | -l [1e5]
+.br
+label                     | -l [comp]    | 
+.br
+verbose                   | -v [off]     | -v [off]
+.br
+dist_file                 |              | -d [blank]
+.br
+comp_file                 |              | -c [blank]
+.br
+vcf_file                  |              | -V [blank]
+.br
+indel_dist_file           |              | -i [blank]
+.br
+sample_pairings_file      |              | -S [blank]
+.br
+min_quality_score         | -q [5]       | -q [5]
+.br
+dist_quantiles_file       |              | -D [*note]
+.br
+comp_quantiles_file       | -C [*note]   | -C [*note]
+.br
+test_quantile             | -X [1e-2]    | -X [1e-2]
+.br
+min_test_quantile_value   | -y [0]       | -y [0.2]
+.br
+tuning_num_points         | -T [1e3]     | -T [1e3]
+.br
+prelim_num_points         |              | -x [1e2]
+.br
+num_sample_point_pairs    |              | -p [1e4]
+.br
+final_num_points          | -f [1e3]     | -f [1e3]
+.br
+target_autocor_offset     | -a [6]       | -a [6]
+.br
+max_tuning_iterations     | -I [10]      | -I [10]
+.br
+autocor_max_value         | -M [0.2]     | -M [0.2]
+.br
+gradient_tolerance        | -z [1e-5]    | -z [1e-5]
+.br
+prior_alphas_file         | -p [*note]   | -p [*note]
 .br
 
+.B NOTE:
+If no file is provided for \fIdist_quantiles_file\fP or
+\fIcomp_quantiles_file\fP, the quantiles are (0.005, 0.05, 0.5, 0.95,
+0.995).
 
-\fBoptions\fP                     \fBsimc\fP          \fBbqslocus\fP       \fBbqs\fP             \fBpug\fP
+\fBoption\fP                     \fBsimc\fP          \fBbqslocus\fP       \fBbqs\fP             \fBpug\fP
 .br
 sequencing_depth          | -d          |              |               |
 .br

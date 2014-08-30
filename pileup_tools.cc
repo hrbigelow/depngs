@@ -76,7 +76,7 @@ PileupSummary::~PileupSummary()
 void PileupSummary::load_line(char const* read_pointer)
 {
 
-    size_t matched_depth;
+    size_t span_depth;
     int read_pos, qual_pos;
 
     int scanned_fields =
@@ -84,7 +84,7 @@ void PileupSummary::load_line(char const* read_pointer)
                this->reference, 
                &this->position, 
                &this->reference_base, 
-               &matched_depth, 
+               &span_depth, 
                &read_pos, &qual_pos);
     
     if (scanned_fields != 4)
@@ -97,13 +97,13 @@ void PileupSummary::load_line(char const* read_pointer)
     read_pointer += read_pos;
 
     if (this->quality_codes != NULL) delete[] this->quality_codes;
-    this->quality_codes = new char[matched_depth + 1];
+    this->quality_codes = new char[span_depth + 1];
 
     if (this->bases != NULL) delete[] this->bases;
-    this->bases = new char[matched_depth + 1];
+    this->bases = new char[span_depth + 1];
 
     if (this->bases_upper != NULL) delete[] this->bases_upper;
-    this->bases_upper = new char[matched_depth + 1];
+    this->bases_upper = new char[span_depth + 1];
 
     if (this->bases_raw) delete[] this->bases_raw;
     
@@ -217,10 +217,10 @@ void PileupSummary::load_line(char const* read_pointer)
             sscanf(read_pointer, " %n", & read_pos); //eat white space
             read_pointer += read_pos;
 
-            memcpy(this->quality_codes, read_pointer, matched_depth);
-            read_pointer += matched_depth;
+            memcpy(this->quality_codes, read_pointer, span_depth);
+            read_pointer += span_depth;
 
-            this->quality_codes[matched_depth] = '\0';
+            this->quality_codes[span_depth] = '\0';
 
         }
         else 
@@ -235,25 +235,25 @@ void PileupSummary::load_line(char const* read_pointer)
     // now iterate through the bases and qualities, packing them to
     // only include those bases that are in a CIGAR 'M' state.
     size_t num_seen_gaps = 0;
-    for (size_t read_pos = 0; read_pos != matched_depth; ++read_pos)
+    for (size_t r = 0; r != span_depth; ++r)
     {
-        if (this->bases[read_pos] == '*')
+        if (this->bases[r] == '*')
         {
             ++num_seen_gaps;
             continue;
         }
-        size_t write_pos = read_pos - num_seen_gaps;
-        this->bases[write_pos] = this->bases[read_pos];
-        this->bases_upper[write_pos] = this->bases_upper[read_pos];
-        this->quality_codes[write_pos] = this->quality_codes[read_pos];
-        assert(this->quality_codes[read_pos] != '~');
+        size_t write_pos = r - num_seen_gaps;
+        this->bases[write_pos] = this->bases[r];
+        this->bases_upper[write_pos] = this->bases_upper[r];
+        this->quality_codes[write_pos] = this->quality_codes[r];
+        assert(this->quality_codes[r] != '~');
     }
 
-    this->read_depth = matched_depth;
-    size_t last = matched_depth - num_seen_gaps;
-    this->bases[last] = '\0';
-    this->bases_upper[last] = '\0';
-    this->quality_codes[last] = '\0';
+    this->read_depth = span_depth;
+    this->read_depth_match = span_depth - num_seen_gaps;
+    this->bases[this->read_depth_match] = '\0';
+    this->bases_upper[this->read_depth_match] = '\0';
+    this->quality_codes[this->read_depth_match] = '\0';
 
 }
 
@@ -266,6 +266,7 @@ size_t PileupSummary::quality(size_t read_num) const
 
 
 // 1. encode the basecall, quality, strand combination as an integer
+// initialize this->counts.raw_counts and this->counts.stats_index
 void PileupSummary::parse(size_t min_quality_score)
 {
     
@@ -273,9 +274,10 @@ void PileupSummary::parse(size_t min_quality_score)
     unsigned long *raw_counts_flat = new unsigned long[Nucleotide::num_bqs];
     unsigned long *rc_tmp = new unsigned long[Nucleotide::num_bqs];
     size_t *rc_ind_tmp = new size_t[Nucleotide::num_bqs];
+    this->read_depth_high_qual = 0;
 
     std::fill(raw_counts_flat, raw_counts_flat + Nucleotide::num_bqs, 0);
-    size_t rd = static_cast<size_t>(this->read_depth), nd = 0;
+    size_t rd = this->read_depth_match, nd = 0;
 
     for (size_t r = 0; r < rd; ++r)
     {
@@ -301,7 +303,7 @@ void PileupSummary::parse(size_t min_quality_score)
         if (raw_counts_flat[flat_index] != 0)
         {
 
-            this->read_depth_filtered += raw_counts_flat[flat_index];
+            this->read_depth_high_qual += raw_counts_flat[flat_index];
             rc_tmp[nd] = raw_counts_flat[flat_index];
             rc_ind_tmp[nd] = flat_index;
             ++nd;

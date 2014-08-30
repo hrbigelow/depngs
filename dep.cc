@@ -9,9 +9,9 @@ int usage()
             "dep (diversity estimation probabilistically)\n"
             "Author: Henry Bigelow (hrbigelow@gmail.com)\n\n"
             "Usage:\n\n"
-            "dep comp       Estimate per-locus base composition of diverse population\n"
-            "dep mode       Estimate most probable per-locus base composition\n"
-            "dep dist       Estimate sample-pairwise base composition distance with error bars\n"
+            "dep comp       Estimate per-locus base composition with confidence intervals\n"
+            // "dep mode       Estimate most probable per-locus base composition\n"
+            "dep dist       Estimate sample-pairwise base composition distance with confidence intervals\n"
             // "dep discomp    Estimate per-locus discrete genotype of clonal population\n"
             // "dep anomaly    Scores the degree of data anomaly\n"
             "dep simp       Simulate pileup file\n"
@@ -19,7 +19,7 @@ int usage()
             "dep bqslocus   Tally {basecall, quality score, strand} counts per locus\n"
             "dep bqs        Tally {basecall, quality score, strand} counts overall\n"
             "dep bqs2jpd    Expand {basecall, quality score, strand} counts to jpd\n"
-            "dep pug        Pileup Grep.  grep a list of loci from a large pileup file using binary search.\n"
+            "dep pug        Pileup Grep.  grep a list of loci from a large pileup file using binary search\n"
             "\n"
             );
     return 1;
@@ -36,10 +36,10 @@ int main(int argc, char *argv[])
     {
         return main_comp(argc - 1, argv + 1);
     }
-    else if (strcmp(argv[1], "mode") == 0)
-    {
-        return main_mode(argc - 1, argv + 1);
-    }
+    // else if (strcmp(argv[1], "mode") == 0)
+    // {
+    //     return main_mode(argc - 1, argv + 1);
+    // }
     else if (strcmp(argv[1], "dist") == 0)
     {
         return main_dist(argc - 1, argv + 1);

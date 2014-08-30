@@ -34,28 +34,32 @@ struct sample_details
 };
 
 
-// the mode that we use when there is no data
-const double NULL_MODE[] = { 0.25, 0.25, 0.25, 0.25 };
-
-struct posterior_wrapper
+struct posterior_settings
 {
     double gradient_tolerance;
     size_t max_modefinding_iterations;
     size_t max_tuning_iterations;
     size_t tuning_num_points;
     size_t final_num_points;
+    double autocor_max_offset;
+    double autocor_max_value;
+
+    size_t initial_autocor_offset;
+    size_t target_autocor_offset;
+    size_t num_bits_per_dim; // defaults to 62
+    bool is_log_integrand; // defaults to true
+    size_t initial_sampling_range; // defaults to 62 * 3
+};
+
+// the mode that we use when there is no data
+const double NULL_MODE[] = { 0.25, 0.25, 0.25, 0.25 };
+
+struct posterior_wrapper
+{
+    struct posterior_settings s;
     double initial_point[4];
     double mode_point[4];
     bool on_zero_boundary[4];
-    double autocor_max_offset;
-    double autocor_max_value;
-    size_t initial_autocor_offset;
-    size_t target_autocor_offset;
-    size_t num_bits_per_dim;
-    bool is_log_integrand;
-    size_t initial_sampling_range;
-    bool may_underflow;
-    bool use_independence_chain_mh;
     bool verbose;
     double prior_alpha0;
     size_t min_quality_score;
@@ -82,9 +86,7 @@ struct posterior_wrapper
                       const char *label_string,
                       FILE *cdfs_output_fh,
                       pthread_mutex_t *file_writing_mutex,
-                      double gradient_tolerance,
-                      size_t tuning_num_points,
-                      size_t final_num_points,
+                      posterior_settings s,
                       bool verbose);
 
     ~posterior_wrapper();

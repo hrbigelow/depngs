@@ -1,42 +1,11 @@
 #ifndef _SAMPLING_H
 #define _SAMPLING_H
 
-#include <utility>
-
 #include "tools.h"
 
 /*
   Group of functions to generate individual samples from statistical distributions
-
  */
-
-// class Gaussian;
-// class AnalyticalIntegrand;
-
-
-
-
-struct WeightedSample
-{
-    size_t ndim;
-    double *x;
-    double *cdf; //uninitialized
-    double val;
-    double weight;
-
-    WeightedSample(size_t const _ndim, double const * _x, double const _val, double const _weight);
-    ~WeightedSample();
-    WeightedSample(WeightedSample const& w);
-    WeightedSample & operator=(WeightedSample const& w);
-    WeightedSample();
-    bool operator<(WeightedSample const& w) const;
-    
-};
-
-
-
-
-typedef std::map<WeightedSample, WeightedSample> WEIGHTED_SAMPLE_MAP;
 
 
 void compute_marginal_quantiles(double * sample_points,
@@ -45,19 +14,6 @@ void compute_marginal_quantiles(double * sample_points,
                                 double const* quantiles,
                                 size_t num_quantiles,
                                 double * quantile_values);
-
-
-// void print_cdf_comparison(FILE * out_fh,
-//                           AnalyticalIntegrand const* integrand,
-//                           std::vector<double *> * points,
-//                           double const* quantiles,
-//                           size_t const num_quantiles,
-//                           size_t const num_dimensions);
-
-
-double window_averaged_mode(std::vector<double *> * points,
-                            size_t sort_dimension,
-                            size_t window_size);
 
 
 size_t marginal_quantiles_locus_bytes(size_t num_quantiles);
@@ -77,12 +33,5 @@ void print_numerical_cdfs(FILE * out_fh,
                           double * sample_points,
                           size_t num_points,
                           size_t dim);
-
-
-void add_normalized_dimension(double const* points, size_t ndim,
-                              size_t num_points,
-                              double * augmented_points_buf,
-                              std::vector<double *> * augmented_points);
-
 
 #endif // _SAMPLING_H

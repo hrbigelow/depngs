@@ -29,18 +29,38 @@ EXE = dep test_dirichlet
 .PHONY : all
 all : $(EXE)
 
-dep : $(addprefix $(OBJDIR)/, dep.o comp.o mode.o comp_functor.o		\
+dep : $(addprefix $(OBJDIR)/, dep.o comp.o comp_functor.o		\
 	simp.o simc.o bqs.o bqslocus.o bqs2jpd.o metropolis.o sampling.o	\
-	posterior.o tools.o transformation.o error_estimate.o				\
-	pileup_tools.o stats_tools.o dirichlet.o slice_sampling.o			\
-	hilbert.o simulation.o nucleotide_stats.o usage_strings.o			\
-	run_comp_or_mode.o anomaly_tools.o dist.o dist_worker.o				\
-	locus_comp.o pug.o) ../samutil/obj/file_utils.o
+	tools.o transformation.o error_estimate.o pileup_tools.o			\
+	stats_tools.o dirichlet.o slice_sampling.o hilbert.o simulation.o	\
+	nucleotide_stats.o usage_strings.o run_comp_or_mode.o				\
+	anomaly_tools.o dist.o dist_worker.o locus_comp.o pug.o vcf.o)		\
+	../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 quantile_test : quantile_test.o sampling.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
+1dhist : 1dhist.o ../samutil/obj/file_utils.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
+
+window_average : window_average.o histo.o ../samutil/obj/file_utils.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
+
+#strip_pileup : strip_pileup.o ../samutil/obj/file_utils.o
+#	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
+
+pileup_to_bindepth : obj/pileup_to_bindepth.o obj/bindepth.o ../samutil/obj/file_utils.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
+
+bindepth_to_pileup : obj/bindepth_to_pileup.o obj/bindepth.o ../samutil/obj/file_utils.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
+
+pileup_depth_stats : pileup_depth_stats.o bindepth.o histo.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lrt
+
+fasta_grep : fasta_grep.o bindepth.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
 test_dirichlet : test_dirichlet.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)

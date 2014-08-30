@@ -4,19 +4,18 @@
 #include <cstddef>
 #include <gsl/gsl_rng.h>
 
+#include "defs.h"
+
 class Dirichlet
 {
-    gsl_rng * seed;
-    double * alpha;
+    gsl_rng *seed;
+    double alpha[NUM_NUCS];
     double Zlog2;
     double alpha0; // sum of alphas
 
 public:
 
-    size_t ndim;
-    bool may_underflow;
-
-    Dirichlet(size_t ndim, bool may_underflow);
+    Dirichlet();
     ~Dirichlet();
 
     void update(double const* _alpha);

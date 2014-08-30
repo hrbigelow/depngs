@@ -14,6 +14,7 @@
 #include "stats_tools.h"
 #include "slice_sampling.h"
 #include "error_estimate.h"
+#include "defs.h"
 
 // input: the null-terminated pileup line
 // side-effects: populate the appropriate line buffer with the output
@@ -36,24 +37,9 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
                                      const char *label_string,
                                      FILE *cdfs_output_fh,
                                      pthread_mutex_t *file_writing_mutex,
-                                     double gradient_tolerance,
-                                     size_t tuning_num_points,
-                                     size_t final_num_points,
+                                     struct posterior_settings s,
                                      bool verbose) :
-    gradient_tolerance(gradient_tolerance),
-    max_modefinding_iterations(3000),
-    max_tuning_iterations(10),
-    tuning_num_points(tuning_num_points),
-    final_num_points(final_num_points),
-    autocor_max_offset(6),
-    autocor_max_value(6),
-    initial_autocor_offset(30),
-    target_autocor_offset(6),
-    num_bits_per_dim(62),
-    is_log_integrand(true),
-    initial_sampling_range(62 * 3),
-    may_underflow(true),
-    use_independence_chain_mh(true),
+    s(s),
     verbose(verbose),
     min_quality_score(min_quality_score),
     num_quantiles(num_quantiles),
@@ -67,7 +53,6 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
     std::copy(quantiles, quantiles + num_quantiles, this->quantiles);
 
     this->initial_point = { 0.25, 0.25, 0.25, 0.25 };
-    const size_t full_ndim = 4;
     const size_t truncated_ndim = 3;
 
     this->prior_alpha0 = std::accumulate(prior_alphas, prior_alphas + 4, 0.0);
@@ -77,11 +62,10 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
     this->model = new ErrorEstimate();
     this->model->set_composition_prior_alphas(prior_alphas);
     this->model->model_params = this->params;
-    this->prior = new Dirichlet(full_ndim, this->may_underflow);
-    // this->posterior = new Posterior(this->model, this->may_underflow, full_ndim);
-    this->sampler = new Metropolis(this->model, this->prior, full_ndim, 
-                                   this->use_independence_chain_mh, this->final_num_points);
-    this->slice_sampler = new SliceSampling(truncated_ndim, this->num_bits_per_dim, 1);
+    this->prior = new Dirichlet();
+    this->sampler = new Metropolis(this->model, this->prior, 
+                                   this->s.final_num_points);
+    this->slice_sampler = new SliceSampling(truncated_ndim, this->s.num_bits_per_dim, 1);
 }
 
 
@@ -112,8 +96,8 @@ void posterior_wrapper::find_mode(void)
         this->on_zero_boundary[3] = false;
     }
     else
-        this->model->find_mode_point(this->gradient_tolerance,
-                                     this->max_modefinding_iterations,
+        this->model->find_mode_point(this->s.gradient_tolerance,
+                                     this->s.max_modefinding_iterations,
                                      this->initial_point,
                                      this->on_zero_boundary,
                                      this->verbose,
@@ -128,7 +112,8 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
 {
 
     this->sampler->set_current_point(this->mode_point);
-    this->prior->set_alpha0(locus->read_depth + this->prior_alpha0);
+    // !!! 
+    this->prior->set_alpha0(locus->read_depth_high_qual + this->prior_alpha0);
 
     if (this->prior->get_alpha0() > 1)
     {
@@ -145,26 +130,27 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
     //metropolis hastings
     double proposal_mean, proposal_variance;
     size_t cumul_autocor_offset = 0;
-    const size_t full_ndim = 4;
-    double estimated_mean[full_ndim];
+    double estimated_mean[NUM_NUCS];
 
     
-    for (size_t iter = 0; iter != this->max_tuning_iterations; ++iter)
+    for (size_t iter = 0; iter != this->s.max_tuning_iterations; ++iter)
     {
         cumul_autocor_offset = 1;
         size_t current_autocor_offset = 1;
         for (size_t i = 0; i != 3; ++i)
         {
             //sample more and more thinly, starting from every 1'th
-            this->sampler->sample(this->tuning_num_points, 0, cumul_autocor_offset,
+            this->sampler->sample(this->s.tuning_num_points, 0, cumul_autocor_offset,
                                   (verbose ? & proposal_mean : NULL), // only calculate extra stats if in verbose mode
                                   (verbose ? & proposal_variance : NULL),
                                   sample_points_buf);
             
             current_autocor_offset =
                 best_autocorrelation_offset(sample_points_buf,
-                                            full_ndim, this->tuning_num_points,
-                                            this->autocor_max_offset, this->autocor_max_value);
+                                            NUM_NUCS,
+                                            this->s.tuning_num_points,
+                                            this->s.autocor_max_offset, 
+                                            this->s.autocor_max_value);
 
             if (current_autocor_offset == 1)
             {
@@ -183,8 +169,8 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
 
         //here it doesn't make sense to take all of the samples if
         //the best_autocor offset isn't 1
-        multivariate_mean(sample_points_buf, full_ndim,
-                          this->tuning_num_points, estimated_mean);
+        multivariate_mean(sample_points_buf, NUM_NUCS,
+                          this->s.tuning_num_points, estimated_mean);
 
         if (verbose)
         {
@@ -192,7 +178,7 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
                     "proposal variance: %g", cumul_autocor_offset,
                     locus->position, proposal_mean, proposal_variance);
             fprintf(stdout, ", estimated mean:");
-            for (size_t d = 0; d != full_ndim; ++d)
+            for (size_t d = 0; d != NUM_NUCS; ++d)
             {
                 fprintf(stdout, "\t%g", estimated_mean[d]);
             }
@@ -200,7 +186,7 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
             fflush(stdout);
         }
 
-        if (cumul_autocor_offset <= target_autocor_offset)
+        if (cumul_autocor_offset <= this->s.target_autocor_offset)
         {
             break;
         }
@@ -220,15 +206,16 @@ size_t posterior_wrapper::tune_ss(double *sample_points_buf)
     this->slice_sampler->Initialize();
     this->slice_sampler->sample(this->model, 
                                 this->mode_point,
-                                initial_sampling_range, 1, sample_points_buf,
-                                tuning_num_points);
+                                this->s.initial_sampling_range, 1, sample_points_buf,
+                                this->s.tuning_num_points);
     
     const size_t truncated_ndim = 3;
 
     size_t best_autocor_offset =
         best_autocorrelation_offset(sample_points_buf, truncated_ndim, 
-                                    tuning_num_points, autocor_max_offset, 
-                                    autocor_max_value);
+                                    this->s.tuning_num_points, 
+                                    this->s.autocor_max_offset, 
+                                    this->s.autocor_max_value);
     return best_autocor_offset;
 }
 
@@ -238,12 +225,12 @@ void posterior_wrapper::tune(sample_details *sd)
     // try MH first.
     sd->autocor_offset = this->tune_mh(sd->locus, sd->sample_points);
 
-    if (sd->autocor_offset <= this->target_autocor_offset)
+    if (sd->autocor_offset <= this->s.target_autocor_offset)
         sd->samp_method = METROPOLIS_HASTINGS;
     else
     {
         sd->autocor_offset = this->tune_ss(sd->sample_points);
-        sd->samp_method = (sd->autocor_offset <= this->target_autocor_offset)
+        sd->samp_method = (sd->autocor_offset <= this->s.target_autocor_offset)
             ? SLICE_SAMPLING
             : FAILED;
     }
@@ -260,7 +247,7 @@ void posterior_wrapper::sample(sample_details *sd, size_t num_points)
     case SLICE_SAMPLING:
         this->slice_sampler->sample(this->model, 
                                     this->mode_point,
-                                    this->initial_sampling_range, 
+                                    this->s.initial_sampling_range, 
                                     sd->autocor_offset,
                                     sd->sample_points,
                                     num_points);
@@ -278,10 +265,10 @@ void posterior_wrapper::sample(PileupSummary *locus, double *sample_points_buf, 
     size_t cumul_autocor_offset = this->tune_mh(locus, sample_points_buf);
     // double proposal_mean, proposal_variance;
 
-    if (cumul_autocor_offset <= this->target_autocor_offset)
+    if (cumul_autocor_offset <= this->s.target_autocor_offset)
     {
         //metropolis hastings succeeded
-        this->sampler->sample(this->final_num_points, 0, cumul_autocor_offset, NULL, NULL, sample_points_buf);
+        this->sampler->sample(this->s.final_num_points, 0, cumul_autocor_offset, NULL, NULL, sample_points_buf);
         strcpy(algorithm_used, "MH");
     }
     else
@@ -289,15 +276,15 @@ void posterior_wrapper::sample(PileupSummary *locus, double *sample_points_buf, 
         //metropolis hastings failed.  try slice sampling
         size_t best_autocor_offset = this->tune_ss(sample_points_buf);
         
-        if (best_autocor_offset <= this->target_autocor_offset)
+        if (best_autocor_offset <= this->s.target_autocor_offset)
         {
             //slice sampling succeeded
             this->slice_sampler->sample(this->model, 
                                         this->mode_point,
-                                        this->initial_sampling_range, 
+                                        this->s.initial_sampling_range, 
                                         best_autocor_offset,
                                         sample_points_buf,
-                                        this->final_num_points);
+                                        this->s.final_num_points);
             strcpy(algorithm_used, "SS");
         }
         else
@@ -357,7 +344,6 @@ void posterior_wrapper::values(double *points, size_t num_points,
 char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
 {
     char line_label[2048];
-    size_t effective_depth = sd->locus->read_depth; // !!! fix this
 
     sprintf(line_label,
             "%s\t%c\t%s\t%i\t%c\t%Zu\t%Zu",
@@ -367,7 +353,7 @@ char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
             sd->locus->position, 
             sd->locus->reference_base, 
             sd->locus->read_depth, 
-            effective_depth
+            sd->locus->read_depth_high_qual
             );
 
     const char *dimension_labels[] = { "A", "C", "G", "T" };
@@ -375,7 +361,7 @@ char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
     out_buffer = 
         print_marginal_quantiles(out_buffer,
                                  sd->sample_points,
-                                 this->final_num_points,
+                                 this->s.final_num_points,
                                  this->mode_point,
                                  line_label, 
                                  dimension_labels, 
@@ -470,29 +456,31 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     this->params->pack(&locus.counts);
     this->find_mode();
 
-    // first-pass test.  if the mode point indicates that there is no
-    // chance of a higher confidence non-reference base composition, 
-    // skip all further tests and do not output anything.
+    double 
+        test_quantile_value,
+        ref_test_quantile = 1.0 - (double)test_quantile,
+        max_test_quantile_value = 1.0 - min_test_quantile_value;
+
+    // first-pass test.  if reference-base component of mode point is
+    // too close to 1, then the test quantile value will be as well.
     const char *nucs = "ACGTacgt", *query;
     int ref_ind = (query = strchr(nucs, locus.reference_base)) ? (query - nucs) % 4 : -1;
     if (ref_ind >= 0 && 
-        this->mode_point[ref_ind] < 1.0 - min_test_quantile_value)
+        this->mode_point[ref_ind] > max_test_quantile_value)
         return out_buffer; 
 
     sample_details sd;
     sd.locus = &locus;
     sd.sample_points = sample_points_buf;
     this->tune(&sd);
-    this->sample(&sd, this->final_num_points);
+    this->sample(&sd, this->s.final_num_points);
 
     // second-pass test.
-    double d_test_quantile = (double)test_quantile;
-    double test_quantile_value;
     if (ref_ind >= 0)
         compute_marginal_quantiles(sd.sample_points,
-                                   this->final_num_points,
+                                   this->s.final_num_points,
                                    ref_ind,
-                                   &d_test_quantile,
+                                   &ref_test_quantile,
                                    1,
                                    &test_quantile_value);
 
@@ -500,7 +488,7 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     // invert the value threshold.  we want to test for distance of
     // reference base away from 1, rather than presence of
     // non-reference base.
-    if (ref_ind >= 0 && test_quantile_value >= (1.0 - min_test_quantile_value))
+    if (ref_ind >= 0 && test_quantile_value >= max_test_quantile_value)
         return out_buffer;
 
 
@@ -510,13 +498,12 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     
     if (cdfs_output_fh != NULL)
     {
-        const size_t full_ndim = 4;
         pthread_mutex_lock(file_writing_mutex);
         print_numerical_cdfs(cdfs_output_fh, 
                              this->label_string, 
                              sample_points_buf,
-                             this->final_num_points, 
-                             full_ndim);
+                             this->s.final_num_points, 
+                             NUM_NUCS);
         
         pthread_mutex_unlock(file_writing_mutex);
     }
@@ -550,13 +537,12 @@ char *posterior_wrapper::process_line_mode(const char *pileup_line,
     //                         locus, data_reader, verbose);
 
 
-    size_t effective_depth = locus.read_depth;
     this->model->locus_data = &locus.counts;
     // this->posterior->initialize(this->gradient_tolerance, this->max_modefinding_iterations, 
     //                             initial_point, verbose);
 
-    this->model->find_mode_point(this->gradient_tolerance,
-                                 this->max_modefinding_iterations,
+    this->model->find_mode_point(this->s.gradient_tolerance,
+                                 this->s.max_modefinding_iterations,
                                  this->initial_point,
                                  this->on_zero_boundary,
                                  this->verbose,
@@ -570,7 +556,7 @@ char *posterior_wrapper::process_line_mode(const char *pileup_line,
                 locus.position, 
                 locus.reference_base, 
                 locus.read_depth,
-                effective_depth,
+                locus.read_depth_high_qual,
                 this->mode_point[0],
                 this->mode_point[1],
                 this->mode_point[2],
@@ -588,7 +574,7 @@ void *comp_worker(void *args)
     wrapper_input *input = static_cast<wrapper_input *>(args);
     std::vector<char *>::iterator it;
     char **out = input->out_start;
-    double *sample_points_buf = new double[input->worker->final_num_points * 4];
+    double *sample_points_buf = new double[input->worker->s.final_num_points * 4];
     for (it = input->beg; it != input->end; ++it)
     {
         input->worker->process_line_comp(*it, *out, sample_points_buf,

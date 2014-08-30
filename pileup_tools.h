@@ -43,9 +43,13 @@ public:
     // containing gaps, and low-quality bases
     size_t read_depth; 
 
-    // reads that do not have an indel at this locus, 
-    // and have a above-threshold quality base
-    size_t read_depth_filtered; 
+    /* the subset of 'read_depth' reads that contain a matching (CIGAR
+       'M') base at this locus. */
+    size_t read_depth_match;
+
+    /* the subset of 'read_depth_match' reads that have
+       above-threshold quality score  */
+    size_t read_depth_high_qual; 
 
     int base_counts[num_base_symbols]; //ACGTNacgtn
     int base_qual_sums[num_base_symbols]; //qualities for corresponding counts

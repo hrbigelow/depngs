@@ -3,51 +3,46 @@
 
 #include <gsl/gsl_randist.h>
 
+#include "defs.h"
+
 class ErrorEstimate;
 class Dirichlet;
 
 class Metropolis
 {
 
-    ErrorEstimate * integrand;
-    Dirichlet * proposal;
+    ErrorEstimate *integrand;
+    Dirichlet *proposal;
 
-    size_t ndim;
+    double current_point[NUM_NUCS];
 
-    //if true, use 'independence chain MH sampling and thus produce
-    //proposals independent of z_tau
-    bool is_independence_chain_mh;
-    double * current_point;
-
-    gsl_rng * randgen;
+    gsl_rng *randgen;
 
  public:
 
-    double * sample_points;
+    double *sample_points;
     size_t num_points;
 
-    Metropolis(ErrorEstimate * posterior,
-               Dirichlet * dirichlet,
-               size_t ndim, 
-               bool is_independence_chain,
+    Metropolis(ErrorEstimate *posterior,
+               Dirichlet *dirichlet,
                size_t total_sample_points);
 
     ~Metropolis();
 
-    void set_current_point(double const* point);
-    double * get_current_point() const;
+    void set_current_point(const double *point);
+    double *get_current_point() const;
 
-    void propose(double const* z_tau, double * z_star);
-    double accept(double const* z_star, double const* z_tau);
+    void propose(double *z_star);
+    double accept(const double *z_star, const double *z_tau);
 
     void sample(size_t const num_samples,
                 size_t const burn_in,
                 size_t const every_nth,
-                double *const proposal_mean,
-                double *const proposal_variance,
-                double * alt_sample_points);
+                double *proposal_mean,
+                double *proposal_variance,
+                double *alt_sample_points);
     
-    double step(double const* z_tau, double * z_tau_next);
+    double step(const double *z_tau, double *z_tau_next);
     
     void tune_proposal(size_t num_points,
                        double max_tuning_iterations,
@@ -58,9 +53,9 @@ class Metropolis
 };
 
 
-void print_mean_covariance(FILE * fh, 
-                           double const* mean, 
-                           double const* covariance, 
+void print_mean_covariance(FILE *fh, 
+                           const double *mean, 
+                           const double *covariance, 
                            size_t ndim);
 
 

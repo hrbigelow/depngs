@@ -18,9 +18,7 @@ int run_comp_or_mode(size_t max_mem,
                      char const* jpd_data_params_file,
                      char const* posterior_output_file,
                      char const* cdfs_output_file,
-                     double gradient_tolerance,
-                     size_t tuning_num_points,
-                     size_t final_num_points,
+                     struct posterior_settings *pset,
                      double test_quantile,
                      double min_test_quantile_value,
                      bool verbose,
@@ -109,7 +107,6 @@ int run_comp_or_mode(size_t max_mem,
     char * chunk_buffer_out;
     char ** output_lines;
 
-    // double autocor_max_offset = 6;
     // size_t initial_autocor_offset = 30;
     
     // used for slice sampling
@@ -136,9 +133,7 @@ int run_comp_or_mode(size_t max_mem,
                                   label_string,
                                   cdfs_output_fh,
                                   & file_writing_mutex,
-                                  gradient_tolerance,
-                                  tuning_num_points,
-                                  final_num_points,
+                                  *pset,
                                   verbose);
     }
     

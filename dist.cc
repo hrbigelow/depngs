@@ -28,7 +28,7 @@ int dist_usage()
             "Options:\n\n"
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
-            "-v STRING   (optional) name of output vcf file.  If absent, do not output VCF file\n"
+            "-V STRING   (optional) name of output vcf file.  If absent, do not output VCF file\n"
             "-i STRING   (optional) name of output indel distance file.  If absent, do not perform indel distance calculation.\n"
             "-S STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
             "-y REAL     Minimum mutational distance to report as changed [0.2]\n"
@@ -42,7 +42,7 @@ int dist_usage()
 
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
-            "-V <empty>  if present, be verbose [absent]\n"
+            "-v <empty>  if present, be verbose [absent]\n"
             "\n"
             "These options affect how sampling is done.\n"
             "\n"
@@ -51,7 +51,7 @@ int dist_usage()
             "-P INT      number of random sample point pairings to estimate Sampling/Sampling distance distribution [10000]\n"
             "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
             "-I INT      maximum number of proposal tuning iterations [10]\n"
-            "-M REAL     autocorrelation maximum value [6]\n"
+            "-M REAL     autocorrelation maximum value [0.2]\n"
             "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
             "-p STRING   alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
             "-l INT      maximum length of a pileup line in bytes.  {Nuisance parameter} [100000]\n"
@@ -82,21 +82,30 @@ int main_dist(int argc, char **argv)
     size_t num_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
-    size_t tuning_num_points = 1e3;
+    struct posterior_settings pset = {
+        1e-5,   // gradient_tolerance
+        3000,   // max_modefinding_iterations
+        10,     // max_tuning_iterations
+        1000,   // tuning_num_points
+        1000,   // final_num_points
+        6,      // autocor_max_offset
+        0.2,    // autocor_max_value
+        30,     // initial_autocor_offset
+        6,      // target_autocor_offset
+        62,     // num_bits_per_dim
+        true,   // is_log_integrand
+        62 * 3  // initial_sampling_range
+    };
+
+
     size_t prelim_num_points = 1e2;
     float prelim_quantile = 0.01;
-    size_t final_num_points = 1e3;
     size_t num_sample_point_pairs = 1e4;
 
     size_t max_pileup_line_size = 1e6;
 
     int print_pileup_fields = 0;
 
-    size_t target_autocor_offset = 6;
-    size_t max_tuning_iterations = 10;
-    double gradient_tolerance = 1e-5;
-
-    double autocor_max_value = 6;
     const char *prior_alphas_file = NULL;
 
     size_t min_quality_score = 5;
@@ -118,30 +127,30 @@ int main_dist(int argc, char **argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:v:i:S:y:t:m:T:x:X:f:gP:a:I:M:z:p:q:VD:C:F:l:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:V:i:S:y:t:m:T:x:X:f:gP:a:I:M:z:p:q:vD:C:F:l:")) >= 0)
     {
         switch(c)
         {
         case 'd': dist_file = optarg; break;
         case 'c': comp_file = optarg; break;
-        case 'v': vcf_file = optarg; break;
+        case 'V': vcf_file = optarg; break;
         case 'i': indel_dist_file = optarg; break;
         case 'S': sample_pairings_file = optarg; break;
         case 'y': min_dist_to_report = atof(optarg); break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
-        case 'T': tuning_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'T': pset.tuning_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'x': prelim_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'X': prelim_quantile = atof(optarg); break;
-        case 'f': final_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'f': pset.final_num_points = static_cast<size_t>(atof(optarg)); break;
         case 'P': num_sample_point_pairs = static_cast<size_t>(atof(optarg)); break;
-        case 'a': target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
-        case 'I': max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
-        case 'M': autocor_max_value = atof(optarg); break;
-        case 'z': gradient_tolerance = atof(optarg); break;
+        case 'a': pset.target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
+        case 'I': pset.max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
+        case 'M': pset.autocor_max_value = atof(optarg); break;
+        case 'z': pset.gradient_tolerance = atof(optarg); break;
         case 'p': prior_alphas_file = optarg; break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
-        case 'V': verbose = true; break;
+        case 'v': verbose = true; break;
         case 'D': dist_quantiles_file = optarg; break;
         case 'C': comp_quantiles_file = optarg; break;
         case 'F': fastq_type = optarg; break;
@@ -372,7 +381,7 @@ int main_dist(int argc, char **argv)
                                   min_dist_to_report,
                                   prelim_num_points,
                                   prelim_quantile,
-                                  final_num_points,
+                                  pset.final_num_points,
                                   print_pileup_fields,
                                   NULL,
                                   NULL,
@@ -393,9 +402,7 @@ int main_dist(int argc, char **argv)
                                       sample_label[s],
                                       NULL,
                                       NULL,
-                                      gradient_tolerance,
-                                      tuning_num_points,
-                                      final_num_points,
+                                      pset,
                                       verbose);
         }
     }
