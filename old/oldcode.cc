@@ -2040,3 +2040,379 @@ std::pair<char, int> SimulateBaseMeasure(gsl_rng * rand_gen,
             gsl_vector_free(g);
             gsl_vector_free(r);
         }
+
+
+
+
+/*
+WeightedSample::WeightedSample(size_t const _ndim, const double *_x, const double _val, const double _weight) : 
+    ndim(_ndim), val(_val), weight(_weight)
+{ 
+    x = new double[ndim];
+    cdf = new double[ndim];
+    std::copy(_x, _x + ndim, x);
+    std::fill(cdf, cdf + ndim, -1.0);
+}
+
+WeightedSample::~WeightedSample()
+{
+    if (x != NULL && cdf != NULL)
+    {
+        delete x;
+        delete cdf;
+    }
+}
+
+WeightedSample::WeightedSample(WeightedSample const& w)
+{
+    ndim = w.ndim;
+    x = new double[w.ndim];
+    std::copy(w.x, w.x + w.ndim, x);
+    cdf = new double[w.ndim];
+    std::copy(w.cdf, w.cdf + w.ndim, cdf);
+    val = w.val;
+    weight = w.weight;
+}
+
+WeightedSample & WeightedSample::operator=(WeightedSample const& w)
+{
+    if (this != &w)
+    {
+        ndim = w.ndim;
+        x = new double[w.ndim];
+        std::copy(w.x, w.x + w.ndim, x);
+        cdf = new double[w.ndim];
+        std::copy(w.cdf, w.cdf + w.ndim, cdf);
+        val = w.val;
+        weight = w.weight;
+    }
+    return *this;
+}
+
+
+// !!! check this!
+bool WeightedSample::operator<(WeightedSample const& w) const
+{
+    if (this->ndim != w.ndim)
+    {
+        return this->ndim < w.ndim;
+    }
+    else
+    {
+        for (size_t d = 0; d != this->ndim; ++d)
+        {
+            if (this->x[d] < w.x[d])
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+
+WeightedSample::WeightedSample() : ndim(0), x(NULL), cdf(NULL), val(0.0), weight(0.0) { }
+*/
+
+
+//for sorting a 4D coordinate weighted samples vector on a given dimension
+/*
+class SortCoordinate
+{
+    size_t dimension;
+public:
+    SortCoordinate(size_t dim_) : dimension(dim_) { }
+    bool operator()(WeightedSample const* a,
+                    WeightedSample const*  b)
+    {
+        return a->x[dimension] < b->x[dimension];
+    }
+};
+
+
+class SortCDF
+{
+    size_t dimension;
+public:
+    SortCDF(size_t dim_) : dimension(dim_) { }
+    bool operator()(WeightedSample const* a,
+                    WeightedSample const* b)
+    {
+        return a->cdf[dimension] < b->cdf[dimension];
+    }
+};
+*/            
+
+
+class SortDimension
+{
+    size_t key_dimension;
+public:
+    SortDimension(size_t kd) : key_dimension(kd) { }
+    bool operator()(const double *a, const double *b)
+    {
+        return a[this->key_dimension] < b[this->key_dimension];
+    }
+};
+
+
+//find the mode of a 1D distribution as approximated from a set of sample points
+/*
+  double window_averaged_mode(std::vector<double *> *points,
+  size_t sort_dimension,
+  size_t window_size)
+  {
+  //sort sample points
+  //calculate 1/d (d being distance between point p and p + offset
+  //approximate density at current point as 1/dl + 1/dr, for left and right windows.
+  //at boundary (where a left or right window does not exist, substitute the density
+  //at the closest point.
+  size_t npoints = (*points).size();
+
+  double *density = new double[npoints];
+  std::vector<double *>::iterator start = (*points).begin();
+  std::vector<double *>::iterator end = (*points).end();
+  std::vector<double *>::iterator left;
+  std::vector<double *>::iterator right;
+
+  std::sort(start, end, SortDimension(sort_dimension));
+
+  size_t index;
+    
+  for (left = start, right = start + window_size, index = 0; right != end; 
+  ++left, ++right, ++index)
+  {
+  density[index] = 1.0 / ((*right)[sort_dimension] 
+  - (*left)[sort_dimension]);
+  }
+  //fill in the last part of density
+  std::fill(density + npoints - window_size, 
+  density + npoints,
+  density[npoints - window_size - 1]);
+
+
+  //correct density to account for left-right averaging
+  for (index = npoints - 1; index != 0; --index)
+  {
+  size_t left_index = index > window_size ? index - window_size : 0;
+  density[index] = density[index] + density[left_index];
+  }
+
+  size_t max_elem = 
+  std::distance(density, 
+  std::max_element(density, density + npoints));
+
+  delete density;
+  return (*points)[max_elem][sort_dimension];
+
+  }
+*/
+
+
+
+/*
+  void print_cdf_comparison(FILE *out_fh, 
+  AnalyticalIntegrand const* integrand,
+  double *sample_points,
+  size_t num_points,
+  const double *quantiles,
+  size_t const num_quantiles,
+  size_t const num_dimensions)
+  {
+
+  double *quantile_buffer = new double[num_quantiles *num_dimensions];
+  double **quantile_values = new double *[num_dimensions];
+
+  for (size_t d = 0; d != num_dimensions; ++d)
+  {
+  quantile_values[d] = quantile_buffer + (d *num_quantiles);
+  compute_marginal_quantiles(sample_points, num_points, 
+  d, quantiles, 
+  num_quantiles, quantile_values[d]);
+  }
+
+  for (size_t q = 0; q != num_quantiles; ++q)
+  {
+  //         fprintf(out_fh, "");
+  for (size_t d = 0; d != num_dimensions; ++d)
+  {
+            
+  double inverse_cdf = integrand->inv_marginal_cdf(quantiles[q], d);
+  double quantile_est = integrand->marginal_cdf(quantile_values[d][q], d);
+            
+  fprintf(out_fh, "\t%10.8f\t%10.8f\t%10.8f\t%10.8f", 
+  quantiles[q],
+  quantile_est - quantiles[q],
+  inverse_cdf,
+  quantile_values[d][q] - inverse_cdf);
+  }
+  fprintf(out_fh, "\n");
+        
+  }
+  delete quantile_buffer;
+  delete quantile_values;
+  }
+*/
+
+
+struct WeightedSample
+{
+    size_t ndim;
+    double *x;
+    double *cdf; //uninitialized
+    double val;
+    double weight;
+
+    WeightedSample(size_t const _ndim, double const * _x, double const _val, double const _weight);
+    ~WeightedSample();
+    WeightedSample(WeightedSample const& w);
+    WeightedSample & operator=(WeightedSample const& w);
+    WeightedSample();
+    bool operator<(WeightedSample const& w) const;
+    
+};
+
+
+
+
+typedef std::map<WeightedSample, WeightedSample> WEIGHTED_SAMPLE_MAP;
+
+//initialize all distributions from the counts_map.  counts_map
+//is not necessarily normalized.  any entries in this stats object
+//without corresponding entries in counts_map are regarded as having
+//zero counts
+
+// fields initialized are:
+// jpd_buffer, index_mapping, name_mapping, complete_jpd, founder_base_marginal,
+// founder_base_likelihood
+/*
+void NucleotideStats::initialize(JPD_DATA const& counts_map)
+{
+    size_t D = Nucleotide::num_bqs;
+
+    JPD_DATA::const_iterator cit;
+    std::fill(this->jpd_buffer, this->jpd_buffer + (4 * D), 0.0);
+
+    size_t datum_index;
+    for (cit = counts_map.begin(), datum_index = 0; 
+         cit != counts_map.end(); 
+         ++cit, ++datum_index)
+    {
+        // this->index_mapping[datum_index] = (*cit).first;
+        // this->name_mapping[(*cit).first] = datum_index;
+        for (size_t b = 0; b != 4; ++b)
+        {
+            this->complete_jpd[b][datum_index] = (*cit).second.data[b];
+        }
+    }
+    
+    normalize(this->jpd_buffer, 4 * D, this->jpd_buffer);
+    
+    for (size_t b = 0; b != 4; ++b)
+    {
+        this->founder_base_marginal[b] =
+            std::accumulate(this->complete_jpd[b],
+                            this->complete_jpd[b] + D, 0.0);
+    }
+    
+    for (size_t b = 0; b != 4; ++b)
+    {
+        for (size_t di = 0; di != D; ++di)
+        {
+            this->founder_base_likelihood[b][di] =
+                this->complete_jpd[b][di]
+                / this->founder_base_marginal[b];
+        }
+    }
+    
+}
+*/
+
+
+ /*
+JPD_DATA parse_jpd_rdb_file(char const* rdb_file);
+
+
+void NucleotideStats::initialize_from_file(char const* rdb_file)
+{
+    JPD_DATA raw_counts = parse_jpd_rdb_file(rdb_file);
+    this->initialize(raw_counts);
+}
+ */
+
+
+//creates a new NucleotideStats object with the same data set
+//as the calling one, but with a marginal distribution of observed data
+//reflected by 'locus', but the shape P(fb|obs) of the calling object
+/*
+JPD_DATA
+NucleotideStats::make_per_locus_stats(PileupSummary const& locus)
+{
+    JPD_DATA counts_map;
+    for (size_t di = 0; di != this->num_distinct_data; ++di)
+    {
+        double zero_counts[] = { 0, 0, 0, 0 };
+        counts_map.insert(std::make_pair(this->index_mapping[di], nuc_frequency(zero_counts)));
+    }
+
+    double locus_slice[4];
+    for (size_t raw_index = 0; raw_index != locus.num_distinct_data; ++raw_index)
+    {
+        size_t di = locus.stats_index[raw_index];
+        double orig_marginal = 
+            this->complete_jpd[0][di]
+            + this->complete_jpd[1][di]
+            + this->complete_jpd[2][di]
+            + this->complete_jpd[3][di];
+
+        double adjust_factor;
+        if (orig_marginal == 0)
+        {
+            assert(locus.raw_counts[raw_index] == 0);
+            adjust_factor = 1.0;
+        }
+        else
+        {
+            adjust_factor = locus.raw_counts[raw_index] / orig_marginal;
+        }
+
+        //double adjust_factor = 1.0;
+        for (size_t bi = 0; bi != 4; ++bi)
+        {
+            locus_slice[bi] = this->complete_jpd[bi][di] * adjust_factor;
+        }
+        counts_map.erase(this->index_mapping[di]);
+        counts_map.insert(std::make_pair(this->index_mapping[di], nuc_frequency(locus_slice)));
+    }
+    return counts_map;
+}
+*/
+
+
+ // !!! check this.
+ // the nuc_frequency array is indexed according to locus.stats_index
+ /*
+nuc_frequency *
+NucleotideStats::per_locus_stats(packed_counts & locus)
+{
+    nuc_frequency * new_stats = new nuc_frequency[locus.num_distinct_data];
+
+    for (size_t r = 0; r != pc.num_distinct_data; ++r)
+    {
+        size_t c = locus.stats_index[r];
+        double marg =
+            this->complete_jpd[0][c]
+            + this->complete_jpd[1][c]
+            + this->complete_jpd[2][c]
+            + this->complete_jpd[3][c];
+        double adjust_factor = (marg == 0) ? 1.0 : locus.raw_counts[r] / marg;
+
+        for (size_t bi = 0; bi != 4; ++bi)
+        {
+            new_stats[c].data[bi] = this->complete_jpd[bi][di] * adjust_factor;
+        }
+
+    }
+    return new_stats;
+}
+ */

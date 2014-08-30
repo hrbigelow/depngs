@@ -70,13 +70,13 @@ void ErrorEstimate::log_likelihood_gradient(const double *comp,
     //sum_g(frac{1}{ln(2)P(I|C)} P(b|C))
 
     // iterate over each bqs category
-    __m256d vc, vl, vg, vm;
+    // __m256d vc, vl, vg, vm;
     
     for (; l != l_end; l += 4, lc++)
     {
-        vc = _mm256_loadu_pd(comp);
-        vl = _mm256_loadu_pd(l);
-        vm = __builtin_ia32_mulpd256(vc, vl);
+        // vc = _mm256_loadu_pd(comp);
+        // vl = _mm256_loadu_pd(l);
+        // vm = __builtin_ia32_mulpd256(vc, vl);
        
         double so =
             l[0] * comp[0] 

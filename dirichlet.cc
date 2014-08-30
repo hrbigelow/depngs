@@ -21,7 +21,7 @@ Dirichlet::~Dirichlet()
 }
 
 
-void Dirichlet::update(double const* _alpha)
+void Dirichlet::update(const double *_alpha)
 {
     std::copy(_alpha, _alpha + NUM_NUCS, this->alpha);
     this->alpha0 = 0;
@@ -45,7 +45,7 @@ void Dirichlet::set_alpha0(double alpha0)
 }
 
 
-void Dirichlet::set_alphas_from_mode(double const* mode)
+void Dirichlet::set_alphas_from_mode(const double *mode)
 {
     for (size_t d = 0; d != NUM_NUCS; ++d)
     {
@@ -72,8 +72,8 @@ void Dirichlet::set_alphas_from_mode(double const* mode)
 
    2) otherwise it is concave in that dimension
  */
-void Dirichlet::set_alphas_from_mode_or_bound(double const* mode_or_peak,
-                                              double const* alpha_lower_bound,
+void Dirichlet::set_alphas_from_mode_or_bound(const double *mode_or_peak,
+                                              const double *alpha_lower_bound,
                                               bool const* is_zero_boundary)
 {
     size_t num_observed_dims = 0;
@@ -99,15 +99,15 @@ void Dirichlet::set_alphas_from_mode_or_bound(double const* mode_or_peak,
 
 
 
-void Dirichlet::set_alphas_from_mean(double const* mean)
+void Dirichlet::set_alphas_from_mean(const double *mean)
 {
     for (size_t d = 0; d != NUM_NUCS; ++d)
         this->alpha[d] = mean[d] * this->alpha0;
 }
 
 
-void Dirichlet::set_alphas_from_mean_or_bound(double const* mean,
-                                              double const* lower_bound)
+void Dirichlet::set_alphas_from_mean_or_bound(const double *mean,
+                                              const double *lower_bound)
 {
     this->set_alphas_from_mean(mean);
     this->lower_bound_alphas(lower_bound);
@@ -117,7 +117,7 @@ void Dirichlet::set_alphas_from_mean_or_bound(double const* mean,
 //up-adjust alphas that are less than the lower_bound given
 //re-adjust all other alphas, keeping ratios intact, so that
 //the sum-of-alphas coincides with alpha0
-void Dirichlet::lower_bound_alphas(double const* lower_bound)
+void Dirichlet::lower_bound_alphas(const double *lower_bound)
 {
     double qual_alpha0 = 0.0;
     double new_alpha0 = 0.0;
@@ -145,7 +145,7 @@ void Dirichlet::lower_bound_alphas(double const* lower_bound)
 }
 
 
-double Dirichlet::pdf(double const* x)
+double Dirichlet::pdf(const double *x)
 {
     return gsl_ran_dirichlet_pdf(NUM_NUCS, this->alpha, x);
 }
@@ -183,27 +183,27 @@ ran_dirichlet_lnpdf(const size_t K,
 }
 
 
-double Dirichlet::log_pdf(double const* x)
+double Dirichlet::log_pdf(const double *x)
 {
     return Transformation::log_dirichlet(this->alpha, x);
 }
 
 
-double Dirichlet::log2_pdf(double const* x)
+double Dirichlet::log2_pdf(const double *x)
 {
     return Transformation::log2_dirichlet(this->alpha, x);
 }
 
 
 // generates a sample point from the 4-D dirichlet distribution
-void Dirichlet::sample(double * x_star) const
+void Dirichlet::sample(double *x_star) const
 {
     gsl_ran_dirichlet(seed, NUM_NUCS, this->alpha, x_star);
 }
 
 
-void Dirichlet::sample_conditioned(double const* x_tau, 
-                                   double * x_star)
+void Dirichlet::sample_conditioned(const double *x_tau, 
+                                   double *x_star)
 {
     this->set_alphas_from_mode(x_tau);
     gsl_ran_dirichlet(seed, NUM_NUCS, this->alpha, x_star);

@@ -8,6 +8,8 @@
 class ErrorEstimate;
 class Dirichlet;
 
+struct mh_metric;
+
 class Metropolis
 {
 
@@ -42,7 +44,9 @@ class Metropolis
                 double *proposal_variance,
                 double *alt_sample_points);
     
-    double step(const double *z_tau, double *z_tau_next);
+    double step(struct mh_metric **z_tau, struct mh_metric **z_nxt);
+
+    double step_old(const double *z_tau, double *z_tau_next);
     
     void tune_proposal(size_t num_points,
                        double max_tuning_iterations,

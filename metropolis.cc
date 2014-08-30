@@ -8,12 +8,13 @@
 #include <algorithm>
 #include <ctime>
 #include <vector>
+#include <string.h>
 
 #include "sampling.h"
 #include <gsl/gsl_statistics_double.h>
 
-Metropolis::Metropolis(ErrorEstimate * integrand,
-                       Dirichlet * proposal,
+Metropolis::Metropolis(ErrorEstimate *integrand,
+                       Dirichlet *proposal,
                        size_t num_points) 
     : integrand(integrand), 
       proposal(proposal), 
@@ -40,8 +41,14 @@ void Metropolis::propose(double *z_star)
     this->proposal->sample(z_star);
 }
 
+struct mh_metric
+{
+    double x[NUM_NUCS];
+    double log_ratio_ivp; // integrand vs. proposal
+};
 
-double Metropolis::accept(double const* z_star, double const* z_tau)
+
+double Metropolis::accept(const double *z_star, const double *z_tau)
 {
     double ratio;
 
@@ -69,14 +76,55 @@ double Metropolis::accept(double const* z_star, double const* z_tau)
 
 
 
-void Metropolis::set_current_point(double const* point)
+void Metropolis::set_current_point(const double *point)
 {
     std::copy(point, point + NUM_NUCS, current_point);
 }
 
 
+// pre-condition: **z_tau is the current point, **z_nxt is scratch
+// space.  post-condition: **z_tau is the updated current point, which
+// is either the same as it was before if the proposal was rejected,
+// or it is new.  **z_nxt is again valid scratch space. returns the
+// proposal value that was used in the accept/reject logic.
+double Metropolis::step(mh_metric **z_tau, mh_metric **z_nxt)
+{
+
+    this->propose((*z_nxt)->x);
+    (*z_nxt)->log_ratio_ivp = 
+        this->integrand->log_pdf((*z_nxt)->x)
+        - this->proposal->log_pdf((*z_nxt)->x);
+
+    double ratio_log = 
+        (*z_nxt)->log_ratio_ivp 
+        - (*z_tau)->log_ratio_ivp;
+
+    assert(! isnan(ratio_log));
+
+    // may be infinite.  this is okay
+    double proposal_value = exp(ratio_log);
+
+    mh_metric *tmp;
+    if (proposal_value > gsl_rng_uniform(this->randgen))
+    {
+        tmp = *z_tau;
+        *z_tau = *z_nxt;
+        *z_nxt = tmp;
+    }
+
+    return proposal_value;
+
+}
+
+
+
 //do we need to record the y values here?
-double Metropolis::step(double const* z_tau, double * z_tau_next)
+// here, z_star is scratch space.  
+// z_tau is unchanged.
+// z_tau_next is assumed to be
+// uninitialized, and will be initialized after this call, either
+// with the new proposed value (z_star), or the previous value (z_tau)
+double Metropolis::step_old(const double *z_tau, double *z_tau_next)
 {
 
     //update the markov chain at each step.
@@ -112,6 +160,7 @@ double Metropolis::step(double const* z_tau, double * z_tau_next)
 }
 
 
+
 // sample from the integrand using the Metropolis algorithm.
 // populates the sample buffer.  if alt_sample_points are provided,
 // use those instead of internal.  if proposal_mean and
@@ -142,16 +191,25 @@ Metropolis::sample(size_t num_samples_to_take,
     double proposal_value;
     size_t step_count = 0;
 
-    double z_tau[NUM_NUCS], z_star[NUM_NUCS];
+    // scratch space
+    struct mh_metric m1, m2;
 
-    std::copy(this->current_point, this->current_point + NUM_NUCS, z_tau);
+    mh_metric *z_tau = &m1, *z_star = &m2;
+
+    // std::copy(this->current_point, this->current_point + NUM_NUCS, z_tau->x);
+    memcpy(z_tau->x, this->current_point, sizeof(double) * NUM_NUCS);
+    z_tau->log_ratio_ivp = 
+        this->integrand->log_pdf(z_tau->x)
+        - this->proposal->log_pdf(z_tau->x);
+
+
     double *proposal_values = NULL;
     if (proposal_mean)
         proposal_values = new double[num_samples_to_take];
 
     while (point != point_end)
     {
-        proposal_value = this->step(z_tau, z_star);
+        proposal_value = this->step(&z_tau, &z_star);
 
         if (proposal_mean && step_count < num_samples_to_take)
             proposal_values[step_count] = 
@@ -159,14 +217,12 @@ Metropolis::sample(size_t num_samples_to_take,
 
         if (step_count > burn_in && step_count % every_nth == 0)
         {
-            std::copy(z_tau, z_tau + NUM_NUCS, point);
+            memcpy(point, z_tau->x, sizeof(double) * NUM_NUCS);
+            // std::copy(z_tau->x, z_tau->x + NUM_NUCS, point);
             point += NUM_NUCS;
         }
 
         ++step_count;
-
-        //update current position
-        std::copy(z_star, z_star + NUM_NUCS, z_tau);
 
     }
 
@@ -176,7 +232,8 @@ Metropolis::sample(size_t num_samples_to_take,
         *proposal_variance = gsl_stats_variance_m(proposal_values, 1, num_samples_to_take, *proposal_mean);
     }
 
-    this->set_current_point(z_tau);
+    memcpy(this->current_point, z_tau->x, sizeof(double) * NUM_NUCS);
+    // this->set_current_point(z_tau);
 
     if (proposal_values) 
         delete proposal_values;
@@ -184,17 +241,19 @@ Metropolis::sample(size_t num_samples_to_take,
 
 
 
+
+
 //  other support functions
-void print_mean_covariance(FILE * fh, double const* mean, 
-                           double const* covariance)
+void print_mean_covariance(FILE *fh, const double *mean, 
+                           const double *covariance)
 {
     for (size_t d1 = 0; d1 != NUM_NUCS; ++d1)
     {
         fprintf(fh, "%20.18g\t", mean[d1]);
+
         for (size_t d2 = 0; d2 != NUM_NUCS; ++d2)
-        {
             fprintf(fh, "\t%20.18g", covariance[d1 * NUM_NUCS + d2]);
-        }
+
         fprintf(fh, "\n");
     }
 }
