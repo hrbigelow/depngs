@@ -1,0 +1,197 @@
+Suppose you have two normalized distributions P(x) and Q(x) and you
+want to compute marginal CDFs of R(x) = P(x)Q(x).  Furthermore, P(x)
+is concave (think ~Dir({0.1, 0.1, 0.1, 0.1})) and Q(x) is convex
+(similar to a Dirichlet with alphas greater than 1.
+
+The approach consists of first defining a region in the simplex where
+the density P(x)/Q(x) > 1 and outside this, where P(x)/Q(x) < 1.  In
+the first region, we want to generate sample points from P(x) and
+weight them by Q(x).  In the second region, generate sample points
+from Q(x) and weight them by P(x).
+
+Stepping back a bit: Although the CDF FP(x) approaches its true shape
+in the limit of a large number of points, the local error is worse in
+regions of the simplex where the density is low and thus the points
+are sparse.
+
+In a certain sense, the error in the shape of an ordinary CDF using
+unweighted (equally weighted) sample points, at a given location in
+the domain, will be proportional to the density of the distribution in
+that domain.  The lesser the density in a region, the more noisy the
+estimate.
+
+But, just as the error is proportional to the sparseness of points, it
+is also proportional to the weight of the points.
+
+So, intuitively, what we want to avoid is to use any sample points
+that are sparsely distributed and highly weighted.  This will happen
+where P(x)/Q(x) < 1.  So, in these cases, we want to use Q(x) as the
+sampling region.
+
+A further assumption is that all four marginals of P(x) are also
+concave, and all four marginals of Q(x) are convex.
+
+
+
+Assume a set of sample points drawn from P(x) and then assigned a pair
+of weights, P(x) and Q(x), and then normalized so that the sum of
+p weights equals 1 and the sum of q weights equals 1.
+
+Assume a second set produced in the same way but with the roles of
+P(x) and Q(x) switched.
+
+Taken separately, the P(*) distribution could be used to find the
+center and periphery, or the Q(*) distribution could be used.
+
+The P(*) distribution with normalized q weights represents a valid
+CDF-generating set.  However, the normalized p weights are NOT 
+
+
+
+Then, P(x)/Q(x) = p(x)/q(x) * (Zq/Zp)
+
+p(x)/q(x) = P(x)/Q(x) * zr
+
+P(x)/Q(x) < 1 means
+p(x)/q(x) / zr < 1 means
+p(x)/q(x) < zr
+
+
+So, given a set of points from P or Q, there is no reason not to use
+both sets of points to find the cut-points.
+
+Initialize max[] = {0, 0, 0, 0}
+For each point:
+  For each dim d:
+    if Q(x)/P(x) > 1, set max[d] = max(max[d], p.x[d])
+
+At the end of this, all points in which Q(x)/P(x) > 1 are guaranteed
+to reside in the subregion of the simplex {[0,max[n]]} over n.  It is
+still not clear how many points having P(x)/Q(x) > 1 will still reside
+in this region, but there may be many.
+
+Generation of CDFs
+
+Sweep through union of P(*) points in periphery and Q(*) points in the
+interior.  For the P(*) points, use q(x) / Zq as the weight.  For Q(*)
+points, use p(x) / Zp, to compute the CDF.
+
+Now, generate the CDFs.  In each dimension, traverse the points in
+order along that dimension.
+
+Gather the subset of P(*) points in the periphery, and Q(*) points in
+the interior.
+
+Now that you have the points, calculate the CDF by adding up the
+normalized weights:
+
+The first set of points is distributed from P(*) and is used as the
+basis for estimating zp.  Likewise for Q(*).
+
+So, 
+
+if the point is from P(*), you want to weight it by s->o / zq.  If
+from Q(*), weight by s->o / zp.  Problem is you don't know which type
+of point you have.
+
+Is it better to normalize s->o or just store 
+
+
+Sample-based estimate of Normalization constant
+
+Assume the normalized distribution P(x), and a sample-generating
+distribution p(x), such that:
+
+P(x) = zp(x)
+
+We would like to find z.
+
+The domain of x here is the 4-simplex with volume V.  Each sample
+point is centered around a sub-volume, where all N sub-volumes
+constitute V (a 'tesselation' if you like).  One notional definition
+of "fair sample points" is that one can estimate the total mass of the
+density in the sub-volume as volume times density, where the estimate
+of the density over that subvolume is taken to be constant and having
+the value of the density at that point.
+
+Taking total mass to be 1, each sub-volume contributes 1/N mass.  And,
+volume = mass/density, so by summing over sub-volumes, we have:
+
+sum_i{(1/N) / P(x_i)} = V
+sum_i{(1/N) / (zp(x_i)} = V
+(1/Nz) sum_i{1/p(x_i)} = V
+
+z = (1/NV) sum_i{1/p(x_i)}
+  ~ (1/N) sum_i{1/p(x_i)}
+  = avg_i{1/p(x_i)}
+
+
+Finally, since we are comparing different distributions always in the
+same simplex, V remains constant and we can ignore it.
+
+So, Thus, E[1/p(x_i)] = z.  We would like to identify the subregion of
+the simplex where 1/p(x_i) is less than 0.1z.  This is the region of
+"high density"
+
+
+
+
+Goal is to use the sample points in the largest region such that
+all sample points have a step size less than 10x of the average
+step size.
+
+Procedure:
+
+1.  Assume N sample points from P(*) and another N from Q(*).
+
+2.  Assume each point has two weights on it.  The 'd' weight is
+    the value of the distribution that it came from.  The 'o'
+    weight is the value of the 'other' distribution.  Both the
+    'd' and 'o' are normalized in the sense that they are values
+    from a normalized density.
+
+3.  Conceptually, define the subregion of the simplex in which
+    P(x_i) < 10.  That is, on average, don't use a point if it
+    has more than 10x of the typical weight on it.  This will
+    avoid large vertical steps in the resulting CDF.
+
+4.  Now, we have the remainder of the volume, where P(x_i) > 10.
+    Now, the question is, what part of this is suitable to use to
+    estimate the remainder?  Suppose you look for the set of
+    sample points of P(*) in this region and look at the value of
+    Q(x_i), requiring that Q(x_i) < 10.  What to do if the points
+    are excluded?
+
+
+Step 3 is flawed.  We don't care about the absolute value of
+P(x_i), only the value among the points in which we are sampling.
+
+
+One option is as follows:
+
+1.  Sort all points x_i from Q(*) descending by value of P(x_i).
+
+threshold = 10/N.
+p = sorted_points;
+n = N
+while (p->weight > 10/n && n)
+{
+    --n;
+    ++p;
+}
+
+
+At this point, the subregion is well defined, since it is still
+defined in terms of a threshold on P()
+
+The remainder of the space though does not guarantee in any way
+that the sampling will be quiet (i.e. non-noisy).
+
+In the remainder of the space, repeat the thresholding procedure,
+but this time, iterate over the subset of points from P(*),
+sorted descending by value of Q(x_i).  Find a threshold so that
+the largest weight is < 10/n.
+
+Finally, what do we have left?  A subregion where both P(*) and
+Q(*) are large.
+
