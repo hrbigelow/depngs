@@ -136,7 +136,7 @@ size_t FastqTypeOffset(FastqType ftype)
     size_t offset = 0;
     switch(ftype)
     {
-    case Sanger: offset = 33; break;
+    case Sanger: case Illumina18: offset = 33; break;
     case Solexa: case Illumina13: case Illumina15: offset = 64; break;
     case None: offset = 0; break;
     }
@@ -144,18 +144,39 @@ size_t FastqTypeOffset(FastqType ftype)
 }
 
 
+static struct {
+    const char *type;
+    int offset;
+} fastq_offsets[] = { 
+    { "Sanger", 33 },
+    { "Illumina18", 33 },
+    { "Solexa", 64 },
+    { "Illumina13", 64 },
+    { "Illumina15", 64 }
+};
+
+int fastq_type_to_offset(const char *type)
+{
+    unsigned i;
+    for (i = 0; i != sizeof(fastq_offsets) / sizeof(fastq_offsets[0]); ++i)
+        if (! strcmp(type, fastq_offsets[i].type)) return fastq_offsets[i].offset;
+    return -1;
+}
+
 //determine the fastq type from the string of quality_codes
+/*
 FastqType get_fastq_type(char const* quality_codes)
 {
     char const* qual;
 
     //try to eliminate other files by finding
-    bool file_types[] = { true, true, true, true, true };
+    bool ft[] = { true, true, true, true, true };
     char const* min_qualcodes = "!;@B#";
     char const* bound_qualcodes = "JiiiK";
+    int f;
 
-    bool legal_values[5][256];
-    for (size_t st = 0; st != 5; ++st)
+    bool legal_values[sizeof(ft) / sizeof(ft[0])][256];
+    for (size_t st = 0; st != sizeof(ft) / sizeof(ft[0]); ++st)
     {
         for (size_t vt = 0; vt != 256; ++vt)
         {
@@ -168,32 +189,34 @@ FastqType get_fastq_type(char const* quality_codes)
     FastqType file_type = None;
 
     for (qual = quality_codes; *qual != '\0'; ++qual)
-    {
-        for (size_t qc = 0; qc != 4; ++qc)
+        for (size_t qc = 0; qc != sizeof(ft) / sizeof(ft[0]); ++qc)
         {
-            file_types[qc] = 
-                file_types[qc] && legal_values[qc][static_cast<size_t>(*qual)];
+            ft[qc] = 
+                ft[qc] && legal_values[qc][static_cast<size_t>(*qual)];
         }
-    }
-    if (file_types[0] && ! (file_types[1] || file_types[2] || file_types[3] || file_types[4]))
-    {
+
+    if (ft[0] && ! (ft[1] || ft[2] || ft[3] || ft[4]))
         file_type = Sanger;
-    }
-    else if ((file_types[1] || file_types[2] || file_types[3]) && 
-             ! (file_types[0] || file_types[4]))
-    {
+
+    else if ((ft[1] || ft[2] || ft[3]) && ! (ft[0] || ft[4]))
         file_type = Solexa;
-    }
-    else if (file_types[4])
-    {
+
+    else if (ft[4])
         file_type = Sanger;
-    }
+
     else
     {
+        fprintf(stderr, "Error: get_fastq_type: found quality codes:\n%s\n"
+                "in this file which does not match any of the known quality code ranges.\n"
+                "The valid ranges of quality codes are\n", quality_codes);
+        for (f = 0; f != sizeof(ft) / sizeof(ft[0]); ++f)
+            fprintf(stderr, "%s: %c to %c\n", 
+                    fastq_type_strings[f], min_qualcodes[f], bound_qualcodes[f] - 1);
         //do nothing
     }
     return file_type;
 }
+*/
 
 //Translates Phred quality into error probability
 float QualityToErrorProb(int quality)

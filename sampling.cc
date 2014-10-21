@@ -147,37 +147,43 @@ void print_numerical_cdfs(FILE *out_fh,
 {
     // reshape sample_points so each dimension is held together
     double **dim_points = new double*[num_points * ndim];
-    double **end = dim_points + (num_points * ndim);
+    size_t *ranks = new size_t[num_points * ndim];
+    size_t d;
+
     double **p = dim_points;
-    for (size_t d = 0; d != ndim; ++d)
+    size_t *r = ranks;
+
+    for (d = 0; d != ndim; ++d)
     {
         double *ps = sample_points + d;
+        double **end = p + num_points;
         for ( ; p != end; ++p, ps += 4)
-        {
             *p = ps;
-        }
     }
-
+    
     p = dim_points;
     less_ptr lp;
-    for (size_t d = 0; d != ndim; ++d, p += num_points)
-    {
+    for (d = 0; d != ndim; ++d, p += num_points)
         std::sort(p, p + num_points, lp);
-    }
 
+    // compute ranks
+    p = dim_points;
+    r = ranks;
+    for (d = 0; d != ndim; ++d, r += num_points)
+        for (size_t pi = 0; pi != num_points; ++pi)
+            r[(*p++ - (sample_points + d)) / 4] = pi;
+    
     for (size_t pi = 0; pi != num_points; ++pi)
     {
-        fprintf(out_fh, "%Zu\t%s\n", pi, label);
-        for (size_t d = 0; d != ndim; ++d)
-        {
-            fprintf(out_fh, "\t%20.18f", sample_points[num_points * d + pi]);
-        }
-        for (size_t d = 0; d != ndim; ++d)
-        {
-            fprintf(out_fh, "\t%Zu", std::distance(sample_points + (num_points * d) + pi,
-                                                   p[num_points * d + pi]));
-        }
+        fprintf(out_fh, "%Zu\t%s", pi, label);
+        for (d = 0; d != ndim; ++d)
+            fprintf(out_fh, "\t%20.18f", sample_points[ndim * pi + d]);
+
+        for (d = 0; d != ndim; ++d)
+            fprintf(out_fh, "\t%Zu", ranks[num_points * d + pi]);
+
         fprintf(out_fh, "\n");
     }
     delete dim_points;
+    delete ranks;
 }

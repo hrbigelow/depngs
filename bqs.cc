@@ -13,7 +13,7 @@ int bqs_usage()
             "Options:\n\n"
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [100000000]\n"
-            "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
+            // "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
             );
     return 1;
 }
@@ -66,25 +66,23 @@ int main_bqs(int argc, char ** argv)
     char c;
     size_t num_threads = 1;
     size_t max_mem = 100000000;
-    char const* fastq_type = "None";
+    // char const* fastq_type = "None";
 
-    while ((c = getopt(argc, argv, "t:m:F:")) >= 0)
+    while ((c = getopt(argc, argv, "t:m:")) >= 0)
     {
         switch(c)
         {
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
-        case 'F': fastq_type = optarg; break;
+        // case 'F': fastq_type = optarg; break;
         default: return bqs_usage(); break;
         }
     }
     if (argc - optind != 2)
-    {
         return bqs_usage();
-    }
 
-    char * pileup_input_file = argv[optind];
-    char * bqs_output_file = argv[optind + 1];
+    char *pileup_input_file = argv[optind];
+    char *bqs_output_file = argv[optind + 1];
     size_t min_quality_score = 0;
 
     //initialize fastq_type;
@@ -92,28 +90,18 @@ int main_bqs(int argc, char ** argv)
     size_t chunk_size = max_mem;
     char * chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = None;
-    if (strcmp(fastq_type, "Sanger") == 0) { ftype = Sanger; }
-    else if (strcmp(fastq_type, "Solexa") == 0) { ftype = Solexa; }
-    else if (strcmp(fastq_type, "Illumina13") == 0) { ftype = Illumina13; }
-    else if (strcmp(fastq_type, "Illumina15") == 0) { ftype = Illumina15; }
-    else { ftype = None; }
-
-    if (ftype == None)
+    int offset = fastq_offset(pileup_input_file, chunk_buffer_in, chunk_size);
+    if (offset == -1)
     {
-        ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
-        if (ftype == None)
-        {
-            fprintf(stderr, "Error: Couldn't determine quality scale for pileup input file %s\n",
-                    pileup_input_file);
-            exit(1);
-        }
+        fprintf(stderr, "dep bqs: Cannot continue.\n");
+        return 1;
     }
 
-    PileupSummary::SetFtype(ftype);
+    PileupSummary::set_offset(offset);
     
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
     FILE * bqs_output_fh = open_if_present(bqs_output_file, "w");
+    
     
     char * last_fragment;
     size_t max_pileup_line_size = 1000000; // !!! fix this

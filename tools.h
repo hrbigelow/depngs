@@ -196,13 +196,15 @@ enum FastqType {
     Solexa, // 64
     Illumina13, // 64
     Illumina15, // 64
+    Illumina18, // 33
     None // 0
 };
 
 
-
 size_t FastqTypeOffset(FastqType ftype);
 
+
+int fastq_type_to_offset(const char *type);
 
 //determine the fastq type from the string of quality_codes
 FastqType get_fastq_type(char const* quality_codes);

@@ -392,7 +392,7 @@ double locus_anomaly_score(Posterior & posterior,
 /*
   ErrorEstimate simulation_model;
   simulation_model.set_model_params(& global_params);
-  simulation_model.set_composition_prior_alphas(prior_alphas);
+  simulation_model.set_prior_alphas(prior_alphas);
 
   double * log_simulated_modes = new double[nsim_loci];
   for (size_t si = 0; si != nsim_loci; ++si)

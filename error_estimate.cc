@@ -8,44 +8,23 @@
 #include <gsl/gsl_blas.h>
 #include <gsl/gsl_sf_exp.h>
 #include <gsl/gsl_math.h>
+#include <gsl/gsl_randist.h>
 
-#include "dirichlet.h"
 #include "transformation.h"
 #include "nucleotide_stats.h"
 #include "stats_tools.h"
 
 #include <immintrin.h>
 
-double expansion_rows_global[3][3] = { 
-    { 1., 1., 1. }, 
-    { 0., 2., 1. }, 
-    { 0., 0., 3. } 
-};
-
-const double expansion_determinant = 6.0;
-const double contraction_determinint = 1.0 / 6.0;
-
-double contraction_rows_global[3][3] = { 
-    { 1., -0.5, -1.0/6.0 }, 
-    { 0., 0.5, -1.0/6.0 }, 
-    { 0., 0., 1.0/3.0 } 
-};
-
-
 ErrorEstimate::ErrorEstimate()
 {
-    //create matrices for transformations
-    std::fill(this->composition_prior_alphas,
-              this->composition_prior_alphas + 4, 1.0);
-
-    memcpy(expansion_rows, expansion_rows_global, 9 * sizeof(double));
-    memcpy(contraction_rows, contraction_rows_global, 9 * sizeof(double));
+    std::fill(this->prior_alpha, this->prior_alpha + 4, 1.0);
 }
 
 
-void ErrorEstimate::set_composition_prior_alphas(const double *alphas)
+void ErrorEstimate::set_prior_alphas(const double *alphas)
 {
-    std::copy(alphas, alphas + 4, this->composition_prior_alphas);
+    std::copy(alphas, alphas + 4, this->prior_alpha);
     this->uniform_prior = 
         alphas[0] == 1.0
         && alphas[1] == 1.0
@@ -90,49 +69,6 @@ void ErrorEstimate::log_likelihood_gradient(const double *comp,
         gradient[3] += (*lc) * l[3] / so;
     }
 }
-
-
-//calculate d/dC ( log P(C,I_1,...,I_D) )
-/*
-void ErrorEstimate::log_likelihood_gradient(const double *comp,
-                                            double *gradient) const
-{
-
-    std::fill(gradient, gradient + 4, 0.0);
-
-    double *l = this->locus_data->fbqs_cpd;
-    double *l_end = l + (this->locus_data->num_data * 4);
-    unsigned long *lc = this->locus_data->raw_counts;
-
-    //sum_g(frac{1}{ln(2)P(I|C)} P(b|C))
-
-    // iterate over each bqs category
-    for (; l != l_end; l += 4, lc++)
-    {
-        double so =
-            (*l) * comp[0] + (*(l+1)) * comp[1] + (*(l+2)) * comp[2] + (*(l+3)) * comp[3];
-    
-        gradient[0] += (*lc) * (*l) / so;
-        gradient[1] += (*lc) * (*(l+1)) / so;
-        gradient[2] += (*lc) * (*(l+2)) / so;
-        gradient[3] += (*lc) * (*(l+3)) / so;
-    }
-}
-*/
-
-double ErrorEstimate::log_dirichlet_prior(const double *sample_composition) const
-{
-    // instead of auto-detecting whether this is a uniform prior,
-    // decide at application level whether or not to use the dirichlet
-    // prior.
-    double retval;
-    retval = 
-        Transformation::log_dirichlet(this->composition_prior_alphas,
-                                      sample_composition);
-    return retval;
-    //return (isnan(retval) || isinf(retval)) ? FLT_MAX : retval;
-}
-
 
 
 // In this new formulation, we use the subset of the model that is packed into
@@ -226,93 +162,11 @@ double ErrorEstimate::log_likelihood(const double *x) const
 }
 
 
-// 
-double ErrorEstimate::log_pdf(const double *comp)
+// return log(P(x)), capping the value between -DBL_MAX and DBL_MAX
+double ErrorEstimate::log_pdf_trunc(const double *x)
 {
-    return this->log_likelihood(comp)
-        + (this->uniform_prior ? 0 : this->log_dirichlet_prior(comp));
-}
-
-
-//
-double ErrorEstimate::log_pdf_trunc(const double *comp)
-{
-    return
-        (normalized(comp, 4, 1e-10) && all_positive(comp, 4))
-        ? log_pdf(comp)
-        : -DBL_MAX;
-}
-
-
-//transforms x (bounds x1[0,1], x2[0,1-x1], x3[0,1-x1-x2]) to
-//expanded (bounds in unit hypercube).
-//points x containing
-typedef std::pair<double, size_t> Key;
-
-bool sort_first_desc(Key a, Key b)
-{
-    return a.first > b.first;
-}
-
-
-void auxiliary_transform(const double matrix[3][3], const double x[3], double *transformed)
-{
-    
-    Key key[] = { Key(x[0], 0), Key(x[1], 1), Key(x[2], 2) };
-    std::sort(key, key + 3, sort_first_desc);
-    
-    size_t rev_key[3];
-    for (size_t k = 0; k != 3; ++k)
-    {
-        rev_key[key[k].second] = k;
-    }
-
-    //create the expanded coordinate as the matrix * vector product
-    //the matrix is the permutation of the original matrix rows
-
-    for (size_t r = 0; r != 3; ++r)
-    {
-        double sum = 0.0;
-        for (size_t c = 0; c != 3; ++c)
-        {
-            sum += matrix[rev_key[r]][rev_key[c]] * x[c];
-        }
-        transformed[r] = sum;
-    }
-}
-
-
-bool within_hypercube(const double x[3])
-{
-    return 
-        x[0] >= 0.0 && x[0] <= 1.0 &&
-        x[1] >= 0.0 && x[1] <= 1.0 &&
-        x[2] >= 0.0 && x[2] <= 1.0;
-}
-
-
-bool within_pyramid(const double x[3])
-{
-    return
-        x[0] >= 0.0 &&
-        x[1] >= 0.0 &&
-        x[2] >= 0.0 &&
-        x[0] + x[1] + x[2] <= 1.0;
-}
-
-
-void ErrorEstimate::expand_to_hypercube(const double x[3], double *expanded) const
-{
-    assert(within_pyramid(x));
-
-    auxiliary_transform(this->expansion_rows, x, expanded);
-}
-
-void ErrorEstimate::contract_from_hypercube(const double x[3], double *contracted) const
-{
-    assert(within_hypercube(x));
-
-    auxiliary_transform(this->contraction_rows, x, contracted);
+    double pri = gsl_ran_dirichlet_lnpdf(NUM_NUCS, this->prior_alpha, x);
+    return this->log_likelihood(x) + (isinf(pri) ? isinf(pri) * DBL_MAX : pri);
 }
 
 
@@ -395,9 +249,8 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
 
     Transformation::SigmoidVals sigmoid_vals[3];
 
-    size_t multimin_iteration;
-    for (multimin_iteration = 0; multimin_iteration != max_iterations; 
-         ++multimin_iteration)
+    size_t mi;
+    for (mi = 0; mi != max_iterations; ++mi)
     {
 
         //copy current point to last point
@@ -406,7 +259,8 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
         //take a step
         gsl_multimin_fdfminimizer_iterate(first_minimizer);
 
-        gsl_vector *gradient = gsl_multimin_fdfminimizer_gradient(first_minimizer);
+        gsl_vector *gradient = 
+            gsl_multimin_fdfminimizer_gradient(first_minimizer);
 
         double x[3];
         x[0] = gsl_vector_get(first_minimizer->x, 0);
@@ -432,7 +286,7 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
                    "cur_mode: (%+8.6f, %+8.6f, %+8.6f, %+8.6f)  "
                    "r3_point: (%10.6f, %10.6f, %10.6f)\n"
                    ,
-                   multimin_iteration,
+                   mi,
                    last_step_size,
                    Transformation::log_neg_posterior_value(first_minimizer->x, & passing_params),
                    gsl_vector_get(gradient, 0),
@@ -446,7 +300,7 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
         }
         
         if (gsl_multimin_test_gradient(gradient, gradient_tolerance) == GSL_SUCCESS ||
-            (multimin_iteration > 20 && last_step_size < 1e-10)
+            (mi > 20 && last_step_size < 1e-10)
             )
         {
             break;
@@ -464,5 +318,5 @@ size_t ErrorEstimate::find_mode_point(double gradient_tolerance,
     Transformation::sigmoid_composition(sigmoid_vals, mode_point);
     Transformation::boundary_point(sigmoid_vals, on_zero_boundary);
 
-    return multimin_iteration;
+    return mi;
 }

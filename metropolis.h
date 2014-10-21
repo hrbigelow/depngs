@@ -12,16 +12,17 @@ struct mh_metric;
 
 class Metropolis
 {
+ public:
 
     ErrorEstimate *integrand;
     Dirichlet *proposal;
 
-    double current_point[NUM_NUCS];
-
     gsl_rng *randgen;
 
- public:
 
+    
+
+    double current_point[NUM_NUCS];
     double *sample_points;
     size_t num_points;
 
@@ -31,23 +32,18 @@ class Metropolis
 
     ~Metropolis();
 
-    void set_current_point(const double *point);
-    double *get_current_point() const;
-
     void propose(double *z_star);
-    double accept(const double *z_star, const double *z_tau);
 
     void sample(size_t const num_samples,
                 size_t const burn_in,
                 size_t const every_nth,
+                double *initial_point,
                 double *proposal_mean,
                 double *proposal_variance,
                 double *alt_sample_points);
     
     double step(struct mh_metric **z_tau, struct mh_metric **z_nxt);
 
-    double step_old(const double *z_tau, double *z_tau_next);
-    
     void tune_proposal(size_t num_points,
                        double max_tuning_iterations,
                        size_t averaging_window_size,

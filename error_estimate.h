@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <map>
 
+#include "defs.h"
+
 struct packed_counts;
 
 /*
@@ -50,9 +52,9 @@ class ErrorEstimate {
     packed_counts * locus_data;
     NucleotideStats * model_params;
 
-    double composition_prior_alphas[4];
+    double prior_alpha[NUM_NUCS];
     
-    void set_composition_prior_alphas(double const* alphas);
+    void set_prior_alphas(double const* alphas);
 
     void set_discrete_prior_dist(double const* prior_points_flat,
                                  double const* prior_dist, 

@@ -31,86 +31,85 @@
 */
 
 #include "hilbert.h"
+#include "slice_sampling.h"
+
 #include <algorithm>
 #include <gmp.h>
 
-void unpack_index(mpz_t const& index, size_t ndim, int * chunks, size_t nchunks);
-void pack_index(int const* chunks, size_t nchunks, size_t ndim, mpz_t & index);
-void initial_start_end(size_t nchunks, size_t ndim, int * start, int * end);
-void unpack_coords(uint64_t const* coords, size_t ndim, int * unpacked, size_t nchunks);
-void pack_coords(int const* chunks, size_t nchunks, uint64_t * packed, size_t ndim);
+#define NCHUNKS NBITS_PER_DIM
+
+void unpack_index(mpz_t const& index, int *chunks);
+void pack_index(const int *chunks, mpz_t & index);
+void initial_start_end(int *start, int *end);
+void unpack_coords(const uint64_t *coords, int *unpacked);
+void pack_coords(int const* chunks, uint64_t *packed);
 int gray_encode(int const& bn);
 int gray_decode(int const& gray);
 int gray_encode_travel(int start, int end, int mask, int i);
 int gray_decode_travel(int start, int end, int mask, int gray);
 void child_start_end(int parent_start, int parent_end, int mask, int i,
-                     int * child_start, int * child_end);
+                     int *child_start, int *child_end);
 
 
-//map index to the ndim-dimensional uint64_t hypercube hilbert coordinate
-void int_to_Hilbert(mpz_t const& index, size_t nchunks, uint64_t * coords, size_t ndim)
+//map index to the NDIM-dimensional uint64_t hypercube hilbert coordinate
+void int_to_Hilbert(mpz_t const& index, uint64_t * coords)
 {
-    int * index_chunks = new int[nchunks];
-    int * coord_chunks = new int[nchunks];
+    int index_chunks[NCHUNKS];
+    int coord_chunks[NCHUNKS];
 
-    unpack_index(index, ndim, index_chunks, nchunks);
-    int mask = (1<<ndim) - 1;
+    unpack_index(index, index_chunks);
+    int mask = (1<<NDIM) - 1;
     int start, end;
-    initial_start_end(nchunks, ndim, &start, &end);
-    for (size_t j = 0; j != nchunks; ++j)
+    initial_start_end(&start, &end);
+    for (size_t j = 0; j != NCHUNKS; ++j)
     {
         int i = index_chunks[j];
         coord_chunks[j] = gray_encode_travel(start, end, mask, i);
         child_start_end(start, end, mask, i, &start, &end);
     }
-    pack_coords(coord_chunks, nchunks, coords, ndim);
+    pack_coords(coord_chunks, coords);
 
-    delete index_chunks;
-    delete coord_chunks;
 }
 
 
-//map ndim-dimensional uint64_t hypercube hilbert coordinate to (64*ndim) - bit index on integer line
-void Hilbert_to_int(uint64_t const* coords, size_t ndim, size_t nchunks, mpz_t & index)
+//map NDIM-dimensional uint64_t hypercube hilbert coordinate to (64*NDIM) - bit index on integer line
+void Hilbert_to_int(uint64_t const* coords, mpz_t & index)
 {
-    int * index_chunks = new int[nchunks];
-    int * coord_chunks = new int[nchunks];
+    int index_chunks[NCHUNKS];
+    int coord_chunks[NCHUNKS];
     
-    unpack_coords(coords, ndim, coord_chunks, nchunks);
+    unpack_coords(coords, coord_chunks);
 
-    int mask = (1<<ndim) - 1;
+    int mask = (1<<NDIM) - 1;
     int start, end;
-    initial_start_end(nchunks, ndim, &start, &end);
-    for (size_t j = 0; j != nchunks; ++j)
+    initial_start_end(&start, &end);
+    for (size_t j = 0; j != NCHUNKS; ++j)
     {
         int i = gray_decode_travel(start, end, mask, coord_chunks[j]);
         index_chunks[j] = i;
         child_start_end(start, end, mask, i, &start, &end);
     }
-    pack_index(index_chunks, nchunks, ndim, index);
-    
-    delete index_chunks;
-    delete coord_chunks;
+    pack_index(index_chunks, index);
 }
 
 
 
-void initial_start_end(size_t nchunks, size_t ndim, int * start, int * end)
+void initial_start_end(int *start, int *end)
 {
     *start = 0;
-    *end = 1<<(abs(- static_cast<int>(nchunks) - 1) % ndim);
+    *end = 1<<(abs(- (NCHUNKS) - 1) % NDIM);
 }
 
 
-void unpack_index(mpz_t const& index, size_t ndim, int * chunks, size_t nchunks)
+void unpack_index(mpz_t const& index, int * chunks)
 {
     mpz_t i, zchunk, p;
 
     mpz_init_set(i, index);
     mpz_init(zchunk);
-    mpz_init_set_ui(p, 1<<ndim);
+    mpz_init_set_ui(p, 1<<NDIM);
 
-    for (size_t j = nchunks; j != 0; --j)
+    for (size_t j = NCHUNKS; j != 0; --j)
     {
         mpz_mod(zchunk, i, p);
         chunks[j-1] = mpz_get_ui(zchunk);
@@ -119,13 +118,13 @@ void unpack_index(mpz_t const& index, size_t ndim, int * chunks, size_t nchunks)
 }
 
 
-void pack_index(int const* chunks, size_t nchunks, size_t ndim, mpz_t & index)
+void pack_index(const int *chunks, mpz_t & index)
 {
     mpz_t p;
     mpz_init(index);
-    mpz_init_set_ui(p, 1<<ndim);
+    mpz_init_set_ui(p, 1<<NDIM);
 
-    for (size_t j = 0; j != nchunks; ++j)
+    for (size_t j = 0; j != NCHUNKS; ++j)
     {
         mpz_mul(index, index, p);
         mpz_add_ui(index, index, chunks[j]);
@@ -136,35 +135,35 @@ void pack_index(int const* chunks, size_t nchunks, size_t ndim, mpz_t & index)
 
 //lines up each coord as a row from top to bottom
 //loads 'unpacked' with the columns read top-to-bottom, in order from left to right
-void unpack_coords(uint64_t const* coords, size_t ndim, int * unpacked, size_t nchunks)
+void unpack_coords(uint64_t const* coords, int * unpacked)
 {
-    std::fill(unpacked, unpacked+nchunks, 0);
+    std::fill(unpacked, unpacked + NCHUNKS, 0);
     
     size_t rrev;
 
-    for (size_t r = 0; r != ndim; ++r)
+    for (size_t r = 0; r != NDIM; ++r)
     {
-        rrev = ndim - r - 1;
-        for (size_t c = 0; c != nchunks; ++c)
+        rrev = NDIM - r - 1;
+        for (size_t c = 0; c != NCHUNKS; ++c)
         {
-            unpacked[nchunks - c - 1] |= (static_cast<uint64_t>(((coords[r] >> c) & 1)) << rrev);
+            unpacked[NCHUNKS - c - 1] |= (static_cast<uint64_t>(((coords[r] >> c) & 1)) << rrev);
         }
     }
 }
 
 
-void pack_coords(int const* chunks, size_t nchunks, uint64_t * packed, size_t ndim)
+void pack_coords(int const* chunks, uint64_t * packed)
 {
-    std::fill(packed, packed+ndim, 0);
+    std::fill(packed, packed + NDIM, 0);
     
     size_t rrev;
     
-    for (size_t r = 0; r != nchunks; ++r)
+    for (size_t r = 0; r != NCHUNKS; ++r)
     {
-        rrev = nchunks - r - 1;
-        for (size_t c = 0; c != ndim; ++c)
+        rrev = NCHUNKS - r - 1;
+        for (size_t c = 0; c != NDIM; ++c)
         {
-            packed[ndim - c - 1] |= ((static_cast<uint64_t>((chunks[r] >> c) & 1)) << rrev);
+            packed[NDIM - c - 1] |= (((uint64_t)((chunks[r] >> c) & 1)) << rrev);
         }
     }
 }

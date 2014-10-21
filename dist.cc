@@ -37,7 +37,7 @@ int dist_usage()
             "-X REAL     quantile used to test first-pass distance [0.01]\n"
             "-f INT      number of sample points used for final quantiles estimation [1000]\n"
             "-q INT      minimum quality score to include bases as evidence [%s]\n"
-            "-F STRING   Fastq offset type if known (one of Sanger,Solexa,Illumina13,Illumina15) [None]\n"
+            "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
             "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
 
             "-t INT      number of threads to use [1]\n"
@@ -53,7 +53,7 @@ int dist_usage()
             "-I INT      maximum number of proposal tuning iterations [10]\n"
             "-M REAL     autocorrelation maximum value [0.2]\n"
             "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
-            "-p STRING   alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
+            "-p FLOAT    alpha value for dirichlet prior [0.1]\n"
             "-l INT      maximum length of a pileup line in bytes.  {Nuisance parameter} [100000]\n"
             "\n"
             "samples.rdb has lines of <sample_id><tab></path/to/sample.jpd><tab></path/to/sample.pileup>\n"
@@ -92,7 +92,6 @@ int main_dist(int argc, char **argv)
         0.2,    // autocor_max_value
         30,     // initial_autocor_offset
         6,      // target_autocor_offset
-        62,     // num_bits_per_dim
         true,   // is_log_integrand
         62 * 3  // initial_sampling_range
     };
@@ -106,7 +105,7 @@ int main_dist(int argc, char **argv)
 
     int print_pileup_fields = 0;
 
-    const char *prior_alphas_file = NULL;
+    float prior_alpha = 0.1;
 
     size_t min_quality_score = 5;
 
@@ -117,17 +116,16 @@ int main_dist(int argc, char **argv)
     const char *comp_file = NULL;
     const char *vcf_file = NULL;
     const char *indel_dist_file = NULL;
+    const char *fastq_type = NULL;
 
     const char *sample_pairings_file = NULL;
 
     float min_dist_to_report = 0.2;
 
-    const char *fastq_type = "None";
-
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:V:i:S:y:t:m:T:x:X:f:gP:a:I:M:z:p:q:vD:C:F:l:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:V:i:S:y:t:m:T:x:X:f:gP:a:I:M:z:p:q:F:vD:C:l:")) >= 0)
     {
         switch(c)
         {
@@ -148,12 +146,12 @@ int main_dist(int argc, char **argv)
         case 'I': pset.max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
         case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'z': pset.gradient_tolerance = atof(optarg); break;
-        case 'p': prior_alphas_file = optarg; break;
+	case 'p': prior_alpha = atof(optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
+        case 'F': fastq_type = optarg; break;
         case 'v': verbose = true; break;
         case 'D': dist_quantiles_file = optarg; break;
         case 'C': comp_quantiles_file = optarg; break;
-        case 'F': fastq_type = optarg; break;
         case 'g': print_pileup_fields = 1; break;
         case 'l': max_pileup_line_size = static_cast<size_t>(atof(optarg)); break;
         default: return dist_usage(); break;
@@ -202,32 +200,25 @@ int main_dist(int argc, char **argv)
     fclose(samples_fh);
 
     size_t num_samples = pileup_input_file.size();
+    size_t chunk_size = 1024 * 1024 * 64;
+    char *chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = None;
-    if (strcmp(fastq_type, "Sanger") == 0) { ftype = Sanger; }
-    else if (strcmp(fastq_type, "Solexa") == 0) { ftype = Solexa; }
-    else if (strcmp(fastq_type, "Illumina13") == 0) { ftype = Illumina13; }
-    else if (strcmp(fastq_type, "Illumina15") == 0) { ftype = Illumina15; }
-    else { ftype = None; }
+    int offset;
 
-    if (ftype == None)
+    if (fastq_type)
+        offset = fastq_type_to_offset(fastq_type);
+    else
+        offset = fastq_offset(pileup_input_file[0], chunk_buffer_in, chunk_size);
+
+    if (offset == -1)
     {
-        size_t chunk_size = 1024 * 1024 * 64;
-        char *chunk_buffer_in = new char[chunk_size + 1];
-        ftype = FastqFileType(pileup_input_file[0], chunk_buffer_in, chunk_size, num_threads);
-        
-        if (ftype == None)
-        {
-            fprintf(stderr, "Error: Couldn't determine quality scale for pileup input file %s\n",
-                    pileup_input_file[0]);
-            exit(1);
-        }
-        delete chunk_buffer_in;
-
+        fprintf(stderr, "Could not determine fastq type of this pileup file.\n");
+        return 1;
     }
 
-    PileupSummary::SetFtype(ftype);
+    PileupSummary::set_offset(offset);
 
+    delete chunk_buffer_in;
 
     FILE **pileup_input_fh = new FILE *[num_samples];
     for (size_t s = 0; s != num_samples; ++s)
@@ -268,21 +259,9 @@ int main_dist(int argc, char **argv)
         comp_quantiles = ParseNumbersFile(comp_quantiles_file, & num_comp_quantiles);
     }
 
-    double *prior_alphas;
-    double default_prior_alpha = 1.0; // this will cause underflow if evaluated on a boundary.
-    // with metropolis-hastings, this is not a problem, but with 
-
-    if (prior_alphas_file == NULL)
-    {
-        prior_alphas = new double[4];
-        std::fill(prior_alphas, prior_alphas + 4, default_prior_alpha);
-    }
-    else
-    {
-        size_t num_prior_alphas;
-        prior_alphas = ParseNumbersFile(prior_alphas_file, & num_prior_alphas);
-        assert(num_prior_alphas == 4);
-    }
+    double prior_alphas[NUM_NUCS];
+    for (size_t i = 0; i != NUM_NUCS; ++i)
+        prior_alphas[i] = prior_alpha;
 
     // parse pairings file
     size_t num_pairings, *pair_sample1, *pair_sample2;

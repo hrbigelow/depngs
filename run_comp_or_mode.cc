@@ -4,6 +4,7 @@
 #include "pileup_tools.h"
 #include "comp_functor.h"
 #include "samutil/file_utils.h"
+#include "defs.h"
 
 #include <gsl/gsl_errno.h>
 
@@ -13,7 +14,7 @@ int run_comp_or_mode(size_t max_mem,
                      char const* fastq_type,
                      char const* label_string,
                      char const* quantiles_file,
-                     char const* prior_alphas_file,
+                     float prior_alpha,
                      char const* pileup_input_file,
                      char const* jpd_data_params_file,
                      char const* posterior_output_file,
@@ -42,50 +43,33 @@ int run_comp_or_mode(size_t max_mem,
         quantiles = ParseNumbersFile(quantiles_file, & num_quantiles);
     }
 
-    double * prior_alphas;
-    double default_prior_alpha = 1.0;
-
-    if (strcmp(prior_alphas_file, "/dev/null") == 0)
-    {
-        prior_alphas = new double[4];
-        std::fill(prior_alphas, prior_alphas + 4, default_prior_alpha);
-    }
-    else
-    {
-        size_t num_prior_alphas;
-        prior_alphas = ParseNumbersFile(prior_alphas_file, & num_prior_alphas);
-    }
+    double prior_alphas[NUM_NUCS];
+    for (size_t i = 0; i != NUM_NUCS; ++i)
+        prior_alphas[i] = prior_alpha;
+    
+    
 
     FILE * posterior_output_fh = open_if_present(posterior_output_file, "w");
     FILE * cdfs_output_fh = open_if_present(cdfs_output_file, "w");
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
 
     size_t chunk_size = max_mem;
-
     char * chunk_buffer_in = new char[chunk_size + 1];
+    int offset;
 
-    FastqType ftype = None;
+    if (fastq_type)
+        offset = fastq_type_to_offset(fastq_type);
+    else
+        offset = fastq_offset(pileup_input_file, chunk_buffer_in, chunk_size);
 
-    if (strcmp(fastq_type, "Sanger") == 0) { ftype = Sanger; }
-    else if (strcmp(fastq_type, "Solexa") == 0) { ftype = Solexa; }
-    else if (strcmp(fastq_type, "Illumina13") == 0) { ftype = Illumina13; }
-    else if (strcmp(fastq_type, "Illumina15") == 0) { ftype = Illumina15; }
-    else { ftype = None; }
-
-    if (ftype == None)
+    if (offset == -1)
     {
-        ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
-
-        if (ftype == None)
-        {
-            fprintf(stderr, "Error: Couldn't determine quality scale for pileup input file %s\n",
-                    pileup_input_file);
-            exit(1);
-        }
+        fprintf(stderr, "Could not determine fastq type of this pileup file.\n");
+        return 1;
     }
 
-    PileupSummary::SetFtype(ftype);
-   
+    PileupSummary::set_offset(offset);
+
     //we are integrating the actual posterior
     // char const* dimension_labels[] = { "A", "C", "G", "T" };
     // char line_label[1000];
@@ -164,7 +148,7 @@ int run_comp_or_mode(size_t max_mem,
         read_pointer[nbytes_read] = '\0';
 
         // here, create N pthreads.  Each should be
-        pthread_t * threads = new pthread_t[num_threads];
+        pthread_t *threads = new pthread_t[num_threads];
         size_t worker_load = pileup_lines.size() / num_threads;
         for (size_t t = 0; t != num_threads; ++t)
         {
@@ -211,7 +195,6 @@ int run_comp_or_mode(size_t max_mem,
         fclose(cdfs_output_fh);
     }
 
-    delete prior_alphas;
     delete quantiles;
     delete worker_inputs;
 

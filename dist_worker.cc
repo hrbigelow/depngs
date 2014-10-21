@@ -4,6 +4,7 @@
 #include "locus_comp.h"
 #include "error_estimate.h"
 #include "vcf.h"
+#include "defs.h"
 
 #include <cstdio>
 #include <cstring>
@@ -137,11 +138,10 @@ void compute_dist_quantiles(const double *points1,
 }
 
 
-// compute and print out distance quantiles, based on quasi-random
-// pairings of two samplings for efficiency, the 'random' pairing is
-// done simply by cycling through both sets of sample points, but
-// starting in the middle for the second set.
-// return the next write position.
+// print out distance quantiles, based on quasi-random pairings of two
+// samplings for efficiency, the 'random' pairing is done simply by
+// cycling through both sets of sample points, but starting in the
+// middle for the second set.  return the next write position.
 char *print_distance_quantiles(const char *contig,
                                size_t position,
                                dist_worker_input *wi,
@@ -158,11 +158,9 @@ char *print_distance_quantiles(const char *contig,
                             contig, position);
     
     for (size_t q = 0; q != wi->num_dist_quantiles; ++q)
-    {
-        out_dist_buf += sprintf(out_dist_buf, "\t%07.4f", dist_quantile_values[q]);
-    }
+       out_dist_buf += sprintf(out_dist_buf, "\t%7.4f", dist_quantile_values[q]);
 
-    if (sd)
+    if (wi->print_pileup_fields)
         out_dist_buf += sprintf(out_dist_buf, "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
                                 sd[s1].locus->read_depth,
                                 sd[s1].locus->bases_raw,
@@ -170,6 +168,9 @@ char *print_distance_quantiles(const char *contig,
                                 sd[s2].locus->read_depth,
                                 sd[s2].locus->bases_raw,
                                 sd[s2].locus->quality_codes);
+
+    sd[s1].dist_printed = 1;
+    sd[s2].dist_printed = 1;
 
     out_dist_buf += sprintf(out_dist_buf, "\n");
 
@@ -266,9 +267,11 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
     char contig[100];
     size_t position;
-    const double *mode1, *mode2, *end1;
+    double estimated_mean1[NUM_NUCS], estimated_mean2[NUM_NUCS];
+
+    // const double *mode1, *mode2, *end1;
+    // double min_dist_squared = input->min_high_conf_dist * input->min_high_conf_dist;
     double *dist_quantile_values = new double[input->num_dist_quantiles];
-    double min_dist_squared = input->min_high_conf_dist * input->min_high_conf_dist;
 
     sscanf(*sd[global_s].current, "%s\t%zu", contig, &position);
 
@@ -280,33 +283,35 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
         if (input->min_high_conf_dist > 0 && ! (sd1->is_next && sd2->is_next))
             continue;
         
-        if (sd1->is_next && ! sd1->mode_computed) (input->worker[s1]->find_mode(), sd1->mode_computed = true);
-        if (sd2->is_next && ! sd2->mode_computed) (input->worker[s2]->find_mode(), sd2->mode_computed = true);
+        // modefinding will not work anymore...
 
-        mode1 = sd1->is_next ? input->worker[s1]->mode_point : NULL_MODE, end1 = mode1 + 4;
-        mode2 = sd2->is_next ? input->worker[s2]->mode_point : NULL_MODE;
+        // if (sd1->is_next && ! sd1->mode_computed) (input->worker[s1]->find_mode(), sd1->mode_computed = true);
+        // if (sd2->is_next && ! sd2->mode_computed) (input->worker[s2]->find_mode(), sd2->mode_computed = true);
 
-        float mode_square_dist = 0;
-        while (mode1 != end1)
-            mode_square_dist += gsl_pow_2(*mode1++ - *mode2++);
+        // mode1 = sd1->is_next ? input->worker[s1]->mode_point : NULL_MODE, end1 = mode1 + 4;
+        // mode2 = sd2->is_next ? input->worker[s2]->mode_point : NULL_MODE;
 
-        if (mode_square_dist < min_dist_squared)
-        {
-            // modes don't differ enough
-            continue;
-        }
+        // float mode_square_dist = 0;
+        // while (mode1 != end1)
+        //     mode_square_dist += gsl_pow_2(*mode1++ - *mode2++);
+
+        // if (mode_square_dist < min_dist_squared)
+        // {
+        //     // modes don't differ enough
+        //     continue;
+        // }
 
         // preliminary sampling
         if (sd1->is_next && ! sd1->num_sample_points)
         {
-            input->worker[s1]->tune(sd1);
-            input->worker[s1]->sample(sd1, input->prelim_num_points);
+            input->worker[s1]->tune(sd1, estimated_mean1);
+            input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_num_points);
             sd1->num_sample_points = input->prelim_num_points;
         }
         if (sd2->is_next && ! sd2->num_sample_points)
         {
-            input->worker[s2]->tune(sd2);
-            input->worker[s2]->sample(sd2, input->prelim_num_points);
+            input->worker[s2]->tune(sd2, estimated_mean2);
+            input->worker[s2]->sample(sd2, estimated_mean2, input->prelim_num_points);
             sd2->num_sample_points = input->prelim_num_points;
         }
 
@@ -327,12 +332,12 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
         
         if (sd1->num_sample_points == input->prelim_num_points)
         {
-            input->worker[s1]->sample(sd1, input->final_num_points);
+            input->worker[s1]->sample(sd1, estimated_mean1, input->final_num_points);
             sd1->num_sample_points = input->final_num_points;
         }
         if (sd2->num_sample_points == input->prelim_num_points)
         {
-            input->worker[s2]->sample(sd2, input->final_num_points);
+            input->worker[s2]->sample(sd2, estimated_mean2, input->final_num_points);
             sd2->num_sample_points = input->final_num_points;
         }
 
@@ -347,11 +352,10 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
                                dist_quantile_values);
         
         if (dist_quantile_values[0] >= input->min_high_conf_dist)
-        {
-            out_buf = 
-                print_distance_quantiles(contig, position, input, p, dist_quantile_values, 
-                                         (input->print_pileup_fields ? sd : NULL),
-                                         out_buf);
+	    {
+		out_buf = 
+		    print_distance_quantiles(contig, position, input, p, dist_quantile_values, 
+					     sd, out_buf);
         }
     }
     delete[] dist_quantile_values;
@@ -671,6 +675,7 @@ void refresh_locus(dist_worker_input *input,
     else
     {
         init_locus(input, sample_id, sd);
+	sd->dist_printed = 0;
     }
 }
 
@@ -692,7 +697,7 @@ void advance_loci_aux(dist_worker_input *input,
     {
         if (! sd[s].is_next) continue;
 
-        if (*out_comp_buf != NULL && sd[s].num_sample_points)
+        if (*out_comp_buf != NULL && sd[s].dist_printed)
         {
             *out_comp_buf = input->worker[s]->print_quantiles(&sd[s], *out_comp_buf);
 
@@ -801,9 +806,11 @@ void *dist_worker(void *args)
     null_sd.locus = &null_locus;
     null_sd.sample_points = new double[input->final_num_points * 4];
     null_sd.mode_computed = true;
-    input->worker[0]->find_mode();
-    input->worker[0]->tune(&null_sd);
-    input->worker[0]->sample(&null_sd, input->final_num_points);
+    
+    // input->worker[0]->find_mode();
+    double estimated_mean[NUM_NUCS];
+    input->worker[0]->tune(&null_sd, estimated_mean);
+    input->worker[0]->sample(&null_sd, estimated_mean, input->final_num_points);
 
     while (samples[global_s].current != input->end[global_s])
     {

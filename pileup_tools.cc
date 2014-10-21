@@ -45,7 +45,7 @@ PileupSummary::PileupSummary(void) :
         counts.fbqs_cpd = NULL;
         counts.num_data = 0;
         memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
-        memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
+        // memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
         sum_of_counts = 0;
     }
 
@@ -73,6 +73,7 @@ PileupSummary::~PileupSummary()
 // load and parse a single line.  Assumes the line has all required fields.
 // consumes the current line including newline character.
 // assume the line is zero-terminated, not newline terminated
+// !!! TODO:  Add formatting error checking.
 void PileupSummary::load_line(char const* read_pointer)
 {
 
@@ -246,7 +247,7 @@ void PileupSummary::load_line(char const* read_pointer)
         this->bases[write_pos] = this->bases[r];
         this->bases_upper[write_pos] = this->bases_upper[r];
         this->quality_codes[write_pos] = this->quality_codes[r];
-        assert(this->quality_codes[r] != '~');
+        // assert(this->quality_codes[r] != '~');
     }
 
     this->read_depth = span_depth;
@@ -362,7 +363,7 @@ void * fastq_type_worker(void * args)
     for (it = input->beg; it != input->end; ++it)
     {
         locus.load_line(*it);
-        for (size_t rd = 0; rd != locus.read_depth; ++rd)
+        for (size_t rd = 0; rd != locus.read_depth_match; ++rd)
         {
             (*input->seen_codes_flags)[static_cast<size_t>(locus.quality_codes[rd])] = 1;
         }
@@ -371,7 +372,67 @@ void * fastq_type_worker(void * args)
 }
 
 
+// return the probable fastq offset (33 or 64) for this pileup file.
+// scan up to chunk_size bytes.
+// 
+int fastq_offset(const char *pileup_file,
+                 char *chunk_buffer_in,
+                 size_t chunk_size)
+{
+    unsigned char min = 255, max = 0;
+    FILE *pileup_input_fh = open_if_present(pileup_file, "r");
+    if (! pileup_input_fh)
+        return -1;
+
+    size_t fread_nsec;
+
+    FileUtils::read_until_newline(chunk_buffer_in, chunk_size, 1e6, 
+                                  pileup_input_fh, &fread_nsec);
+    
+    char *last_fragment;
+    std::vector<char *> lines = 
+        FileUtils::find_complete_lines_nullify(chunk_buffer_in, &last_fragment);
+
+    std::vector<char *>::iterator it;
+    PileupSummary locus;
+    for (it = lines.begin(); it != lines.end(); ++it)
+    {
+        locus.load_line(*it);
+        for (size_t rd = 0; rd != locus.read_depth_match; ++rd)
+        {
+            max = locus.quality_codes[rd] > max ? locus.quality_codes[rd] : max;
+            min = locus.quality_codes[rd] < min ? locus.quality_codes[rd] : min;
+        }
+    }
+    fclose(pileup_input_fh);
+
+    // reject probable Solexa format
+    if (min >= 59 && min < 64)
+    {
+        fprintf(stderr, "Warning: quality code minimum is %i, which is likely the unsupported Solexa format\n",
+                min);
+        return -1;
+    }
+    // Sanger and Illumina18 format range [33, 126]
+    else if (min < 64 && max <= 126)
+        return 33;
+
+    // Illumina13 and Illumina15  have range [64, 126]
+    else if (min >= 64 && max <= 126)
+        return 64;
+
+    else
+    {
+        fprintf(stderr, "Warning: quality code range is from %i to %i, which doesn't fit any known encoding\n",
+                min, max);
+        return -1;
+    }
+
+}
+
+
 // determine the fastq offset of this pileup file
+/*
 FastqType FastqFileType(char const* pileup_file,
                         char * chunk_buffer_in,
                         size_t chunk_size,
@@ -472,9 +533,15 @@ FastqType FastqFileType(char const* pileup_file,
 
     return ftype;
 }
+*/
 
 
 void PileupSummary::SetFtype(FastqType _fastq_type) { 
     PileupSummary::fastq_type = _fastq_type; 
     PileupSummary::quality_code_offset = FastqTypeOffset(_fastq_type);
+}
+
+
+void PileupSummary::set_offset(int offset) {
+    PileupSummary::quality_code_offset = offset;
 }

@@ -56,7 +56,7 @@ namespace Nucleotide
     const size_t PLUS_STRAND = 0;
     const size_t MINUS_STRAND = 1;
 
-    const size_t highest_quality = 50;
+    const size_t highest_quality = 94;
     const size_t num_s = 2;
     const size_t num_qs = num_s * (highest_quality + 1);
     const size_t num_bqs = 4 * num_qs;
@@ -64,7 +64,8 @@ namespace Nucleotide
     size_t encode(char basecall, size_t quality, size_t strand_index)
     {
         size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
-        
+        assert(quality <= highest_quality);
+
         return 
             (basecall_index * num_qs) 
             + (quality * num_s) 
@@ -168,7 +169,7 @@ void NucleotideStats::pack(packed_counts *c)
         code = c->stats_index[i];
         for (size_t f = 0; f != 4; ++f)
         {
-            (*buf) = this->founder_base_likelihood[f][code];
+            *buf = this->founder_base_likelihood[f][code];
             assert(*buf != 0.0);
             ++buf;
         }

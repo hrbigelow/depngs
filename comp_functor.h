@@ -24,6 +24,7 @@ struct sample_details
 {
     PileupSummary *locus;
     bool is_next;
+    unsigned char dist_printed;
     double *sample_points;
     unsigned num_sample_points;
     sampling_method samp_method;
@@ -46,7 +47,6 @@ struct posterior_settings
 
     size_t initial_autocor_offset;
     size_t target_autocor_offset;
-    size_t num_bits_per_dim; // defaults to 62
     bool is_log_integrand; // defaults to true
     size_t initial_sampling_range; // defaults to 62 * 3
 };
@@ -61,7 +61,7 @@ struct posterior_wrapper
     double mode_point[4];
     bool on_zero_boundary[4];
     bool verbose;
-    double prior_alpha0;
+    /* double prior_alpha0; */
     size_t min_quality_score;
     size_t num_quantiles;
     double *quantiles;
@@ -74,7 +74,7 @@ struct posterior_wrapper
 
     NucleotideStats *params;
     ErrorEstimate *model;
-    Dirichlet *prior;
+    /* Dirichlet *prior; */
     Metropolis *sampler;
     SliceSampling *slice_sampler;
 
@@ -92,11 +92,11 @@ struct posterior_wrapper
     ~posterior_wrapper();
 
     void find_mode(void);
-    void tune(sample_details *sd);
-    size_t tune_mh(PileupSummary *locus, double *sample_points_buf);
-    size_t tune_ss(double *sample_points_buf);
-    void sample(sample_details *sd, size_t num_points);
-    void sample(PileupSummary *locus, double *sample_points_buf, char *algorithm_used);
+    void tune(sample_details *sd, double *estimated_mean);
+    size_t tune_mh(PileupSummary *locus, double *sample_points_buf, double *estimated_mean);
+    size_t tune_ss(PileupSummary *locus, double *sample_points_buf, double *estimated_mean);
+    void sample(sample_details *sd, double *initial_point, size_t num_points);
+    // void sample(PileupSummary *locus, double *sample_points_buf, char *algorithm_used);
     void values(double *points, size_t num_points, double *values);
 
     char *print_quantiles(sample_details *sd, char *out_buffer);

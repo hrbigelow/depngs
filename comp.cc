@@ -24,7 +24,7 @@ int comp_usage()
             "-s INT      number of loci simulations for estimating anomaly score (if zero, no estimate provided) [0]\n"
             "-M FLOAT    autocorrelation maximum value [0.2]\n"
             "-C STRING   quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
-            "-p STRING   alpha values for dirichlet prior [\"0.1 0.1 0.1 0.1\\n\"]\n"
+            "-p FLOAT    alpha value for dirichlet prior [0.1]\n"
             "-q INT      %s\n"
             "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
             "-v <empty>  if present, be verbose [absent]\n"
@@ -61,11 +61,10 @@ int main_comp(int argc, char ** argv)
         10,     // max_tuning_iterations
         1000,    // tuning_num_points
         1000,    // final_num_points
-        6,      // autocor_max_offset
+        20,      // autocor_max_offset
         0.2,    // autocor_max_value
         30,     // initial_autocor_offset
         6,      // target_autocor_offset
-        62,     // num_bits_per_dim
         true,   // is_log_integrand
         62 * 3  // initial_sampling_range
     };
@@ -78,11 +77,10 @@ int main_comp(int argc, char ** argv)
     char quantiles_file[100];
     strcpy(quantiles_file, "/dev/null");
 
-    char prior_alphas_file[100];
-    strcpy(prior_alphas_file, "/dev/null");
+    float prior_alpha = 0.1;
 
     size_t min_quality_score = 5;
-    const char *fastq_type = "None";
+    const char *fastq_type = NULL;
 
     char const* jpd_data_params_file;
     char const* pileup_input_file;
@@ -109,14 +107,14 @@ int main_comp(int argc, char ** argv)
         case 's': nsim_loci = static_cast<size_t>(atof(optarg)); break;
         case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'C': strcpy(quantiles_file, optarg); break;
-        case 'p': strcpy(prior_alphas_file, optarg); break;
+        case 'p': prior_alpha = atof(optarg); break;
         case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
         case 'F': fastq_type = optarg; break;
         case 'v': verbose = true; break;
         default: return comp_usage(); break;
         }
     }
-    if (argc - optind != 3)
+    if (argc - optind < 3 || argc - optind > 4)
     {
         return comp_usage();
     }
@@ -133,7 +131,7 @@ int main_comp(int argc, char ** argv)
                             fastq_type,
                             label_string,
                             quantiles_file,
-                            prior_alphas_file,
+                            prior_alpha,
                             pileup_input_file,
                             jpd_data_params_file,
                             posterior_output_file,

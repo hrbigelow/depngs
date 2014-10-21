@@ -255,24 +255,30 @@ namespace Transformation
     }
     */
 
-    double log_dirichlet(const double alpha[4],
-                         const double x[4])
+    // may be NaN, this is okay
+    /*
+    double log_dirichlet(const double *alpha, const double *x)
     {
-        double ld =
-            + (alpha[0] - 1.0) * gsl_sf_log(x[0])
-            + (alpha[1] - 1.0) * gsl_sf_log(x[1])
-            + (alpha[2] - 1.0) * gsl_sf_log(x[2])
-            + (alpha[3] - 1.0) * gsl_sf_log(x[3]);
+        // double logs[] = { 
+        //     gsl_sf_log(x[0]),
+        //     gsl_sf_log(x[1]),
+        //     gsl_sf_log(x[2]),
+        //     gsl_sf_log(x[3])
+        // };
         
-        // if (ld != 0)
-        // {
-        //     assert(ld / ld2 < 1.00001);
-        //     assert(ld2 / ld < 1.00001);
-        // }
+        
+        double ld =
+            + (alpha[0] == 1.0 ? 0 : (alpha[0] - 1.0) * gsl_sf_log(x[0]))
+            + (alpha[1] == 1.0 ? 0 : (alpha[1] - 1.0) * gsl_sf_log(x[1]))
+            + (alpha[2] == 1.0 ? 0 : (alpha[2] - 1.0) * gsl_sf_log(x[2]))
+            + (alpha[3] == 1.0 ? 0 : (alpha[3] - 1.0) * gsl_sf_log(x[3]));
+
         return ld;
     }
+    */
 
 
+    /*
     double log2_dirichlet(const double alpha[4], const double x[4])
     {
         double ld =
@@ -289,6 +295,7 @@ namespace Transformation
         return ld;
         
     }
+    */
 
 
     
@@ -333,7 +340,7 @@ namespace Transformation
             log_prior = 
                 pp->error_estimate->uniform_prior
                 ? 0
-                : sigmoid_log_dirichlet(pp->error_estimate->composition_prior_alphas,
+                : sigmoid_log_dirichlet(pp->error_estimate->prior_alpha,
                                         sigmoid_vals);
 
             *neg_log_value = -1.0 * (log_likelihood + log_prior);
@@ -350,7 +357,7 @@ namespace Transformation
             }
             else
             {
-                sigmoid_log_dirichlet_gradient(pp->error_estimate->composition_prior_alphas,
+                sigmoid_log_dirichlet_gradient(pp->error_estimate->prior_alpha,
                                                sigmoid_vals, prior_gradient);
             }
             
@@ -392,7 +399,8 @@ namespace Transformation
         double neg_log_value;
         gsl_vector *neg_log_gradient = gsl_vector_alloc(3);
 
-        log_neg_posterior_aux(r, Transformation::VALUE, &neg_log_value, neg_log_gradient, params);
+        log_neg_posterior_aux(r, Transformation::VALUE, &neg_log_value, 
+                              neg_log_gradient, params);
 
         gsl_vector_free(neg_log_gradient);
 
@@ -405,7 +413,8 @@ namespace Transformation
                                     gsl_vector *neg_gradient)
     {
         double neg_log_value;
-        log_neg_posterior_aux(r, Transformation::GRADIENT, &neg_log_value, neg_gradient, params);
+        log_neg_posterior_aux(r, Transformation::GRADIENT, 
+                              &neg_log_value, neg_gradient, params);
     }
 
     void log_neg_posterior_value_and_gradient(const gsl_vector *r, 

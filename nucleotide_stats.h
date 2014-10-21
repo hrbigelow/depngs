@@ -22,15 +22,27 @@ namespace Nucleotide
 
 };
 
-// this structure holds a summary of all raw base calls at a given locus
-// the values in stats_index can be decoded into (basecall, quality, strand) triplets
-// using Nucleotide::decode
+/* this structure holds a summary of all raw base calls at a given
+   locus the values in stats_index can be decoded into (basecall,
+   quality, strand) triplets using Nucleotide::decode */
 struct packed_counts
 {
+    /* raw_counts[n] = number of occurrences of a particular (b,q,s)
+       tuple at this locus */
     unsigned long *raw_counts;
-    size_t *stats_index;
-    double *fbqs_cpd; // founder base likelihood in f,b,q,s order
-    size_t num_data; // number of elements in 'raw_counts' and 'stats_index'.  fbqs_cpd has 4 * raw_counts elements.
+
+    /* stats_index[n] = code.  use Nucleotide::decode(code, &b, &q,
+       &s). use this together with raw_counts[n] to find the number of
+       occurrences of (b,q,s) tuples. */
+    size_t *stats_index; 
+
+    /* fbqs_cpd[nf] gives P(b,q,s|f).  nf / 4 corresponds to n.  nf %
+       4 corresponds to founder base (A,C,G,T). */
+    double *fbqs_cpd;
+
+    /* number of elements in 'raw_counts' and 'stats_index'.  fbqs_cpd
+       has 4 * raw_counts elements. */
+    size_t num_data; 
 };
 
 

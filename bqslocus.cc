@@ -157,8 +157,14 @@ int main_bqslocus(int argc, char ** argv)
     size_t chunk_size = 1024 * 1024;
     char * chunk_buffer_in = new char[chunk_size + 1];
 
-    FastqType ftype = FastqFileType(pileup_input_file, chunk_buffer_in, chunk_size, num_threads);
-    PileupSummary::SetFtype(ftype);
+    int offset = fastq_offset(pileup_input_file, chunk_buffer_in, chunk_size);
+    if (offset == -1)
+    {
+        fprintf(stderr, "dep bqs: Cannot continue.\n");
+        return 1;
+    }
+
+    PileupSummary::set_offset(offset);
 
     size_t nbytes_read, nbytes_unused = 0;
     char * last_fragment;

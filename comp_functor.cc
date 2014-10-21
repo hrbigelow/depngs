@@ -53,19 +53,18 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
     std::copy(quantiles, quantiles + num_quantiles, this->quantiles);
 
     this->initial_point = { 0.25, 0.25, 0.25, 0.25 };
-    const size_t truncated_ndim = 3;
 
-    this->prior_alpha0 = std::accumulate(prior_alphas, prior_alphas + 4, 0.0);
+    //this->prior_alpha0 = std::accumulate(prior_alphas, prior_alphas + 4, 0.0);
     
     this->params = new NucleotideStats();
     this->params->initialize(jpd_data_params_file);
     this->model = new ErrorEstimate();
-    this->model->set_composition_prior_alphas(prior_alphas);
+    this->model->set_prior_alphas(prior_alphas);
     this->model->model_params = this->params;
-    this->prior = new Dirichlet();
-    this->sampler = new Metropolis(this->model, this->prior, 
+    // this->prior = new Dirichlet();
+    this->sampler = new Metropolis(this->model, new Dirichlet(),
                                    this->s.final_num_points);
-    this->slice_sampler = new SliceSampling(truncated_ndim, this->s.num_bits_per_dim, 1);
+    this->slice_sampler = new SliceSampling(1);
 }
 
 
@@ -78,7 +77,7 @@ posterior_wrapper::~posterior_wrapper()
     delete this->sampler;
     delete this->slice_sampler;
     // delete this->posterior;
-    delete this->prior;
+    // delete this->prior;
     delete this->model;
     delete this->params;
 }
@@ -105,32 +104,51 @@ void posterior_wrapper::find_mode(void)
 }
 
 
+// estimate the alphas of a dirichlet that mimics the posterior based
+// on raw counts.
+void alphas_from_raw_counts(packed_counts *counts, double *prior_alpha, double *est_alpha)
+{
+    char base;
+    size_t qual, strand;
+    memcpy(est_alpha, prior_alpha, sizeof(double) * NUM_NUCS);
+    for (size_t d = 0; d != counts->num_data; ++d)
+    {
+        Nucleotide::decode(counts->stats_index[d], &base, &qual, &strand);
+        est_alpha[Nucleotide::base_to_index[(int)base]] += counts->raw_counts[d];
+    }
+}
+
+
 // tune the posterior, return the cumulative autocorrelation offset
 // sample_points_buf is used as a space for writing sample points
 // during the tuning process.
-size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_buf)
+size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_buf,
+                                  double *estimated_mean /* output */)
 {
 
-    this->sampler->set_current_point(this->mode_point);
-    // !!! 
-    this->prior->set_alpha0(locus->read_depth_high_qual + this->prior_alpha0);
+    // start out by setting the proposal alphas to correspond with the
+    // counts of basecalls in the locus plus the prior alphas.
+    // !!! this is inefficient...
+    double alpha[NUM_NUCS];
 
-    if (this->prior->get_alpha0() > 1)
-    {
-        this->prior->set_alphas_from_mode_or_bound
-            (this->mode_point,
-             this->model->composition_prior_alphas,
-             this->on_zero_boundary);
-    }
-    else
-    {
-        this->prior->update(this->model->composition_prior_alphas);
-    }
+    alphas_from_raw_counts(&locus->counts, this->model->prior_alpha, alpha);
+
+    this->sampler->proposal->update(alpha);
+    
+    // set the current point to the normalized alphas
+    for (size_t n = 0; n != NUM_NUCS; ++n)
+        estimated_mean[n] = this->sampler->current_point[n] = 
+            this->sampler->proposal->alpha[n] /
+            this->sampler->proposal->alpha0;
+
+    
+    // set the proposal alphas
+    this->sampler->proposal->set_alphas_from_mean_or_bound(this->sampler->current_point,
+                                                           this->model->prior_alpha);
 
     //metropolis hastings
     double proposal_mean, proposal_variance;
     size_t cumul_autocor_offset = 0;
-    double estimated_mean[NUM_NUCS];
 
     
     for (size_t iter = 0; iter != this->s.max_tuning_iterations; ++iter)
@@ -139,8 +157,10 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
         size_t current_autocor_offset = 1;
         for (size_t i = 0; i != 3; ++i)
         {
+            // start the sampling procedure from the mean (doesn't really matter too much)
             //sample more and more thinly, starting from every 1'th
             this->sampler->sample(this->s.tuning_num_points, 0, cumul_autocor_offset,
+                                  estimated_mean,
                                   (verbose ? & proposal_mean : NULL), // only calculate extra stats if in verbose mode
                                   (verbose ? & proposal_variance : NULL),
                                   sample_points_buf);
@@ -153,9 +173,7 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
                                             this->s.autocor_max_value);
 
             if (current_autocor_offset == 1)
-            {
                 break;
-            }
 
             cumul_autocor_offset *= current_autocor_offset;
             if (verbose)
@@ -167,17 +185,16 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
             }
         }
 
-        //here it doesn't make sense to take all of the samples if
-        //the best_autocor offset isn't 1
-        multivariate_mean(sample_points_buf, NUM_NUCS,
-                          this->s.tuning_num_points, estimated_mean);
-
         if (verbose)
         {
             fprintf(stdout, "MH: %Zu, position: %i, proposal mean: %g, "
                     "proposal variance: %g", cumul_autocor_offset,
                     locus->position, proposal_mean, proposal_variance);
             fprintf(stdout, ", estimated mean:");
+
+            multivariate_mean(sample_points_buf, NUM_NUCS,
+                              this->s.tuning_num_points, estimated_mean);
+
             for (size_t d = 0; d != NUM_NUCS; ++d)
             {
                 fprintf(stdout, "\t%g", estimated_mean[d]);
@@ -187,25 +204,47 @@ size_t posterior_wrapper::tune_mh(PileupSummary *locus, double *sample_points_bu
         }
 
         if (cumul_autocor_offset <= this->s.target_autocor_offset)
-        {
             break;
-        }
 
-        this->prior->set_alphas_from_mean_or_bound(estimated_mean,
-                                                   this->model->composition_prior_alphas);
+        // ideally, i had wanted to just use this, but for some
+        // reason, the estimated mean can drift into having alphas
+        // close to zero.  theoretically, this shouldn't happen
+        // because the posterior comprises additional observations
+        // besides the prior.
+
+        // this->sampler->proposal->set_alphas_from_mean(estimated_mean);
+        //here it doesn't make sense to take all of the samples if
+        //the best_autocor offset isn't 1
+        multivariate_mean(sample_points_buf, NUM_NUCS,
+                          this->s.tuning_num_points, estimated_mean);
+
+        this->sampler->proposal->set_alphas_from_mean_or_bound(estimated_mean,
+                                                               this->model->prior_alpha);
         
     }
     return cumul_autocor_offset;
 }
 
 // uses sample_points_buf as a scratch space for tuning the slice_sampler
-size_t posterior_wrapper::tune_ss(double *sample_points_buf)
+size_t posterior_wrapper::tune_ss(PileupSummary *locus, 
+                                  double *sample_points_buf,
+                                  double *estimated_mean)
 {
     //SliceSampling slice_sampler(truncated_ndim, num_bits_per_dim, is_log_integrand, 1);
 
     this->slice_sampler->Initialize();
+
+    double alpha0 = 0;
+    alphas_from_raw_counts(&locus->counts, this->model->prior_alpha, estimated_mean);
+
+    for (size_t n = 0; n != NUM_NUCS; ++n)
+        alpha0 += estimated_mean[n];
+
+    for (size_t n = 0; n != NUM_NUCS; ++n)
+        estimated_mean[n] /= alpha0;
+
     this->slice_sampler->sample(this->model, 
-                                this->mode_point,
+                                estimated_mean,
                                 this->s.initial_sampling_range, 1, sample_points_buf,
                                 this->s.tuning_num_points);
     
@@ -220,16 +259,16 @@ size_t posterior_wrapper::tune_ss(double *sample_points_buf)
 }
 
 
-void posterior_wrapper::tune(sample_details *sd)
+void posterior_wrapper::tune(sample_details *sd, double *estimated_mean)
 {
     // try MH first.
-    sd->autocor_offset = this->tune_mh(sd->locus, sd->sample_points);
+    sd->autocor_offset = this->tune_mh(sd->locus, sd->sample_points, estimated_mean);
 
     if (sd->autocor_offset <= this->s.target_autocor_offset)
         sd->samp_method = METROPOLIS_HASTINGS;
     else
     {
-        sd->autocor_offset = this->tune_ss(sd->sample_points);
+        sd->autocor_offset = this->tune_ss(sd->locus, sd->sample_points, estimated_mean);
         sd->samp_method = (sd->autocor_offset <= this->s.target_autocor_offset)
             ? SLICE_SAMPLING
             : FAILED;
@@ -237,16 +276,20 @@ void posterior_wrapper::tune(sample_details *sd)
 }
 
 
-void posterior_wrapper::sample(sample_details *sd, size_t num_points)
+void posterior_wrapper::sample(sample_details *sd, double *initial_point, size_t num_points)
 {
+    // burn_in is usually only necessary with 
+    size_t burn_in = 10;
     switch(sd->samp_method)
     {
     case METROPOLIS_HASTINGS:
-        this->sampler->sample(num_points, 0, sd->autocor_offset, NULL, NULL, sd->sample_points);
+        this->sampler->sample(num_points, burn_in, sd->autocor_offset,
+                              initial_point,
+                              NULL, NULL, sd->sample_points);
         break;
     case SLICE_SAMPLING:
         this->slice_sampler->sample(this->model, 
-                                    this->mode_point,
+                                    initial_point,
                                     this->s.initial_sampling_range, 
                                     sd->autocor_offset,
                                     sd->sample_points,
@@ -260,6 +303,7 @@ void posterior_wrapper::sample(sample_details *sd, size_t num_points)
 // generate sample points according to the parameters set in posterior_wrapper
 // alt_sample_points must be of size this->final_num_points * 4
 // write 
+/*
 void posterior_wrapper::sample(PileupSummary *locus, double *sample_points_buf, char *algorithm_used)
 {
     size_t cumul_autocor_offset = this->tune_mh(locus, sample_points_buf);
@@ -274,7 +318,7 @@ void posterior_wrapper::sample(PileupSummary *locus, double *sample_points_buf, 
     else
     {
         //metropolis hastings failed.  try slice sampling
-        size_t best_autocor_offset = this->tune_ss(sample_points_buf);
+        size_t best_autocor_offset = this->tune_ss(locus, sample_points_buf);
         
         if (best_autocor_offset <= this->s.target_autocor_offset)
         {
@@ -293,6 +337,7 @@ void posterior_wrapper::sample(PileupSummary *locus, double *sample_points_buf, 
         }
     }
 }
+*/
 
 
 // generate a set of normalized values of the posterior at the
@@ -454,7 +499,8 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     locus.parse(this->min_quality_score);
     this->model->locus_data = &locus.counts;
     this->params->pack(&locus.counts);
-    this->find_mode();
+    // we don't do mode-finding anymore
+    // this->find_mode();
 
     double 
         test_quantile_value,
@@ -463,19 +509,26 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
 
     // first-pass test.  if reference-base component of mode point is
     // too close to 1, then the test quantile value will be as well.
-    const char *nucs = "ACGTacgt", *query;
+    char nucs[] = "ACGTacgt", *query;
     int ref_ind = (query = strchr(nucs, locus.reference_base)) ? (query - nucs) % 4 : -1;
-    if (ref_ind >= 0 && 
-        this->mode_point[ref_ind] > max_test_quantile_value)
-        return out_buffer; 
+
+#ifndef _SKIP_FIRST_PASS_TEST_
+    // if (ref_ind >= 0 && 
+    //     this->mode_point[ref_ind] > max_test_quantile_value)
+    //     return out_buffer; 
+#endif
 
     sample_details sd;
     sd.locus = &locus;
     sd.sample_points = sample_points_buf;
-    this->tune(&sd);
-    this->sample(&sd, this->s.final_num_points);
 
-    // second-pass test.
+    double initial_point[NUM_NUCS];
+    // opportunity here to not re-sample points if the tuning has okay autocorrelation.
+    this->tune(&sd, initial_point);
+    this->sample(&sd, initial_point, this->s.final_num_points);
+
+    // we always print a base composition estimate for loci with
+    // ref=N.  So, we only do the filtering test if ref!=N
     if (ref_ind >= 0)
         compute_marginal_quantiles(sd.sample_points,
                                    this->s.final_num_points,
@@ -488,7 +541,7 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     // invert the value threshold.  we want to test for distance of
     // reference base away from 1, rather than presence of
     // non-reference base.
-    if (ref_ind >= 0 && test_quantile_value >= max_test_quantile_value)
+    if (ref_ind >= 0 && test_quantile_value > max_test_quantile_value)
         return out_buffer;
 
 

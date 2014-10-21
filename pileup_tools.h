@@ -52,7 +52,7 @@ public:
     size_t read_depth_high_qual; 
 
     int base_counts[num_base_symbols]; //ACGTNacgtn
-    int base_qual_sums[num_base_symbols]; //qualities for corresponding counts
+    /* int base_qual_sums[num_base_symbols]; //qualities for corresponding counts */
     int sum_of_counts;
     char *bases, *bases_upper, *bases_raw, *quality_codes;
 
@@ -64,12 +64,20 @@ public:
     void parse(size_t min_quality_score);
 
     static void SetFtype(FastqType _fastq_type);
+    static void set_offset(int offset);
 };
 
 FastqType FastqFileType(char const* pileup_file,
                         char * chunk_buffer_in,
                         size_t chunk_size,
                         size_t num_threads);
+
+
+// return the probable fastq offset (33 or 64) for this pileup file.
+// scan up to chunk_size bytes.
+int fastq_offset(const char *pileup_file,
+                 char *chunk_buffer_in,
+                 size_t chunk_size);
 
 
 #endif // _PILEUP_TOOLS_H

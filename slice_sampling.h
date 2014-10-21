@@ -10,6 +10,7 @@
 
 #include "tools.h"
 #include "sampling.h"
+#include "defs.h"
 
 /*
   Slice sampling as formulated by Radford M Neal and implemented here:
@@ -30,19 +31,16 @@ defined by y.  Generating an independent point drawn uniformly from S
 may still be difficult, in which case we can substitute some update
 for x that leaves the uniform distribution over S invariant.
 
-
-
  */
 
 class ErrorEstimate;
 
+#define NBITS_PER_DIM 62
+#define NDIM (NUM_NUCS - 1)
+
 class SliceSampling
 {
-    size_t const ndim;
-    size_t const nbits_per_dim;
-
     size_t range_delta;
-
     size_t total_bits;
 
     mpz_t U, N, B, xprime, zero;
@@ -50,9 +48,9 @@ class SliceSampling
 
     gmp_randstate_t rand_state;
 
-    uint64_t * xcoord_grid;
-    double * xcoord;
-    int * coord_chunks;
+    uint64_t xcoord_grid[NDIM];
+    double xcoord[NDIM];
+    int coord_chunks[NBITS_PER_DIM];
     double yprime;
 
 
@@ -60,7 +58,7 @@ class SliceSampling
 
  public:
 
-    SliceSampling(size_t const _ndim, size_t const nbits_per_dim, size_t _range_delta);
+    SliceSampling(size_t _range_delta);
 
     ~SliceSampling();
     void Initialize();
@@ -75,10 +73,10 @@ class SliceSampling
                 int initial_range,
                 uint64_t * xgp);
 
-    int step_out(ErrorEstimate * integrand, 
-                 uint64_t const* xg,
-                 double const y,
-                 int const initial_range);
+    int step_out(ErrorEstimate *integrand, 
+                 const uint64_t *xg,
+                 double y,
+                 int initial_range);
     
     void initialize_starting_point(double const* starting_x, 
                                    size_t const ndim);

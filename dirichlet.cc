@@ -1,7 +1,6 @@
 #include "dirichlet.h"
 
 #include <cassert>
-#include "transformation.h"
 
 #include <gsl/gsl_randist.h>
 #include <gsl/gsl_sf_gamma.h>
@@ -9,6 +8,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <string.h>
 
 Dirichlet::Dirichlet()
 {
@@ -21,9 +21,11 @@ Dirichlet::~Dirichlet()
 }
 
 
+// update this->alpha and this->alpha0 according to the argument.
 void Dirichlet::update(const double *_alpha)
 {
-    std::copy(_alpha, _alpha + NUM_NUCS, this->alpha);
+    memcpy(this->alpha, _alpha, sizeof(double) * NUM_NUCS);
+    // std::copy(_alpha, _alpha + NUM_NUCS, this->alpha);
     this->alpha0 = 0;
 
     for (size_t d = 0; d != NUM_NUCS; ++d)
@@ -39,18 +41,10 @@ void Dirichlet::update(const double *_alpha)
 }
 
 
-void Dirichlet::set_alpha0(double alpha0)
-{
-    this->alpha0 = alpha0;
-}
-
-
 void Dirichlet::set_alphas_from_mode(const double *mode)
 {
     for (size_t d = 0; d != NUM_NUCS; ++d)
-    {
         this->alpha[d] = mode[d] * (this->alpha0 - NUM_NUCS) + 1;
-    }
 }
 
 
@@ -59,7 +53,8 @@ void Dirichlet::set_alphas_from_mode(const double *mode)
    alphas to fit the posterior as best as possible.  Since the
    posterior combines the concave Dirichlet prior with highly variable
    evidence, the posterior may be convex in some dimensions (the
-   dimensions with base observations) but still concave in others.
+   dimensions with base observations) but still concave in others (is
+   that true?)
 
    Note that a posterior with no base observations reduces to a pure
    Dirichlet, which is the prior. In that case, simply knowing the 
@@ -74,7 +69,7 @@ void Dirichlet::set_alphas_from_mode(const double *mode)
  */
 void Dirichlet::set_alphas_from_mode_or_bound(const double *mode_or_peak,
                                               const double *alpha_lower_bound,
-                                              bool const* is_zero_boundary)
+                                              const bool *is_zero_boundary)
 {
     size_t num_observed_dims = 0;
 
@@ -150,7 +145,10 @@ double Dirichlet::pdf(const double *x)
     return gsl_ran_dirichlet_pdf(NUM_NUCS, this->alpha, x);
 }
 
-
+double Dirichlet::log_pdf(const double *x)
+{
+    return gsl_ran_dirichlet_lnpdf(NUM_NUCS, this->alpha, x);
+}
 
 /*
   Reimplementation of GSL's function gsl_ran_dirichlet_lnpdf that handles
@@ -159,11 +157,12 @@ double Dirichlet::pdf(const double *x)
   theta to be zero.  but, when alpha_i == 0, gsl_sf_lngamma is undefined.
   
  */
+/*
 double
 ran_dirichlet_lnpdf(const size_t K,
                     const double alpha[], const double theta[])
 {
-    /*We calculate the log of the pdf to minimize the possibility of overflow */
+    // We calculate the log of the pdf to minimize the possibility of overflow
     size_t i;
     double log_p = 0.0;
     double sum_alpha = 0.0;
@@ -181,18 +180,8 @@ ran_dirichlet_lnpdf(const size_t K,
 
     return log_p;
 }
+*/
 
-
-double Dirichlet::log_pdf(const double *x)
-{
-    return Transformation::log_dirichlet(this->alpha, x);
-}
-
-
-double Dirichlet::log2_pdf(const double *x)
-{
-    return Transformation::log2_dirichlet(this->alpha, x);
-}
 
 
 // generates a sample point from the 4-D dirichlet distribution
@@ -201,10 +190,11 @@ void Dirichlet::sample(double *x_star) const
     gsl_ran_dirichlet(seed, NUM_NUCS, this->alpha, x_star);
 }
 
-
+/*
 void Dirichlet::sample_conditioned(const double *x_tau, 
                                    double *x_star)
 {
     this->set_alphas_from_mode(x_tau);
     gsl_ran_dirichlet(seed, NUM_NUCS, this->alpha, x_star);
 }
+*/
