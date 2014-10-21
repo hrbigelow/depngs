@@ -195,3 +195,21 @@ the largest weight is < 10/n.
 Finally, what do we have left?  A subregion where both P(*) and
 Q(*) are large.
 
+
+Sum of values expressed in log form
+
+given log(a) and log(b), calculate log(a + b) as:
+
+without loss of generality, assume log(b) > log(a).  Then, write:
+
+1.  the desired quantity
+ln(a + b)
+
+2.  equivalent expression
+ln(exp(ln(a)) + exp(ln(b)))                              
+
+3. factor out ln(b)
+ln(b) + ln(exp(ln(a) - ln(b)) + exp(ln(b) - ln(b)))      ## ln(b * (a/b + 1))
+
+4. cancel
+ln(b) + ln(exp(ln(a) - ln(b)) + 1)

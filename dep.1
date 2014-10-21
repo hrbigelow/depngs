@@ -55,27 +55,20 @@ mutational distance for indels.
 
 The vast majority of loci will not differ between samples.  To take
 advantage of this and avoid doing unnecessarily refined computations,
-\fBdep dist\fP uses a set of increasingly stringent tests:
+\fBdep dist\fP uses a two-pass strategy:
 
 .RS
 .TP
 .B Test 1
-Use gradient ascent to find the mode point in the two distributions.
-If the mode points are closer than the minimum threshold, move on to
-next locus without reporting any difference. Otherwise, proceed to
-test 2.
-
-.TP
-.B Test 2
 Take a first-pass smaller number of sample points from each posterior,
 and generate the course-grained 1D distance distribution from this.
 Calculate the quantile value for the lowest specified quantile. If the
 value is less than the minimum threshold, move on to next locus
-without reporting any difference. Otherwise, proceed to test 3.
+without reporting any difference. Otherwise, proceed to test 2.
 
 .TP
-.B Test 3
-Take a final pass, larger number of points, and proceed as in test 2.
+.B Test 2
+Take a final pass, larger number of points, and proceed as in test 1.
 If no above-threshold difference is detected, move on to next locus
 without reporting any difference. Otherwise, report the locus as
 differing, calculating all quantile values.
@@ -852,11 +845,8 @@ the -V flag with successively looser tolerance (starting at 1e-20, til
 1e-5 or so) and study the output to determine what is needed.
 
 .TP
-.I prior_alphas_file
-Not used.  Use this if you don't agree with the philosophy of using a
-uniform prior (alphas equal to 1.0).  The uniform prior expresses the
-belief that, in the absence of any data, there is an equal probability
-for any base composition in the continuous space.
+.I prior_alpha
+Should range from 1e-5 to 1. Default 0.1.
 
 .TP
 .I gradient_tolerance
@@ -908,7 +898,7 @@ tuning_num_points         | -T [1e3]     | -T [1e3]
 .br
 prelim_num_points         |              | -x [1e2]
 .br
-num_sample_point_pairs    |              | -p [1e4]
+num_sample_point_pairs    |              | -P [1e4]
 .br
 final_num_points          | -f [1e3]     | -f [1e3]
 .br
@@ -920,7 +910,7 @@ autocor_max_value         | -M [0.2]     | -M [0.2]
 .br
 gradient_tolerance        | -z [1e-5]    | -z [1e-5]
 .br
-prior_alphas_file         | -p [*note]   | -p [*note]
+prior_alpha               | -p [0.1]     | -p [0.1]
 .br
 
 .B NOTE:
