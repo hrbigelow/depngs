@@ -21,7 +21,6 @@ size_t marginal_quantiles_locus_bytes(size_t num_quantiles);
 char * print_marginal_quantiles(char * out_buf,
                                 double * sample_points,
                                 size_t num_points,
-                                double const* mode_point,
                                 char const* line_label,
                                 char const** dimension_labels,
                                 char const* sums_label,

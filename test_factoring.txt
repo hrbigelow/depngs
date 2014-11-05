@@ -134,6 +134,29 @@ the simplex where 1/p(x_i) is less than 0.1z.  This is the region of
 "high density"
 
 
+Fortunately, we can estimate p_norm accurately, even analytically.  
+
+
+Iterative procedure for estimating q_norm from a subset of the points.
+
+
+
+Procedure:
+
+1.  Find the highest weighted point H ('heavy') in Q(*) (weighted by q).
+2.  Calculate maximum 'f' factor for each point from H, as:
+
+max(
+  max(H.a, p.a) / min(H.a, p.a),
+  max(H.c, p.c) / min(H.c, p.c),
+  max(H.g, p.g) / min(H.g, p.g),
+  max(H.t, p.t) / min(H.t, p.t)
+)
+
+3.  Sort all points by f factor
+4.  Calculate a running average of 
+
+
 
 
 Goal is to use the sample points in the largest region such that

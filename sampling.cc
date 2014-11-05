@@ -45,7 +45,6 @@ size_t marginal_quantiles_locus_bytes(size_t num_quantiles)
 char *print_marginal_quantiles(char *out_buf, 
                                double *sample_points,
                                size_t num_points,
-                               const double *mode_point,
                                const char *line_label,
                                const char **dimension_labels,
                                const char *sums_label,
@@ -61,7 +60,6 @@ char *print_marginal_quantiles(char *out_buf,
     double *quantile_values = new double[num_quantiles];
 
     double mean_sum = 0.0;
-    double mode_point_sum = 0.0;
 
     double *mean = new double[num_dimensions];
     std::multimap<double, size_t, std::greater<double> > dim_to_mean;
@@ -98,9 +96,7 @@ char *print_marginal_quantiles(char *out_buf,
         out_buf += sprintf(out_buf, "%s\t%s\t%Zu", line_label, dimension_labels[d], mean_rank_order[d]);
         compute_marginal_quantiles(sample_points, num_points, d, quantiles, num_quantiles, quantile_values);
 
-        mode_point_sum += mode_point[d];
-
-        out_buf += sprintf(out_buf, "\t%10.8f\t%10.8f", mean[d], mode_point[d]);
+        out_buf += sprintf(out_buf, "\t%10.8f", mean[d]);
 
         for (size_t q = 0; q != num_quantiles; ++q)
         {
@@ -111,7 +107,7 @@ char *print_marginal_quantiles(char *out_buf,
     }
 
     out_buf += sprintf(out_buf, "%s\t%s\t%s", line_label, sums_label, sums_label);
-    out_buf += sprintf(out_buf, "\t%10.8f\t%10.8f", mean_sum, mode_point_sum);
+    out_buf += sprintf(out_buf, "\t%10.8f", mean_sum);
 
     for (size_t q = 0; q != num_quantiles; ++q)
     {

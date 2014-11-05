@@ -407,7 +407,6 @@ char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
         print_marginal_quantiles(out_buffer,
                                  sd->sample_points,
                                  this->s.final_num_points,
-                                 this->mode_point,
                                  line_label, 
                                  dimension_labels, 
                                  "+", 
