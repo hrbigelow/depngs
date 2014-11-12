@@ -1,5 +1,5 @@
 *.o
-obj
+*.d
 pileup_depth_stats
 dep
 pileup_to_bindepth

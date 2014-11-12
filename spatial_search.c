@@ -156,7 +156,13 @@ double estimate_volume(struct marked_point *head, unsigned G)
     /* } */
     /* fprintf(stdout, "\n\n"); */
     double est_radius = (head->radius + head->prev->radius) / 2.0;
-    return FOUR_THIRDS_PI * pow(est_radius, NDIM) / (double)(G - 1);
+    double vol;
+    switch (NDIM){
+    case 3: vol = (M_PI * 4.0 / 3.0) * pow(est_radius, NDIM); break;
+    case 4: vol = (M_PI * M_PI / 2.0) * pow(est_radius, NDIM); break;
+    }
+    return vol / (double)(G - 1);
+     
 }
 
 

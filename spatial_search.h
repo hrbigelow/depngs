@@ -1,7 +1,7 @@
 #ifndef _SPATIAL_SEARCH_H
 #define _SPATIAL_SEARCH_H
 
-#define NDIM 3
+#define NDIM 4
 
 struct marked_point {
     double p[NDIM]; /* the underlying spatial coordinates of this point */

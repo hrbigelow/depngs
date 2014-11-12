@@ -101,21 +101,6 @@ void comp_to_simplex(double *comp, double *point, int ncomp)
     }
 }
 
-
-/*
-double euclidean_dist(double *p1, double *p2, int ncomp, int *ndim)
-{
-    int d;
-    double sq_dist = 0;
-    *ndim = ncomp;
-
-    for (d = 0; d != ncomp; ++d)
-        sq_dist += gsl_pow_2(p1[d] - p2[d]);
-
-    return sqrt(sq_dist);
-}
-*/
-
 static double *global_alpha;
 
 double dirichlet_pdf(double *point, int ndim)
@@ -261,101 +246,6 @@ void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
 }
 
 
-
-/* compute expected value of nearest neighbor distance, using all
-   points inside the 8th square (square with 1/2 of the side length of
-   its containing square, centered in the middle) */
-double mean_nn_dist(struct wpoint *points, int npoints,
-                    int ncomp, 
-                    double (*dist_fcn)(double *p1, double *p2, int ncomp, int *ndim),
-                    double *median_dist, 
-                    double *median_wgt,
-                    int *npoints_used)
-{
-    double *dists = (double *)malloc(npoints * sizeof(double));
-
-    /* initialize the points */
-    struct wpoint *pl, *pr, *pp, *pbeg = points, *pend = pbeg + npoints;
-
-    int d;
-    int ndim;
-
-    /* find the ranges of weight that are safe */
-    qsort(points, npoints, sizeof(struct wpoint), wcmp);
-    double lo_weight = points[(int)floor(npoints * LO_BOUND)].wgt;
-    double hi_weight = points[(int)floor(npoints * HI_BOUND)].wgt;
-    
-    cmp_dim = 0;
-    qsort(points, npoints, sizeof(struct wpoint), pcmp);
-    /* struct wpoint **lb = lower_bound(ppoints, npoints, sizeof(double *), &p_lo, pcmp); */
-    /* struct wpoint **ub = upper_bound(ppoints, npoints, sizeof(double *), &p_hi, pcmp); */
-
-    int left_more = 1, right_more = 1, total_count = 0, n = 0;
-    double nn_dist, cur_dist, total_dist = 0, total_prod = 0;
-
-    for (pp = pbeg; pp != pend; ++pp)
-    {
-        pl = pp;
-        pr = pp;
-        int out_of_bounds = 0;
-        for (d = 0; d != ncomp; ++d)
-            if (pp->wgt < lo_weight || pp->wgt > hi_weight)
-            {
-                out_of_bounds = 1;
-                break;
-            }
-
-        /* if (out_of_bounds) continue; */
-
-        left_more = pp != pbeg;
-        right_more = pp != pend;
-        nn_dist = DBL_MAX;
-
-        while (left_more || right_more)
-        {
-            if (left_more)
-            {
-                if (--pl == pbeg || fabs(pl->x[cmp_dim] - pp->x[cmp_dim]) > nn_dist)
-                    left_more = 0;
-
-                else
-                    nn_dist = ((cur_dist = dist_fcn(pl->x, pp->x, ncomp, &ndim)) < nn_dist)
-                        ? cur_dist : nn_dist;
-            }
-            if (right_more)
-            {
-                if (++pr == pend || fabs(pr->x[cmp_dim] - pp->x[cmp_dim]) > nn_dist)
-                    right_more = 0;
-                
-                else
-                    nn_dist = ((cur_dist = dist_fcn(pr->x, pp->x, ncomp, &ndim)) < nn_dist)
-                        ? cur_dist : nn_dist;
-            }
-        }
-
-        dists[n++] = nn_dist;
-        if (! out_of_bounds && pl != pbeg && pr != pend)
-        {
-            total_dist += nn_dist;
-            total_prod += pow(nn_dist, ndim) * pp->wgt;
-            total_count++;
-        }
-        if ((pend - pp) % 10000 == 0)
-            fprintf(stdout, "%lu points left.\n", pend - pp);
-    }
-    qsort(dists, npoints, sizeof(double), double_comp);
-    *median_dist = dists[npoints / 2];
-
-    qsort(points, npoints, sizeof(struct wpoint), wcmp);
-    *median_wgt = points[npoints / 2].wgt;
-
-    *npoints_used = total_count;
-
-    free(dists);
-    return total_prod / (double)total_count;
-}
-
-
 void die(const char *msg, int exitval)
 {
     fprintf(stdout, "%s\n", msg);
@@ -369,16 +259,13 @@ int main(int argc, char **argv)
     unsigned nsim = atoi(argv[3]);
     char *str_alpha = argv[4];
 
-    unsigned ncomp = NDIM + 1;
+    unsigned ncomp = NDIM;
 
     global_alpha = (double *)malloc(npoints * 4 * sizeof(double));
 
     sscanf(str_alpha, "%lf,%lf,%lf,%lf", &global_alpha[0], &global_alpha[1], &global_alpha[2], &global_alpha[3]);
 
-    int n_dirichlet_dim = NDIM + 1;
-
-    /* double total_volume = 1; */
-    /* double points_per_unit_volume = (double)npoints / total_volume; */
+    int n_dirichlet_dim = NDIM;
 
     gsl_rng *rand = gsl_rng_alloc(gsl_rng_taus);
     struct timespec now;
@@ -392,7 +279,6 @@ int main(int argc, char **argv)
         die("Couldn't allocate that many points.", 1);
 
     struct wpoint *pp, *pe = points + npoints;
-    /* double mean_vol_times_wgt = 0, median_dist, median_wgt; */
     
     for (pp = points, pb = buf; pp != pe; ++pp, pb += NDIM)
         pp->x = pb;
@@ -406,41 +292,13 @@ int main(int argc, char **argv)
     {
         for (pp = points; pp != pe; ++pp)
         {
-            gsl_ran_dirichlet(rand, n_dirichlet_dim, global_alpha, comp);
-            pp->wgt = dirichlet_pdf(comp, ncomp);
-            comp_to_simplex(comp, pp->x, ncomp);
+            gsl_ran_dirichlet(rand, n_dirichlet_dim, global_alpha, pp->x);
+            pp->wgt = dirichlet_pdf(pp->x, n_dirichlet_dim);
+            /* comp_to_simplex(comp, pp->x, ncomp); */
         }
         
         partite_mass(points, npoints, G, LO_BOUND, HI_BOUND, sim);
     }
-    /*
-    int npoints_used;
-    mean_vol_times_wgt = mean_nn_dist(points, npoints, NDIM, 
-                                      euclidean_dist, &median_dist, 
-                                      &median_wgt, &npoints_used);
-
-    fprintf(stdout, 
-            "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-            "ncomp",
-            "NDIM",
-            "npoints",
-            "npoints_used",
-            "mean",
-            "mean_times_density",
-            "median_dist",
-            "median_wgt",
-            "md_mw_times_density");
-
-    fprintf(stdout, 
-            "%i\t%i\t%i\t%i\t%g\t%g\t%g\t%g\t%g\n",
-            ncomp, NDIM, npoints, npoints_used, 
-            mean_vol_times_wgt,
-            mean_vol_times_wgt * points_per_unit_volume, 
-            median_dist,
-            median_wgt,
-            pow(median_dist, NDIM) * median_wgt * points_per_unit_volume);
-    */
-    
 
     free(points);
     free(global_alpha);

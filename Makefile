@@ -23,6 +23,8 @@ LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
 
 SOURCES = $(shell find $(srcdir) -name "*.cc")
+CSOURCES = $(shell find $(srcdir) -name '*.c')
+
 ALTSOURCES = $(shell find $(altsrcdir) -name "*.cc")
 
 EXE = dep test_dirichlet
@@ -77,6 +79,7 @@ distance_wise : obj/distance_wise.o ../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 -include $(patsubst ./%.cc,$(OBJDIR)/%.d,$(SOURCES))
+-include $(patsubst ./%.c,$(OBJDIR)/%.d,$(CSOURCES))
 
 define make-depend
 $(CXX) -MM -MF $1 -MP -MT $2 $(CXXFLAGS) $(CPPFLAGS) $3
