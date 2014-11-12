@@ -74,8 +74,8 @@ static double simplex4[] = {
 };
 
 
-static double LO_BOUND = 0.1;
-static double HI_BOUND = 0.9;
+static double LO_BOUND = 0.01;
+static double HI_BOUND = 0.99;
 
 /* N normalized components fit into N-1 dimensions.  The simplex
    corners are N points, each of N-1 dimensions.  The result is an N-1
@@ -131,7 +131,8 @@ double dirichlet_pdf(double *point, int ndim)
    Calculate mass as v * P(p) for each point.  Finally, return median
    and mean of masses filtered somehow... */
 void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
-                  double min_quantile, double max_quantile)
+                  double min_quantile, double max_quantile,
+                  unsigned sim)
 {
     /* build the marked_point arrays */
     struct marked_point **mpoints[NDIM];
@@ -153,7 +154,7 @@ void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
         ++wp;
     }
 
-    int p, d;
+    unsigned p, d;
 
     /* initialize all pointers in mpoints[] */
     for (d = 0; d != NDIM; ++d)
@@ -196,16 +197,21 @@ void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
     }
 
     /* report raw metrics */
-    fprintf(stdout, "%s\t%s\t%s\t%s\n",
-            "category",
-            "volume",
-            "weight",
-            "mass");
-
+    if (sim == 0)
+        fprintf(stdout, "%s\t%s\t%s\t%s\t%s\t%s\n",
+                "category",
+                "num_points",
+                "sim#",
+                "volume",
+                "weight",
+                "mass");
+    
     for (p = 0; p != total_used; ++p)
     {
-        fprintf(stdout, "%u\t%g\t%g\t%g\n",
+        fprintf(stdout, "%u\t%u\t%u\t%g\t%g\t%g\n",
                 p,
+                total_used,
+                sim,
                 volume[p],
                 weight[p],
                 mass[p]);
@@ -223,8 +229,8 @@ void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
     };
     
     unsigned
-        min_p = (unsigned)floor(npoints * min_quantile),
-        max_p = (unsigned)floor(npoints * max_quantile) - 1,
+        min_p = (unsigned)floor(total_used * min_quantile),
+        max_p = (unsigned)floor(total_used * max_quantile) - 1,
         num_used_metrics = max_p - min_p;
         
     double means[] = { 0, 0, 0 };
@@ -238,8 +244,11 @@ void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
     means[1] /= (double)num_used_metrics;
     means[2] /= (double)num_used_metrics;
     
-    fprintf(stdout, "%s\t%g\t%g\t%g\n", "mean", means[0], means[1], means[2]);
-    fprintf(stdout, "%s\t%g\t%g\t%g\n", "median", medians[0], medians[1], medians[2]);
+    fprintf(stdout, "%s\t%u\t%u\t%g\t%g\t%g\n", "mean", 
+            total_used, sim, means[0], means[1], means[2]);
+
+    fprintf(stdout, "%s\t%u\t%u\t%g\t%g\t%g\n", "median", 
+            total_used, sim, medians[0], medians[1], medians[2]);
 
     /* clean up */
     for (d = 0; d != NDIM; ++d)
@@ -332,7 +341,7 @@ double mean_nn_dist(struct wpoint *points, int npoints,
             total_count++;
         }
         if ((pend - pp) % 10000 == 0)
-            fprintf(stdout, "%i points left.\n", pend - pp);
+            fprintf(stdout, "%lu points left.\n", pend - pp);
     }
     qsort(dists, npoints, sizeof(double), double_comp);
     *median_dist = dists[npoints / 2];
@@ -347,7 +356,7 @@ double mean_nn_dist(struct wpoint *points, int npoints,
 }
 
 
-void die(char *msg, int exitval)
+void die(const char *msg, int exitval)
 {
     fprintf(stdout, "%s\n", msg);
     exit(exitval);
@@ -355,60 +364,65 @@ void die(char *msg, int exitval)
 
 int main(int argc, char **argv)
 {
-    /* */
-    int ncomp = atoi(argv[1]);
-    int ndim_projected = atoi(argv[2]);
-    int npoints = atoi(argv[3]);
-    unsigned G = atoi(argv[4]);
-    char *str_alpha = argv[5];
+    int npoints = atoi(argv[1]);
+    unsigned G = atoi(argv[2]);
+    unsigned nsim = atoi(argv[3]);
+    char *str_alpha = argv[4];
+
+    unsigned ncomp = NDIM + 1;
 
     global_alpha = (double *)malloc(npoints * 4 * sizeof(double));
-    double alpha[4];
+
     sscanf(str_alpha, "%lf,%lf,%lf,%lf", &global_alpha[0], &global_alpha[1], &global_alpha[2], &global_alpha[3]);
 
-    int n_dirichlet_dim = ncomp;
-    double total_volume = 1;
+    int n_dirichlet_dim = NDIM + 1;
 
-    double points_per_unit_volume = (double)npoints / total_volume;
+    /* double total_volume = 1; */
+    /* double points_per_unit_volume = (double)npoints / total_volume; */
 
     gsl_rng *rand = gsl_rng_alloc(gsl_rng_taus);
     struct timespec now;
     clock_gettime(CLOCK_REALTIME, &now);
     gsl_rng_set(rand, now.tv_sec);
 
-    int c, p, d;
     struct wpoint *points = (struct wpoint *)malloc(npoints * sizeof(struct wpoint));
-    double *pb, *buf = (double *)malloc(npoints * ndim_projected * sizeof(double));
+    double *pb, *buf = (double *)malloc(npoints * NDIM * sizeof(double));
 
     if (! points)
         die("Couldn't allocate that many points.", 1);
 
     struct wpoint *pp, *pe = points + npoints;
-    double mean_vol_times_wgt = 0, median_dist, median_wgt;
+    /* double mean_vol_times_wgt = 0, median_dist, median_wgt; */
     
-    for (pp = points, pb = buf; pp != pe; ++pp, pb += ndim_projected)
+    for (pp = points, pb = buf; pp != pe; ++pp, pb += NDIM)
         pp->x = pb;
 
     /* alternative simulation of points using a Dirichlet */
     double *comp = (double *)malloc(ncomp * sizeof(double));
-    for (pp = points; pp != pe; ++pp)
-    {
-        gsl_ran_dirichlet(rand, n_dirichlet_dim, global_alpha, comp);
-        pp->wgt = dirichlet_pdf(comp, ncomp);
-        comp_to_simplex(comp, pp->x, ncomp);
-    }
 
-    partite_mass(points, npoints, G, LO_BOUND, HI_BOUND);
+    /* do X simulations */
+    unsigned sim;
+    for (sim = 0; sim != nsim; ++sim)
+    {
+        for (pp = points; pp != pe; ++pp)
+        {
+            gsl_ran_dirichlet(rand, n_dirichlet_dim, global_alpha, comp);
+            pp->wgt = dirichlet_pdf(comp, ncomp);
+            comp_to_simplex(comp, pp->x, ncomp);
+        }
+        
+        partite_mass(points, npoints, G, LO_BOUND, HI_BOUND, sim);
+    }
     /*
     int npoints_used;
-    mean_vol_times_wgt = mean_nn_dist(points, npoints, ndim_projected, 
+    mean_vol_times_wgt = mean_nn_dist(points, npoints, NDIM, 
                                       euclidean_dist, &median_dist, 
                                       &median_wgt, &npoints_used);
 
     fprintf(stdout, 
             "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
             "ncomp",
-            "ndim_projected",
+            "NDIM",
             "npoints",
             "npoints_used",
             "mean",
@@ -419,12 +433,12 @@ int main(int argc, char **argv)
 
     fprintf(stdout, 
             "%i\t%i\t%i\t%i\t%g\t%g\t%g\t%g\t%g\n",
-            ncomp, ndim_projected, npoints, npoints_used, 
+            ncomp, NDIM, npoints, npoints_used, 
             mean_vol_times_wgt,
             mean_vol_times_wgt * points_per_unit_volume, 
             median_dist,
             median_wgt,
-            pow(median_dist, ndim_projected) * median_wgt * points_per_unit_volume);
+            pow(median_dist, NDIM) * median_wgt * points_per_unit_volume);
     */
     
 

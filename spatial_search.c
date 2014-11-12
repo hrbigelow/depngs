@@ -6,6 +6,8 @@ dimensions.
 #include <stdlib.h>
 #include <float.h>
 #include <math.h>
+#include <assert.h>
+#include <stdio.h>
 #include "spatial_search.h"
 
 static unsigned cmp_dim;
@@ -46,7 +48,7 @@ void *lower_bound(void *base, size_t nmemb, size_t size,
                   int(*compar)(const void *, const void *))
 {
     size_t half;
-    void *first = base, *middle;
+    char *first = (char *)base, *middle;
     while (nmemb > 0)
     {
         half = nmemb >> 1;
@@ -73,7 +75,7 @@ void *upper_bound(void *base, size_t nmemb, size_t size,
                   int(*compar)(const void *, const void *))
 {
     size_t half;
-    void *first = base, *middle;
+    char *first = (char *)base, *middle;
     while (nmemb > 0)
     {
         half = nmemb >> 1;
@@ -135,13 +137,24 @@ int all_flags_set(unsigned char *flags)
 }
 
 
-#define FOUR_THIRDS_PI M_PI * 4.0 / 3.0
+#define FOUR_THIRDS_PI (M_PI * 4.0 / 3.0)
 
 /* estimate the volume associated with a particular center
    point. 'head' is the head of a linked list of the G nearest
    neighbors that terminates at the center point in question */
 double estimate_volume(struct marked_point *head, unsigned G)
 {
+    struct marked_point *p = head;
+    unsigned g = G;
+    /* while (p->radius) */
+    /* { */
+    /*     double est_radius = (p->radius + p->prev->radius) / 2.0; */
+    /*     fprintf(stdout, "%i\t%20.18f\n", g, */
+    /*             FOUR_THIRDS_PI * pow(est_radius, NDIM) / (double)g); */
+    /*     p = p->prev; */
+    /*     --g; */
+    /* } */
+    /* fprintf(stdout, "\n\n"); */
     double est_radius = (head->radius + head->prev->radius) / 2.0;
     return FOUR_THIRDS_PI * pow(est_radius, NDIM) / (double)(G - 1);
 }
@@ -156,10 +169,13 @@ struct marked_point *spatial_search(struct marked_point **points[NDIM],
                                     int G)
 {
     double grid_width = 0;
-    int num_nbor = 1; /* we count p as a 'neighbor' of itself */
+    int num_nbor = 1; /* we count the head_node as a neighbor initially */
     struct marked_point head_node;
     head_node.radius = DBL_MAX;
+    head_node.prev = center;
 
+    center->radius = 0;
+    
     struct marked_point *cur, *head = &head_node;
     struct marked_point **left[NDIM], **right[NDIM], **pcenter;
 
@@ -168,8 +184,9 @@ struct marked_point *spatial_search(struct marked_point **points[NDIM],
     for (d = 0; d != NDIM; ++d)
     {
         set_cmp_dim(d);
-        pcenter = lower_bound(points[d], npoints, sizeof(struct marked_point *),
-                              &center, marked_point_comp);
+        pcenter = (marked_point **)lower_bound(points[d], npoints, 
+                                               sizeof(struct marked_point *),
+                                               &center, marked_point_comp);
         while (*pcenter != center)
             ++pcenter;
 
@@ -219,9 +236,10 @@ struct marked_point *spatial_search(struct marked_point **points[NDIM],
             cur->prev = p->prev;
             p->prev = cur;
             ++num_nbor;
+            assert(cur->prev != cur);
 
             /* shrink the list */
-            if (num_nbor == G)
+            if (num_nbor > G)
             {
                 head = head->prev;
                 --num_nbor;

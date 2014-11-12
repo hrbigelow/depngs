@@ -8,6 +8,7 @@ altsrcdir = ../samutil
 prefix = $(HOME)/usr
 bindir = $(prefix)/bin
 
+C = gcc
 CC = g++
 INSTALL = /usr/bin/install -c
 INSTALLDATA = /usr/bin/install -c -m 644
@@ -16,6 +17,7 @@ CPPFLAGS = -I. -I..
 OPT = -O0
 PROF = 
 CXXFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu++0x
+CFLAGS = -ggdb3 $(OPT) -Wall
 LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt
 
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
@@ -37,6 +39,9 @@ dep : $(addprefix $(OBJDIR)/, dep.o comp.o comp_functor.o simp.o		\
 	anomaly_tools.o dist.o dist_worker.o locus_comp.o pug.o vcf.o)		\
 	../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_distance : test_distance.o spatial_search.o
+	$(C) $(CFLAGS) -o $@ $^ -lgsl -lgslcblas -lrt -lm
 
 quantile_test : quantile_test.o sampling.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
