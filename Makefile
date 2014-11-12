@@ -40,7 +40,7 @@ dep : $(addprefix $(OBJDIR)/, dep.o comp.o comp_functor.o simp.o		\
 	../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
-test_distance : test_distance.o spatial_search.o
+test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)
 	$(C) $(CFLAGS) -o $@ $^ -lgsl -lgslcblas -lrt -lm
 
 quantile_test : quantile_test.o sampling.o
@@ -79,13 +79,20 @@ distance_wise : obj/distance_wise.o ../samutil/obj/file_utils.o
 -include $(patsubst ./%.cc,$(OBJDIR)/%.d,$(SOURCES))
 
 define make-depend
-$(CXX) -MM -MF $3 -MP -MT $2 $(CXXFLAGS) $(CPPFLAGS) $1
+$(CXX) -MM -MF $1 -MP -MT $2 $(CXXFLAGS) $(CPPFLAGS) $3
 endef
 
+define cmake-depend
+$(C) -MM -MF $1 -MP -MT $2 $(CFLAGS) $(CPPFLAGS) $3
+endef
 
 $(OBJDIR)/%.o: %.cc
-	$(call make-depend,$<,$@,$(subst .o,.d,$@))
+	$(call make-depend,$(subst .o,.d,$@),$@,$<)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(OBJDIR)/%.o: %.c
+	$(call cmake-depend,$(subst .o,.d,$@),$@,$<)
+	$(C) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 
 .PHONY: install

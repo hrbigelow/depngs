@@ -144,8 +144,8 @@ int all_flags_set(unsigned char *flags)
    neighbors that terminates at the center point in question */
 double estimate_volume(struct marked_point *head, unsigned G)
 {
-    struct marked_point *p = head;
-    unsigned g = G;
+    /* struct marked_point *p = head; */
+    /* unsigned g = G; */
     /* while (p->radius) */
     /* { */
     /*     double est_radius = (p->radius + p->prev->radius) / 2.0; */
@@ -184,9 +184,9 @@ struct marked_point *spatial_search(struct marked_point **points[NDIM],
     for (d = 0; d != NDIM; ++d)
     {
         set_cmp_dim(d);
-        pcenter = (marked_point **)lower_bound(points[d], npoints, 
-                                               sizeof(struct marked_point *),
-                                               &center, marked_point_comp);
+        pcenter = (struct marked_point **)lower_bound(points[d], npoints, 
+                                                      sizeof(struct marked_point *),
+                                                      &center, marked_point_comp);
         while (*pcenter != center)
             ++pcenter;
 
