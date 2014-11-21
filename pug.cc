@@ -35,6 +35,12 @@ int pug_usage()
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
+struct range {
+    char contig[32];
+    size_t beg, end;
+};
+
+
 int main_pug(int argc, char ** argv)
 {
     char c;
@@ -57,9 +63,9 @@ int main_pug(int argc, char ** argv)
         return pug_usage();
     }
 
-    char const* pileup_file = argv[optind];
-    char const* locus_file = argv[optind + 1];
-    char const* contig_order_file = argv[optind + 2];
+    const char *pileup_file = argv[optind];
+    const char *locus_file = argv[optind + 1];
+    const char *contig_order_file = argv[optind + 2];
 
     std::map<char const*, size_t, ltstr> contig_order;
     // parse contig_order file

@@ -99,28 +99,32 @@ void *upper_bound(void *base, size_t nmemb, size_t size,
 /* among the left and right points, find the closest point in the
    single-component distance of 'dim' dimension to 'center'.  set
    '*closest_point' equal to this found point, and return its linear
-   distance to 'center'
+   distance to 'center'.  If left[d] or right[d] is NULL, signals that
+   there are no more points in that direction for that dimension.
   */
 double min_dist(struct marked_point **left[],
                 struct marked_point **right[],
                 struct marked_point *center,
                 struct marked_point **closest_point,
-                int *min_dim)
+                int *min_dim,
+                int *left_side_min)
 {
     int d;
     double min_dist = DBL_MAX, cur_dist;
     for (d = 0; d != NDIM; ++d)
     {   
-        if ((cur_dist = center->p[d] - (*left[d])->p[d]) < min_dist)
+        if (left[d] && (cur_dist = center->p[d] - (*left[d])->p[d]) < min_dist)
         {
             min_dist = cur_dist;
             *min_dim = d;
+            *left_side_min = 1;
             *closest_point = *left[d];
         }
-        if ((cur_dist = (*right[d])->p[d] - center->p[d]) < min_dist)
+        if (right[d] && (cur_dist = (*right[d])->p[d] - center->p[d]) < min_dist)
         {
             min_dist = cur_dist;
             *min_dim = d;
+            *left_side_min = 0;
             *closest_point = *right[d];
         }
     }
@@ -167,11 +171,16 @@ double estimate_volume(struct marked_point *head, unsigned G)
 
 
 /* returns the head of a linked list of the G nearest neighbors of a
-   given point. it is the caller's responsibility to clear the in_grid
-   flags of all points */
+   given point.  if the G nearest neighbors do not fit in a sphere of
+   radius less than 'max_radius', returns NULL.  Conceptually,
+   'max_radius' is set such that the sphere centered at center.p with
+   max_radius will be tangent to the domain boundary of the function
+   generating the points.  This is the mechanism by which the search
+   avoids the poor estimations caused by points on the boundary.  */
 struct marked_point *spatial_search(struct marked_point **points[NDIM],
                                     unsigned npoints,
                                     struct marked_point *center,
+                                    double max_radius,
                                     int G)
 {
     double grid_width = 0;
@@ -200,24 +209,26 @@ struct marked_point *spatial_search(struct marked_point **points[NDIM],
         right[d] = pcenter == points[d] + npoints - 1 ? pcenter : pcenter + 1;
     }
 
-    int min_dim;
+    int min_dim, left_side_min;
     
     while (grid_width < head->radius)
     {
-        grid_width = min_dist(left, right, center, &cur, &min_dim);
+        grid_width = min_dist(left, right, center, &cur, &min_dim, &left_side_min);
 
         /* update left or right */
-        if (cur == *left[min_dim])
+        if (left_side_min)
         {
-            if (left[min_dim] == points[min_dim])
-                return NULL;
-            --left[min_dim];
+            if (left[min_dim] != points[min_dim])
+                --left[min_dim];
+            else
+                left[min_dim] = NULL;
         }
         else
         {
-            if (right[min_dim] == points[min_dim] + npoints - 1)
-                return NULL;
-            ++right[min_dim];
+            if (right[min_dim] != points[min_dim] + npoints - 1)
+                ++right[min_dim];
+            else
+                right[min_dim] = NULL;
         }
 
         if (cur->center != center)
@@ -252,5 +263,8 @@ struct marked_point *spatial_search(struct marked_point **points[NDIM],
             }
         }
     }
+    if (head->radius > max_radius)
+        return NULL;
+
     return head;
 }

@@ -1,6 +1,7 @@
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_math.h>
 #include <gsl/gsl_randist.h>
+#include <gsl/gsl_statistics_double.h>
 #include <math.h>
 #include <time.h>
 #include <string.h>
@@ -77,6 +78,32 @@ static double simplex4[] = {
 static double LO_BOUND = 0.01;
 static double HI_BOUND = 0.99;
 
+
+double min_component(double *comp, unsigned ncomp)
+{
+    double c = DBL_MAX, tmp;
+    while (ncomp--)
+        c = (tmp = *comp++) < c ? tmp : c;
+    return c;
+}
+
+#define SQRT_THREE_HALVES 1.224744871391589049098642037352
+
+/* the distance of a point in the domain of an N-dimensional
+   Dirichlet to the boundary of that domain is determined only by the  */
+double dist_to_dirichlet_boundary(double *point, unsigned N)
+{
+    double dist, mc = min_component(point, N);
+    
+    switch(N)
+    {
+    case 2: dist = mc; break;
+    case 3: dist = SQRT_THREE_HALVES * mc; break;
+    case 4: dist = (2.0 * M_SQRT3 / 3.0) * mc; break;
+    }
+    return dist;
+}
+
 /* N normalized components fit into N-1 dimensions.  The simplex
    corners are N points, each of N-1 dimensions.  The result is an N-1
    dimensional 'point' */
@@ -109,6 +136,12 @@ double dirichlet_pdf(double *point, int ndim)
 }
 
 
+struct metrics
+{
+    double volume, weight, mass;
+};
+
+
 /* points are a set of weighted points sampled from some
    non-normalized distribution P(*), each weighted by the value of
    P(*) at that point.  For each point p in points, estimate its
@@ -117,7 +150,9 @@ double dirichlet_pdf(double *point, int ndim)
    and mean of masses filtered somehow... */
 void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
                   double min_quantile, double max_quantile,
-                  unsigned sim)
+                  unsigned sim,
+                  struct metrics *means, /* volume, weight, mass */
+                  struct metrics *medians /* volume, weight, mass */)
 {
     /* build the marked_point arrays */
     struct marked_point **mpoints[NDIM];
@@ -168,9 +203,11 @@ void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
     double *weight = (double *)malloc(npoints * sizeof(double *));
     double *mass = (double *)malloc(npoints * sizeof(double *));
 
+    double dist_to_boundary;
     for (p = 0; p != npoints; ++p)
     {
-        head = spatial_search(mpoints, npoints, mpoints[0][p], G);
+        dist_to_boundary = dist_to_dirichlet_boundary(mpoints[0][p]->p, NDIM);
+        head = spatial_search(mpoints, npoints, mpoints[0][p], dist_to_boundary, G);
         /* estimate the neighborhood volume somehow */
         if (! head)
             continue;
@@ -207,33 +244,33 @@ void partite_mass(struct wpoint *points, unsigned npoints, unsigned G,
     qsort(weight, total_used, sizeof(double), double_comp);
     qsort(mass, total_used, sizeof(double), double_comp);
 
-    double medians[] = { 
-        volume[total_used / 2],
-        weight[total_used / 2],
-        mass[total_used / 2]
-    };
+    medians->volume = volume[total_used / 2];
+    medians->weight = weight[total_used / 2];
+    medians->mass = mass[total_used / 2];
     
     unsigned
         min_p = (unsigned)floor(total_used * min_quantile),
         max_p = (unsigned)floor(total_used * max_quantile) - 1,
         num_used_metrics = max_p - min_p;
         
-    double means[] = { 0, 0, 0 };
+    means->volume = 0;
+    means->weight = 0;
+    means->mass = 0;
     for (p = min_p; p != max_p; ++p)
     {
-        means[0] += volume[p];
-        means[1] += weight[p];
-        means[2] += mass[p];
+        means->volume += volume[p];
+        means->weight += weight[p];
+        means->mass += mass[p];
     }
-    means[0] /= (double)num_used_metrics;
-    means[1] /= (double)num_used_metrics;
-    means[2] /= (double)num_used_metrics;
-    
+    means->volume /= (double)num_used_metrics;
+    means->weight /= (double)num_used_metrics;
+    means->mass /= (double)num_used_metrics;
+
     fprintf(stdout, "%s\t%u\t%u\t%g\t%g\t%g\n", "mean", 
-            total_used, sim, means[0], means[1], means[2]);
+            total_used, sim, means->volume, means->weight, means->mass);
 
     fprintf(stdout, "%s\t%u\t%u\t%g\t%g\t%g\n", "median", 
-            total_used, sim, medians[0], medians[1], medians[2]);
+            total_used, sim, medians->volume, medians->weight, medians->mass);
 
     /* clean up */
     for (d = 0; d != NDIM; ++d)
@@ -251,6 +288,7 @@ void die(const char *msg, int exitval)
     fprintf(stdout, "%s\n", msg);
     exit(exitval);
 }
+
 
 int main(int argc, char **argv)
 {
@@ -286,6 +324,12 @@ int main(int argc, char **argv)
     /* alternative simulation of points using a Dirichlet */
     double *comp = (double *)malloc(ncomp * sizeof(double));
 
+    struct metrics 
+        *means = (struct metrics *)malloc(nsim * sizeof(struct metrics)), 
+        *pmeans = means,
+        *medians = (struct metrics *)malloc(nsim * sizeof(struct metrics)),
+        *pmedians = medians;
+    
     /* do X simulations */
     unsigned sim;
     for (sim = 0; sim != nsim; ++sim)
@@ -297,13 +341,40 @@ int main(int argc, char **argv)
             /* comp_to_simplex(comp, pp->x, ncomp); */
         }
         
-        partite_mass(points, npoints, G, LO_BOUND, HI_BOUND, sim);
+        partite_mass(points, npoints, G, LO_BOUND, HI_BOUND, sim, pmeans++, pmedians++);
     }
 
+    struct metrics sdmeans, sdmedians;
+    sdmeans.volume = gsl_stats_sd((double *)means, 3, nsim);
+    sdmeans.weight = gsl_stats_sd(((double *)means) + 1, 3, nsim);
+    sdmeans.mass = gsl_stats_sd(((double *)means) + 2, 3, nsim);
+
+    sdmedians.volume = gsl_stats_sd((double *)medians, 3, nsim);
+    sdmedians.weight = gsl_stats_sd(((double *)medians) + 1, 3, nsim);
+    sdmedians.mass = gsl_stats_sd(((double *)medians) + 2, 3, nsim);
+
+    fprintf(stdout, "%s\t%u\t%i\t%g\t%g\t%g\n",
+            "means_sd",
+            nsim,
+            -1,
+            sdmeans.volume,
+            sdmeans.weight,
+            sdmeans.mass);
+
+    fprintf(stdout, "%s\t%u\t%i\t%g\t%g\t%g\n",
+            "medians_sd",
+            nsim,
+            -1,
+            sdmedians.volume,
+            sdmedians.weight,
+            sdmedians.mass);
+    
     free(points);
     free(global_alpha);
     free(buf);
     free(comp);
+    free(means);
+    free(medians);
     gsl_rng_free(rand);
 
     return 0;

@@ -35,6 +35,7 @@ struct marked_point *
 spatial_search(struct marked_point **points[NDIM],
                unsigned npoints,
                struct marked_point *center,
+               double max_radius,
                int G);
 
 
