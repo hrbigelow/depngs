@@ -117,14 +117,14 @@ int less_locus_range(const void *pa, const void *pb)
         *b = (struct locus_range *)pb;
 
     return 
-        less_locus_pos(a->beg, b->beg) || less_locus_pos(a->end, b->end);
+        less_locus_pos(&a->beg, &b->beg) || less_locus_pos(&a->end, &b->end);
 }
 
 
 int contains(struct off_index *ix, locus_pos loc)
 {
-    return (less_locus_pos(ix->span.beg, loc) <= 0
-            && less_locus_pos(loc, ix->span.end) < 0);
+    return (less_locus_pos(&ix->span.beg, &loc) <= 0
+            && less_locus_pos(&loc, &ix->span.end) < 0);
 }
 
 
@@ -150,18 +150,19 @@ int update_index_node(struct off_index *ix, locus_pos cur, FILE *pileup_fh)
     unsigned pos, ci;
     struct locus_pos midpoint_loc;
     size_t midpoint_off;
+    int line_start;
 
     while (ix->end_offset - ix->start_offset > target_leaf_size)
     {
         /* find the midpoint */
-        if (ix->left == ix->right == NULL)
+        if (ix->left == NULL && ix->right == NULL)
         {
             fseek(pileup_fh, (long)(ix->end_offset - ix->start_offset), SEEK_SET);
             size_t partial_pos = (size_t)ftell(pileup_fh);
             fscanf(pileup_fh, "%*[^\n]\n%n%s\t%u\t", &line_start, contig, &pos);
             INIT_CONTIG(contig, ci);
-            midpoint = { ci, pos };
-            midpoint_offset = partial_pos + line_start;
+            midpoint_loc = { ci, pos };
+            midpoint_off = partial_pos + line_start;
         }
         else
         {
@@ -212,7 +213,7 @@ void process_chunk(struct off_index *ix,
     size_t nbytes_read = fread(chunk_buf, 1, nbytes_wanted, pileup_fh);
     assert(nbytes_read == nbytes_wanted);
     char *start = chunk_buf, *end = start + nbytes_read, contig[50];
-    unsigned ci;
+    unsigned ci, pos;
     /* scan forwards */
     struct locus_pos locus = ix->span.beg;
     while (less_locus_pos(&locus, cur) < 0)
@@ -229,7 +230,7 @@ void process_chunk(struct off_index *ix,
     locus = ix->span.end;
     while (less_locus_pos(&locus, &range->end) >= 0)
     {
-        end = memrchr(chunk_buf, '\n', end - chunk_buf);
+        end = (char *)memrchr(chunk_buf, '\n', end - chunk_buf);
         int nparsed = sscanf(end, "%s\t%u\t", contig, &pos);
         assert(nparsed == 2);
         INIT_CONTIG(contig, ci);
@@ -280,7 +281,7 @@ int main_pug(int argc, char ** argv)
     assert(! contig_order.empty());
     
     /* invariant: contig_iter is always valid */
-    contig_iter = contig_order.start();
+    contig_iter = contig_order.begin();
     
     FILE *locus_fh = open_if_present(locus_file, "r");
 
@@ -291,23 +292,23 @@ int main_pug(int argc, char ** argv)
         (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range)),
         *q;
     
-    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, &q->beg->pos, &q->end->pos) == 3)
+    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, &q->beg.pos, &q->end.pos) == 3)
     {
-        INIT_CONTIG(contig, q->beg->contig);
-        q->end->contig = q->beg->contig; /* query ranges are assumed to be from the same contig */
+        INIT_CONTIG(contig, q->beg.contig);
+        q->end.contig = q->beg.contig; /* query ranges are assumed to be from the same contig */
         ++q;
         ++num_queries;
-        ALLOC_GROW(q, num_queries, num_records);
+        ALLOC_GROW(q, num_queries, num_alloc);
     }   
     fclose(locus_fh);
 
-    qsort(queries, queries + num_queries, less_locus_range);
+    qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
     
     /* 2. edit queries to eliminate interval overlap */
     struct locus_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
-        if (p && less_locus_pos(p->end, q->beg) > 0)
+        if (p && less_locus_pos(&p->end, &q->beg) > 0)
         {
             /* must be on same contig if they are overlapping and
                sorted */
@@ -321,16 +322,7 @@ int main_pug(int argc, char ** argv)
     
     FILE *pileup_fh = open_if_present(pileup_file, "r");
 
-    std::vector<char *>::iterator titer;
-    char * const* qbeg;
-    char * const* qend;
-    qbeg = query;
-   
     char *target_line = (char *)malloc(max_pileup_line_size + 1);
-
-    char *out_buf = new char[outbuf_size + 1];
-    char *out_ptr = out_buf;
-    char *out_end = out_buf + outbuf_size;
 
     /* 3. create and initialize a root index node representing the entire pileup file */
     struct off_index *root = (struct off_index *)malloc(sizeof(struct off_index));
@@ -351,16 +343,7 @@ int main_pug(int argc, char ** argv)
 
     fseek(pileup_fh, 0, SEEK_SET);
 
-    
 
-    // find the next range of targets that will both fit in chunk_size and doesn't 
-    // contain a gap greater than index_chunk_size
-    size_t chunk_size = max_mem;
-    size_t max_index_chunks = chunk_size / index_chunk_size;
-    char *last_fragment;
-
-    qbeg = query;
-    size_t bi = 0, ei;
 
 
     // throw out all queries that occur before the beginning of the
