@@ -1,5 +1,6 @@
 #include <fstream>
 #include <string.h>
+#include <unistd.h>
 
 #include "run_comp_or_mode.h"
 #include "comp_functor.h"
@@ -72,8 +73,6 @@ int main_comp(int argc, char ** argv)
     double test_quantile = 0.01;
     double min_test_quantile_value = 0;
 
-    size_t nsim_loci = 0;
-
     char quantiles_file[100];
     strcpy(quantiles_file, "/dev/null");
 
@@ -90,7 +89,7 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:z:T:f:X:y:a:s:I:M:C:p:q:F:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:t:m:z:T:f:X:y:a:I:M:C:p:q:F:v")) >= 0)
     {
         switch(c)
         {
@@ -104,7 +103,6 @@ int main_comp(int argc, char ** argv)
         case 'y': min_test_quantile_value = atof(optarg); break;
         case 'a': pset.target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
         case 'I': pset.max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
-        case 's': nsim_loci = static_cast<size_t>(atof(optarg)); break;
         case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'C': strcpy(quantiles_file, optarg); break;
         case 'p': prior_alpha = atof(optarg); break;
