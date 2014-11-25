@@ -136,13 +136,14 @@ int contains(struct off_index *ix, locus_pos loc)
    parent == NULL) still doesn't contain cur, return 0.  return 1 on
    success.
 */
-int update_index_node(struct off_index *ix, locus_pos cur, FILE *pileup_fh)
+int update_index_node(struct off_index **ixp, locus_pos cur, FILE *pileup_fh)
 {
+
     /* expansion phase */
-    while (! contains(ix, cur))
+    while (! contains(*ixp, cur))
     {
-        if (! ix->parent) return 1;
-        ix = ix->parent;
+        if (! (*ixp)->parent) return 1;
+        *ixp = (*ixp)->parent;
     }
 
     /* contraction phase.  assume ix contains cur. */
@@ -152,6 +153,7 @@ int update_index_node(struct off_index *ix, locus_pos cur, FILE *pileup_fh)
     size_t midpoint_off;
     int line_start;
 
+    struct off_index *ix = *ixp;
     while (ix->end_offset - ix->start_offset > target_leaf_size)
     {
         /* find the midpoint */
@@ -194,19 +196,31 @@ int update_index_node(struct off_index *ix, locus_pos cur, FILE *pileup_fh)
         }
 
         /* traverse to appropriate child node */
-        ix = cmp < 0 ? ix->left : ix->right;
+        *ixp = cmp < 0 ? ix->left : ix->right;
+        ix = *ixp;
     }
     return 0;
 }
 
-/* ix is the index node that contains cur.  1. reads pileup_fh region
-   marked by ix.  finds the sub-region consistent with the range. */
+
+void free_index(struct off_index *root)
+{
+    if (root->left) free_index(root->left);
+    if (root->right) free_index(root->right);
+    free(root);
+}
+
+/* ix is the index node that contains cur.  
+
+   1. reads pileup_fh region marked by ix.  2. finds the sub-region
+   between cur and query->end. 3. writes out this range.  4. updates
+   cur to the end of processed loci, which is either ix->span.end or
+   query->end, whichever is less.  if  */
 void process_chunk(struct off_index *ix,
-                   struct locus_range *range,
                    struct locus_pos *cur,
                    char *chunk_buf,
                    FILE *pileup_fh,
-                   FILE *out_fh)
+                   struct locus_range **query)
 {
     fseek(pileup_fh, (long)ix->start_offset, SEEK_SET);
     size_t nbytes_wanted = ix->end_offset - ix->start_offset;
@@ -226,9 +240,10 @@ void process_chunk(struct off_index *ix,
         locus = { ci, pos };
     }
 
-    /* scan backwards */
+    /* scan backwards in the chunk to find greatest line less than
+       query->end */
     locus = ix->span.end;
-    while (less_locus_pos(&locus, &range->end) >= 0)
+    while (less_locus_pos(&locus, &(*query)->end) >= 0)
     {
         end = (char *)memrchr(chunk_buf, '\n', end - chunk_buf);
         int nparsed = sscanf(end, "%s\t%u\t", contig, &pos);
@@ -236,8 +251,13 @@ void process_chunk(struct off_index *ix,
         INIT_CONTIG(contig, ci);
         locus = { ci, pos };
     }
-    fwrite(start, 1, end - start, out_fh);
+    /* just write to stdout */
+    write(1, start, end - start);
     *cur = locus;
+
+    if (less_locus_pos(cur, (*query)->end) == 0)
+        /* we have output all of the loci in this query */
+        ++(*query);
 }
                    
 
@@ -290,6 +310,7 @@ int main_pug(int argc, char ** argv)
     unsigned num_queries = 0, num_alloc = 10;
     struct locus_range *queries = 
         (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range)),
+        *qend,
         *q;
     
     while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, &q->beg.pos, &q->end.pos) == 3)
@@ -301,6 +322,8 @@ int main_pug(int argc, char ** argv)
         ALLOC_GROW(q, num_queries, num_alloc);
     }   
     fclose(locus_fh);
+
+    qend = queries + num_queries;
 
     qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
     
@@ -343,126 +366,27 @@ int main_pug(int argc, char ** argv)
 
     fseek(pileup_fh, 0, SEEK_SET);
 
+    /* main loop */
+    struct off_index *ix = root;
+    struct locus_pos cur = q.beg;
 
+    char *chunk_buf = (char *)malloc(target_leaf_size + 1);
 
-
-    // throw out all queries that occur before the beginning of the
-    // index.
-    while (*qbeg != NULL && less_locus(*qbeg, index[0].line))
+    while (q != qend)
     {
-        ++qbeg;
+        update_index_node(ix, &cur, pileup_fh);
+        process_chunk(&ix, &cur, chunk_buf, pileup_fh, &q);
     }
 
-    
-    while (*qbeg != NULL)
-    {
-        // find qend such that [qbeg, qend) fits within
-        // max_index_chunks, and there is at least one target to
-        // retrieve for each index chunk in the range
-
-        // advance bi to the lower_bound position of qbeg
-        while (less_locus(index[bi].line, *qbeg))
-            ++bi;
-
-        --bi;
-
-        ei = bi + 1; // start with the minimal range that contains [qbeg, qend)
-        qend = qbeg + 1;
-
-        while (1)
-        {
-            // phase 1: extend qend until it doesn't fit within the current [bi, ei)
-            while (*qend != NULL && less_locus(*qend, index[ei].line))
-                ++qend;
-
-            if (ei - bi < max_index_chunks)
-            {
-                // it is okay to extend number of index chunks
-
-                // phase 2: if qend could fit within [bi, ei), extend ei.
-                if (*qend != NULL && ei != index_size - 1 && less_locus(*qend, index[ei + 1].line))
-                    ++ei;
-
-                else break;
-            }
-            else break;
-        }
-
-        fprintf(stderr, "Using index range [%Zu to %Zu) of %Zu for %Zu query lines\n",
-                bi, ei, index_size, std::distance(qbeg, qend));
-
-        // [qbeg, qend) now should fit within [index[bi], index[ei])
-        // note: this does NOT mean that qend < index[ei], just that qend - 1 < index[ei]
-
-        // now, parse the whole chunk
-        size_t this_chunk_size = index[ei].file_offset - index[bi].file_offset;
-        char *chunk_buffer = new char[this_chunk_size + 1];
-        
-        fseek(pileup_fh, index[bi].file_offset, SEEK_SET);
-        fread(chunk_buffer, 1, this_chunk_size, pileup_fh);
-        std::vector<char *> target_lines = 
-            FileUtils::find_complete_lines_nullify(chunk_buffer, & last_fragment);
-
-        std::vector<char *>::iterator titer = target_lines.begin();
-        assert(qbeg < qend);
-
-        // print out any loci in [qbeg, qend) that exist in target_lines
-        // we can break out of this loop either if all query loci are printed
-        // or if we run out of target lines (which could happen if 
-        while (qbeg != qend && titer != target_lines.end())
-        {
-            // advance titer
-            titer = std::lower_bound(titer, target_lines.end(), *qbeg, less_locus);
-
-            // advance qbeg
-            while (qbeg != qend && less_locus(*qbeg, *titer))
-            {
-                ++qbeg;
-            }
-
-            if (qbeg == qend)
-            {
-                break;
-            }
-            if (equal_locus(*qbeg, *titer))
-            {
-                // print out this qbeg
-                size_t ll = strlen(*titer);
-                if (out_ptr + ll > out_end)
-                {
-                    // flush buffer
-                    write(1, out_buf, out_ptr - out_buf);
-                    fsync(1);
-                    out_ptr = out_buf;
-                }
-                strcpy(out_ptr, *titer);
-                out_ptr += ll;
-                *out_ptr = '\n';
-                ++out_ptr;
-                ++qbeg;
-            }
-
-        }
-        qbeg = qend;
-
-        delete chunk_buffer;
-
-    }
-
-    // write out remaining cached lines
-    write(1, out_buf, out_ptr - out_buf);
-    fsync(1);
-    
     for (contig_iter = contig_order.begin();
          contig_iter != contig_order.end(); 
          ++contig_iter)
         free((*contig_iter).first);
 
+    free(chunk_buf);
     free(target_line);
-    delete out_buf;
-    delete index;
-
     free(queries);
+    free_index(root);
 
     fclose(pileup_fh);
 
