@@ -35,10 +35,46 @@ int pug_usage()
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
-struct range {
-    char contig[32];
-    size_t beg, end;
+/* taken from git source code */
+#define alloc_nr(x) (((x)+16)*3/2)
+
+/*
+ * Realloc the buffer pointed at by variable 'x' so that it can hold
+ * at least 'nr' entries; the number of entries currently allocated
+ * is 'alloc', using the standard growing factor alloc_nr() macro.
+ *
+ * DO NOT USE any expression with side-effect for 'x', 'nr', or 'alloc'.
+ */
+#define ALLOC_GROW(x, nr, alloc)                    \
+    do {                                            \
+        if ((nr) > alloc) {                         \
+            if (alloc_nr(alloc) < (nr))             \
+                alloc = (nr);                       \
+            else                                    \
+                alloc = alloc_nr(alloc);            \
+            x = realloc((x), alloc * sizeof(*(x))); \
+        }                                           \
+    } while (0)
+
+
+struct query_range {
+    unsigned beg_contig, beg_pos, end_contig, end_pos;
 };
+
+
+int less_query_range(const void *pa, const void *pb)
+{
+    const struct query_range
+        *a = (struct query_range *)pa,
+        *b = (struct query_range *)pb;
+
+    return 
+        a-> < b ? -1 : a > b ? 1 
+        : a->beg < b->beg ? -1 : a->beg > b->beg ? 1
+        : a->end < b->end ? -1 : a->end > b->end ? 1
+        : 0;
+}
+
 
 
 int main_pug(int argc, char ** argv)
@@ -68,6 +104,8 @@ int main_pug(int argc, char ** argv)
     const char *contig_order_file = argv[optind + 2];
 
     std::map<char const*, size_t, ltstr> contig_order;
+    std::map<char const*, size_t, ltstr>::iterator contig_iter;
+
     // parse contig_order file
     {
         FILE * contig_order_fh = open_if_present(contig_order_file, "r");
@@ -85,42 +123,37 @@ int main_pug(int argc, char ** argv)
     char * locus_buf = NULL;
     std::vector<char *> query_lines_tmp;
     char ** query;
-    size_t num_query;
+    
+    FILE *locus_fh = open_if_present(locus_file, "r");
+    char contig[200];
+    unsigned num_queries = 0, num_alloc = 10;
+    struct query_range *queries = 
+        (struct query_range *)malloc(num_alloc * sizeof(struct query_range)),
+        *q;
+    
+    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, &q->beg, &q->end) == 3)
     {
-        FILE * locus_fh = open_if_present(locus_file, "r");
-        struct stat locus_stat;
-        fstat(fileno(locus_fh), &locus_stat);
-        size_t total_size = locus_stat.st_size;
-        if (total_size > max_mem)
+        contig_iter = contig_order.find(contig);
+        if (contig_iter == contig_order.end)
         {
-            fprintf(stderr, "Error: total size of the loci_to_retrieve.rdb is %Zu,\n"
-                    "larger than -m option (max memory) of %Zu.  It needs to be loaded\n"
-                    "in memory however.  Please increase -m\n",
-                    total_size, max_mem);
-            exit(10);
+            fprintf(stderr, "Error: Contig %s not listed in contig_order.rdb file\n", contig);
+            exit(1);
         }
-        locus_buf = new char[total_size];
-        fread(locus_buf, 1, total_size, locus_fh);
-        fclose(locus_fh);
-        char * last_fragment;
-        query_lines_tmp = FileUtils::find_complete_lines_nullify(locus_buf, &last_fragment);
-        num_query = query_lines_tmp.size();
-        query = new char*[num_query + 1];
-        for (size_t i = 0; i != num_query; ++i)
-        {
-            query[i] = query_lines_tmp[i];
-        }
-        query[num_query] = NULL;
-    }
+        q->contig_index = (*contig_iter).second;
+        ++q;
+        ++num_queries;
+        ALLOC_GROW(q, num_queries, num_records);
+    }   
+    fclose(locus_fh);
 
     less_locus_position less_locus;
     equal_locus_position equal_locus;
     less_locus.contig_order = &contig_order;
     equal_locus.contig_order = &contig_order;
 
-    std::sort(query, query + num_query, less_locus);
+    qsort(queries, queries + num_queries, less_query_range);
     
-    FILE * pileup_fh = open_if_present(pileup_file, "r");
+    FILE *pileup_fh = open_if_present(pileup_file, "r");
 
     struct stat pileup_stat;
     fstat(fileno(pileup_fh), &pileup_stat);
@@ -131,11 +164,11 @@ int main_pug(int argc, char ** argv)
     char * const* qend;
     qbeg = query;
    
-    char * target_line = new char[max_pileup_line_size + 1];
+    char *target_line = new char[max_pileup_line_size + 1];
 
-    char * out_buf = new char[outbuf_size + 1];
-    char * out_ptr = out_buf;
-    char * out_end = out_buf + outbuf_size;
+    char *out_buf = new char[outbuf_size + 1];
+    char *out_ptr = out_buf;
+    char *out_end = out_buf + outbuf_size;
 
     // create a sparse index of offsets
     struct line_index
@@ -149,7 +182,7 @@ int main_pug(int argc, char ** argv)
     size_t index_size = MAX((total_pileup_size / index_chunk_size),1) + 1;
     fprintf(stderr, "Building index with %Zu entries.\n", index_size);
     fflush(stderr);
-    line_index * index = new line_index[index_size];
+    line_index *index = new line_index[index_size];
     for (size_t i = 0; i != index_size - 1; ++i)
     {
         // throw away partial line
@@ -179,7 +212,7 @@ int main_pug(int argc, char ** argv)
     // contain a gap greater than index_chunk_size
     size_t chunk_size = max_mem;
     size_t max_index_chunks = chunk_size / index_chunk_size;
-    char * last_fragment;
+    char *last_fragment;
 
     qbeg = query;
     size_t bi = 0, ei;
@@ -201,9 +234,8 @@ int main_pug(int argc, char ** argv)
 
         // advance bi to the lower_bound position of qbeg
         while (less_locus(index[bi].line, *qbeg))
-        {
             ++bi;
-        }
+
         --bi;
 
         ei = bi + 1; // start with the minimal range that contains [qbeg, qend)
@@ -213,9 +245,7 @@ int main_pug(int argc, char ** argv)
         {
             // phase 1: extend qend until it doesn't fit within the current [bi, ei)
             while (*qend != NULL && less_locus(*qend, index[ei].line))
-            {
                 ++qend;
-            }
 
             if (ei - bi < max_index_chunks)
             {
@@ -223,18 +253,11 @@ int main_pug(int argc, char ** argv)
 
                 // phase 2: if qend could fit within [bi, ei), extend ei.
                 if (*qend != NULL && ei != index_size - 1 && less_locus(*qend, index[ei + 1].line))
-                {
                     ++ei;
-                }
-                else
-                {
-                    break;
-                }
+
+                else break;
             }
-            else
-            {
-                break;
-            }
+            else break;
         }
 
         fprintf(stderr, "Using index range [%Zu to %Zu) of %Zu for %Zu query lines\n",
@@ -245,11 +268,13 @@ int main_pug(int argc, char ** argv)
 
         // now, parse the whole chunk
         size_t this_chunk_size = index[ei].file_offset - index[bi].file_offset;
-        char * chunk_buffer = new char[this_chunk_size + 1];
+        char *chunk_buffer = new char[this_chunk_size + 1];
         
         fseek(pileup_fh, index[bi].file_offset, SEEK_SET);
         fread(chunk_buffer, 1, this_chunk_size, pileup_fh);
-        std::vector<char *> target_lines = FileUtils::find_complete_lines_nullify(chunk_buffer, & last_fragment);
+        std::vector<char *> target_lines = 
+            FileUtils::find_complete_lines_nullify(chunk_buffer, & last_fragment);
+
         std::vector<char *>::iterator titer = target_lines.begin();
         assert(qbeg < qend);
 
@@ -310,6 +335,8 @@ int main_pug(int argc, char ** argv)
     delete target_line;
     delete out_buf;
     delete index;
+
+    free(queries);
 
     fclose(pileup_fh);
 
