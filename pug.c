@@ -1,27 +1,30 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
-// #include "../samutil/file_utils.h"
-
 int pug_usage()
 {
     fprintf(stderr,
             "\nUsage: dep pug [options] sample.pileup loci_to_retrieve.rdb contig_order.rdb\n"
             "Options:\n\n"
-            "-m INT      number bytes of memory to use [1e9]\n"
             "-l INT      maximum length of a pileup line in bytes.  {Nuisance parameter} [100000]\n"
-            "-b INT      size of output buffer [8e6]\n"
+            "-s INT      target leaf size of a file chunk in which no more index building is done [1e7]\n"
             "\n"
             "loci_to_retrieve.rdb has lines like:\n"
-            "chr1<tab>19583984\n"
-            "chr1<tab>19598940\n"
+            "chr1<tab>100<tab>200\n"
+            "chr1<tab>300<tab>400\n"
             "...\n"
+            "This will retrieve loci from 100 to 199, and 300 to 399.\n"
             "It need not be in order.  Also, it is okay if loci do not appear in the sample.pileup file\n"
             "\n"
-            "contig_order.rdb has lines of <contig><tab><ordering>\n"
+            "contig_order.rdb has lines of\n"
+            "chr1<tab>1\n"
+            "chr2<tab>2\n"
+            "...\n"
             "It must be consistent and complete with the orderings of the contigs mentioned in\n"
             "all pileup input files\n"
             );
@@ -67,8 +70,8 @@ int less_contig_index(const void *pa, const void *pb)
     return strcmp(a->contig, b->contig);
 }
 
-contig_index *contig_buf, *contig_ptr;
-unsigned num_contigs;
+struct contig_index *contig_buf, *contig_ptr;
+unsigned num_contigs = 0;
 
 // std::map<char *, size_t, ltstr> contig_order;
 // std::map<char *, size_t, ltstr>::iterator contig_iter;
@@ -79,12 +82,12 @@ unsigned num_contigs;
     do {                                                               \
         if (strcmp(contig_ptr->contig, contig))                        \
         {                                                              \
-            contig_index key;                                          \
+            struct contig_index key;                                          \
             strcpy(key.contig, contig);                                \
             contig_ptr =                                               \
-                (contig_index *)bsearch(&key, contig_buf,              \
+                (struct contig_index *)bsearch(&key, contig_buf,              \
                                         num_contigs,                   \
-                                        sizeof(contig_index),          \
+                                        sizeof(struct contig_index),          \
                                         less_contig_index);            \
             if (! contig_ptr)                                          \
             {                                                          \
@@ -109,13 +112,16 @@ int less_locus_pos(const void *pa, const void *pb)
         *a = (struct locus_pos *)pa,
         *b = (struct locus_pos *)pb;
 
+    int ccmp;
     return 
-        (a->contig - b->contig) || (a->pos - b->pos);
+        (ccmp = a->contig - b->contig) != 0
+        ? ccmp
+        : (a->pos - b->pos);
         
 }
 
 struct locus_range {
-    locus_pos beg, end;
+    struct locus_pos beg, end;
 };
 
 
@@ -123,9 +129,9 @@ size_t target_leaf_size = 1e7;
 
 /* allows mapping file offsets to loci */
 struct off_index {
-    locus_range span;
+    struct locus_range span;
     size_t start_offset, end_offset;
-    off_index *left, *right, *parent;
+    struct off_index *left, *right, *parent;
 };
 
 
@@ -135,12 +141,15 @@ int less_locus_range(const void *pa, const void *pb)
         *a = (struct locus_range *)pa,
         *b = (struct locus_range *)pb;
 
+    int bcmp;
     return 
-        less_locus_pos(&a->beg, &b->beg) || less_locus_pos(&a->end, &b->end);
+        (bcmp = less_locus_pos(&a->beg, &b->beg)) != 0
+        ? bcmp
+        : less_locus_pos(&a->end, &b->end);
 }
 
 
-int contains(struct off_index *ix, locus_pos loc)
+int contains(struct off_index *ix, struct locus_pos loc)
 {
     return (less_locus_pos(&ix->span.beg, &loc) <= 0
             && less_locus_pos(&loc, &ix->span.end) < 0);
@@ -155,7 +164,7 @@ int contains(struct off_index *ix, locus_pos loc)
    parent == NULL) still doesn't contain cur, return 0.  return 1 on
    success.
 */
-int update_index_node(struct off_index **ixp, locus_pos cur, FILE *pileup_fh)
+int update_index_node(struct off_index **ixp, struct locus_pos cur, FILE *pileup_fh)
 {
 
     /* expansion phase */
@@ -178,7 +187,7 @@ int update_index_node(struct off_index **ixp, locus_pos cur, FILE *pileup_fh)
         /* find the midpoint */
         if (ix->left == NULL && ix->right == NULL)
         {
-            fseek(pileup_fh, (long)(ix->end_offset - ix->start_offset), SEEK_SET);
+            fseek(pileup_fh, (ix->end_offset + ix->start_offset) / 2, SEEK_SET);
             size_t partial_pos = (size_t)ftell(pileup_fh);
             fscanf(pileup_fh, "%*[^\n]\n%n%s\t%u\t", &line_start, contig, &pos);
             INIT_CONTIG(contig, ci);
@@ -205,7 +214,7 @@ int update_index_node(struct off_index **ixp, locus_pos cur, FILE *pileup_fh)
             p->parent = ix;
             p->left = p->right = NULL;
         }            
-        else if (cmp >= 0 && ! ix->right)
+        if (cmp >= 0 && ! ix->right)
         {
             ix->right = (struct off_index *)malloc(sizeof(struct off_index));
             struct off_index *p = ix->right;
@@ -237,38 +246,54 @@ void free_index(struct off_index *root)
    1. reads pileup_fh region marked by ix.  2. finds the sub-region
    between cur and query->end. 3. writes out this range.  4. updates
    cur to the end of processed loci, which is either ix->span.end or
-   query->end, whichever is less.  if  */
+   query->end, whichever is less. */
 void process_chunk(struct off_index *ix,
-                   struct locus_pos *cur,
                    char *chunk_buf,
                    FILE *pileup_fh,
-                   struct locus_range **query)
+                   struct locus_range query,
+                   struct locus_pos *cur)
 {
     fseek(pileup_fh, (long)ix->start_offset, SEEK_SET);
     size_t nbytes_wanted = ix->end_offset - ix->start_offset;
     size_t nbytes_read = fread(chunk_buf, 1, nbytes_wanted, pileup_fh);
     assert(nbytes_read == nbytes_wanted);
-    char *start = chunk_buf, *end = start + nbytes_read, contig[50];
+    char *start = chunk_buf, *end, *chunk_end = chunk_buf + nbytes_read, contig[50];
     unsigned ci, pos;
-    /* scan forwards */
+
+    assert(chunk_buf[nbytes_read - 1] == '\n');
+
+    /* scan forwards, updating locus and start, until */
     struct locus_pos locus = ix->span.beg;
+    
     while (less_locus_pos(&locus, cur) < 0)
     {
+        start = strchr(start, '\n') + 1;
+        if (start == chunk_end)
+        {
+            *cur = ix->span.end;
+            return;
+        }
         int nparsed = sscanf(start, "%s\t%u\t", contig, &pos);
         assert(nparsed == 2);
-        start = strchr(start, '\n') + 1;
-
+        
         INIT_CONTIG(contig, ci);
         locus.contig = ci;
         locus.pos = pos;
     }
 
-    /* scan backwards in the chunk to find greatest line less than
-       query->end */
-    locus = ix->span.end;
-    while (less_locus_pos(&locus, &(*query)->end) >= 0)
+    /* there exists at least one existing locus that is not less than
+       c. continue scanning forwards to find the first locus not less
+       than query.end */
+    end = start;
+    while (less_locus_pos(&locus, &query.end) < 0)
     {
-        end = (char *)memrchr(chunk_buf, '\n', end - chunk_buf);
+        end = strchr(end, '\n') + 1;
+        if (end == chunk_end)
+        {
+            locus = ix->span.end;
+            break;
+        }
+        
         int nparsed = sscanf(end, "%s\t%u\t", contig, &pos);
         assert(nparsed == 2);
         INIT_CONTIG(contig, ci);
@@ -277,11 +302,9 @@ void process_chunk(struct off_index *ix,
     }
     /* just write to stdout */
     write(1, start, end - start);
+    fflush(stdout);
     *cur = locus;
 
-    if (less_locus_pos(cur, &(*query)->end) == 0)
-        /* we have output all of the loci in this query */
-        ++(*query);
 }
                    
 
@@ -289,17 +312,13 @@ void process_chunk(struct off_index *ix,
 int main_pug(int argc, char ** argv)
 {
     char c;
-    size_t max_mem = 1024l * 1024l * 1024l;
     size_t max_pileup_line_size = 1e6;
-    size_t outbuf_size = 8e6;
 
-    while ((c = getopt(argc, argv, "m:l:b:s:")) >= 0)
+    while ((c = getopt(argc, argv, "l:s:")) >= 0)
     {
         switch(c)
         {
-        case 'm': max_mem = (size_t)atof(optarg); break;
         case 'l': max_pileup_line_size = (size_t)atof(optarg); break;
-        case 'b': outbuf_size = (size_t)atof(optarg); break;
         case 's': target_leaf_size = (size_t)atof(optarg); break;
         default: return pug_usage(); break;
         }
@@ -310,19 +329,6 @@ int main_pug(int argc, char ** argv)
     const char *pileup_file = argv[optind];
     const char *locus_file = argv[optind + 1];
     const char *contig_order_file = argv[optind + 2];
-
-    struct locus_pos lp, *lpp, *lpp2;
-    lpp = &lp;
-    void *vp;
-    vp = lpp;
-    vp = &lp;
-    lpp2 = (locus_pos *)vp;
-
-    contig_index key;
-    contig_ptr = bsearch(&key, contig_buf, num_contigs,
-                         sizeof(contig_index),
-                         less_contig_index);
-    
 
     // 0. parse contig_order file
     unsigned num_contig_alloc = 10;
@@ -338,17 +344,18 @@ int main_pug(int argc, char ** argv)
 
     while (! feof(contig_order_fh))
     {
-        fscanf(contig_order_fh, "%s\t%u\n", contig_ptr->contig, &contig_ptr->index);
-        ++contig_ptr;
+        fscanf(contig_order_fh, "%s\t%u\n", 
+               contig_buf[num_contigs].contig, 
+               &contig_buf[num_contigs].index);
         ++num_contigs;
-        ALLOC_GROW(contig_buf, num_contigs, num_contig_alloc);
+        ALLOC_GROW(contig_buf, num_contigs + 1, num_contig_alloc);
     }
     fclose(contig_order_fh);
-    // assert(! contig_order.empty());
     assert(num_contigs != 0);
     
+    qsort(contig_buf, num_contigs, sizeof(contig_buf[0]), less_contig_index);
+
     /* invariant: contig_iter is always valid */
-    // contig_iter = contig_order.begin();
     contig_ptr = contig_buf;
 
     FILE *locus_fh = fopen(locus_file, "r");
@@ -366,17 +373,18 @@ int main_pug(int argc, char ** argv)
         *qend,
         *q;
     
-    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, &q->beg.pos, &q->end.pos) == 3)
+    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, 
+                  &queries[num_queries].beg.pos, 
+                  &queries[num_queries].end.pos) == 3)
     {
-        INIT_CONTIG(contig, q->beg.contig);
-        q->end.contig = q->beg.contig; /* query ranges are assumed to be from the same contig */
-        ++q;
+        INIT_CONTIG(contig, queries[num_queries].beg.contig);
+
+        /* query ranges are assumed to be from the same contig */
+        queries[num_queries].end.contig = queries[num_queries].beg.contig; 
         ++num_queries;
-        ALLOC_GROW(q, num_queries, num_alloc);
+        ALLOC_GROW(queries, num_queries + 1, num_alloc);
     }   
     fclose(locus_fh);
-
-    qend = queries + num_queries;
 
     qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
     
@@ -396,7 +404,12 @@ int main_pug(int argc, char ** argv)
         p = q;
     }
     
-    FILE *pileup_fh = open_if_present(pileup_file, "r");
+    FILE *pileup_fh = fopen(pileup_file, "r");
+    if (! pileup_fh)
+    {
+        fprintf(stderr, "Couldn't find pileup file %s\n", pileup_file);
+        exit(1);
+    }
 
     char *target_line = (char *)malloc(max_pileup_line_size + 1);
 
@@ -413,13 +426,16 @@ int main_pug(int argc, char ** argv)
     size_t len = fread(target_line, 1, max_pileup_line_size, pileup_fh);
     assert(len > 1);
     char *last_line = (char *)memrchr(target_line, '\n', len - 1) + 1;
-    sscanf("%s\t%u\t", contig, &root->span.end.pos, last_line);
+    sscanf(last_line, "%s\t%u\t", contig, &root->span.end.pos);
     ++root->span.end.pos;
     INIT_CONTIG(contig, root->span.end.contig);
 
     fseek(pileup_fh, 0, SEEK_SET);
 
     /* main loop */
+    q = queries;
+    qend = queries + num_queries;
+
     struct off_index *ix = root;
     struct locus_pos cur = q->beg;
 
@@ -428,7 +444,15 @@ int main_pug(int argc, char ** argv)
     while (q != qend)
     {
         update_index_node(&ix, cur, pileup_fh);
-        process_chunk(ix, &cur, chunk_buf, pileup_fh, &q);
+        process_chunk(ix, chunk_buf, pileup_fh, *q, &cur);
+
+        if (less_locus_pos(&cur, &q->end) >= 0)
+        {
+            ++q;
+            if (q != qend)
+                cur = q->beg;
+        }
+        
     }
 
     free(contig_buf);
