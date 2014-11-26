@@ -67,7 +67,7 @@ int less_contig_index(const void *pa, const void *pb)
     return strcmp(a->contig, b->contig);
 }
 
-struct contig_index *contig_buf, *contig_ptr;
+contig_index *contig_buf, *contig_ptr;
 unsigned num_contigs;
 
 // std::map<char *, size_t, ltstr> contig_order;
@@ -115,7 +115,7 @@ int less_locus_pos(const void *pa, const void *pb)
 }
 
 struct locus_range {
-    struct locus_pos beg, end;
+    locus_pos beg, end;
 };
 
 
@@ -140,7 +140,7 @@ int less_locus_range(const void *pa, const void *pb)
 }
 
 
-int contains(struct off_index *ix, struct locus_pos loc)
+int contains(struct off_index *ix, locus_pos loc)
 {
     return (less_locus_pos(&ix->span.beg, &loc) <= 0
             && less_locus_pos(&loc, &ix->span.end) < 0);
@@ -155,7 +155,7 @@ int contains(struct off_index *ix, struct locus_pos loc)
    parent == NULL) still doesn't contain cur, return 0.  return 1 on
    success.
 */
-int update_index_node(struct off_index **ixp, struct locus_pos cur, FILE *pileup_fh)
+int update_index_node(struct off_index **ixp, locus_pos cur, FILE *pileup_fh)
 {
 
     /* expansion phase */
