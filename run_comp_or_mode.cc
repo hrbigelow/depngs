@@ -3,7 +3,7 @@
 #include "run_comp_or_mode.h"
 #include "pileup_tools.h"
 #include "comp_functor.h"
-#include "samutil/file_utils.h"
+#include "file_utils.h"
 #include "defs.h"
 
 #include <gsl/gsl_errno.h>

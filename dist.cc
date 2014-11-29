@@ -12,7 +12,7 @@
 #include "comp_functor.h"
 #include "tools.h"
 #include "usage_strings.h"
-#include "samutil/file_utils.h"
+#include "file_utils.h"
 #include "dist_worker.h"
 #include "sampling.h"
 #include "pileup_tools.h"

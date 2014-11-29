@@ -3,7 +3,7 @@
 
 #include "pileup_tools.h"
 #include "nucleotide_stats.h"
-#include "samutil/file_utils.h"
+#include "file_utils.h"
 
 int bqs_usage()
 {

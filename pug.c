@@ -156,7 +156,10 @@ int contains(struct off_index *ix, struct locus_pos loc)
 }
 
 
-/* find (or create) a minimal index node that contains cur, using a
+/* Post-condition: ixp points to an index node smaller than
+   target_leaf_size that contains cur.
+
+find (or create) a minimal index node that contains cur, using a
    two-phase search.  the expansion phase traverses up the index tree
    until ix contains cur.  the contraction phase creates new,
    successively smaller nodes as needed, until a minimal index node
@@ -241,12 +244,21 @@ void free_index(struct off_index *root)
     free(root);
 }
 
-/* ix is the index node that contains cur.  
+/* 
+   Preconditions:
+
+   1. ix is the index node that contains cur.  (enforced by
+   update_index_node)
+   
+   2. cur is not guaranteed to exist in pileup_fh
 
    1. reads pileup_fh region marked by ix.  2. finds the sub-region
    between cur and query->end. 3. writes out this range.  4. updates
    cur to the end of processed loci, which is either ix->span.end or
-   query->end, whichever is less. */
+   query->end, whichever is less. 
+
+   
+*/
 void process_chunk(struct off_index *ix,
                    char *chunk_buf,
                    FILE *pileup_fh,
@@ -443,7 +455,11 @@ int main_pug(int argc, char ** argv)
 
     while (q != qend)
     {
+        /* updates ix to point to an index node that contains cur */
         update_index_node(&ix, cur, pileup_fh);
+
+        /* output all loci in pileup_fh that fall within ix, are >=
+           cur, and within *q.  update cur to point to  */
         process_chunk(ix, chunk_buf, pileup_fh, *q, &cur);
 
         if (less_locus_pos(&cur, &q->end) >= 0)

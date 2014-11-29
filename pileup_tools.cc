@@ -1,7 +1,7 @@
 #include "pileup_tools.h"
 #include "tools.h"
 #include "nucleotide_stats.h"
-#include "samutil/file_utils.h"
+#include "file_utils.h"
 
 #include <cassert>
 #include <set>

@@ -52,7 +52,9 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
     this->quantiles = new double[this->num_quantiles];
     std::copy(quantiles, quantiles + num_quantiles, this->quantiles);
 
-    this->initial_point = { 0.25, 0.25, 0.25, 0.25 };
+    int i;
+    for (i = 0; i != 4; ++i)
+        this->initial_point[i] = 0.25;
 
     //this->prior_alpha0 = std::accumulate(prior_alphas, prior_alphas + 4, 0.0);
     

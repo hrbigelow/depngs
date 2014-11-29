@@ -4,7 +4,7 @@
 
 #include "pileup_tools.h"
 // #include "error_estimate.h"
-#include "samutil/file_utils.h"
+#include "file_utils.h"
 
 /*
 struct base_qual_strand
