@@ -101,6 +101,14 @@ unsigned num_contigs = 0;
     } while (0)
 
 
+/* Do not pass arguments that are evaluated */
+#define CMP(a, b) ((a) < (b) ? -1 : (a) > (b) ? 1 : 0)
+
+/* GOTCHA!  Do NOT subtract two unsigned's and expect it to convert to
+   a signed quantity */
+// #define CMP(a, b) ((int)(a) - (int)(b))
+// #define CMP(a, b) ((a) - (b))
+
 struct locus_pos { 
     unsigned contig, pos;
 };
@@ -113,10 +121,10 @@ int less_locus_pos(const void *pa, const void *pb)
         *b = (struct locus_pos *)pb;
 
     int ccmp;
-    return 
-        (ccmp = a->contig - b->contig) != 0
+    return
+        (ccmp = CMP(a->contig, b->contig)) != 0
         ? ccmp
-        : (a->pos - b->pos);
+        : CMP(a->pos, b->pos);
         
 }
 
@@ -125,12 +133,12 @@ struct locus_range {
 };
 
 
-size_t target_leaf_size = 1e7;
+long target_leaf_size = 1e7;
 
 /* allows mapping file offsets to loci */
 struct off_index {
     struct locus_range span;
-    size_t start_offset, end_offset;
+    long start_offset, end_offset;
     struct off_index *left, *right, *parent;
 };
 
@@ -191,12 +199,19 @@ int update_index_node(struct off_index **ixp, struct locus_pos cur, FILE *pileup
         if (ix->left == NULL && ix->right == NULL)
         {
             fseek(pileup_fh, (ix->end_offset + ix->start_offset) / 2, SEEK_SET);
-            size_t partial_pos = (size_t)ftell(pileup_fh);
+            long partial_pos = ftell(pileup_fh);
             fscanf(pileup_fh, "%*[^\n]\n%n%s\t%u\t", &line_start, contig, &pos);
             INIT_CONTIG(contig, ci);
             midpoint_loc.contig = ci;
             midpoint_loc.pos = pos;
             midpoint_off = partial_pos + line_start;
+            
+            /* tests we shouldn't have to do... */
+            fseek(pileup_fh, partial_pos + line_start - 1, SEEK_SET);
+            char c;
+            fscanf(pileup_fh, "%c", &c);
+            assert(c == '\n');
+            
         }
         else
         {
@@ -231,6 +246,7 @@ int update_index_node(struct off_index **ixp, struct locus_pos cur, FILE *pileup
 
         /* traverse to appropriate child node */
         *ixp = cmp < 0 ? ix->left : ix->right;
+        assert(*ixp != NULL);
         ix = *ixp;
     }
     return 0;
@@ -265,7 +281,8 @@ void process_chunk(struct off_index *ix,
                    struct locus_range query,
                    struct locus_pos *cur)
 {
-    fseek(pileup_fh, (long)ix->start_offset, SEEK_SET);
+    fseek(pileup_fh, ix->start_offset, SEEK_SET);
+    assert(ix->end_offset >= ix->start_offset);
     size_t nbytes_wanted = ix->end_offset - ix->start_offset;
     size_t nbytes_read = fread(chunk_buf, 1, nbytes_wanted, pileup_fh);
     assert(nbytes_read == nbytes_wanted);
@@ -431,12 +448,13 @@ int main_pug(int argc, char ** argv)
     root->start_offset = 0;
     fscanf(pileup_fh, "%s\t%u\t", contig, &root->span.beg.pos);
     INIT_CONTIG(contig, root->span.beg.contig);
-    fseek(pileup_fh, -max_pileup_line_size, SEEK_END);
-    root->end_offset = (size_t)ftell(pileup_fh);
+    fseek(pileup_fh, -(long)max_pileup_line_size, SEEK_END);
+    size_t len = fread(target_line, 1, max_pileup_line_size, pileup_fh);
+    root->end_offset = ftell(pileup_fh);
+    assert(len > 1);
+    
     root->left = root->right = root->parent = NULL;
 
-    size_t len = fread(target_line, 1, max_pileup_line_size, pileup_fh);
-    assert(len > 1);
     char *last_line = (char *)memrchr(target_line, '\n', len - 1) + 1;
     sscanf(last_line, "%s\t%u\t", contig, &root->span.end.pos);
     ++root->span.end.pos;
@@ -460,6 +478,8 @@ int main_pug(int argc, char ** argv)
 
         /* output all loci in pileup_fh that fall within ix, are >=
            cur, and within *q.  update cur to point to  */
+        /* ++q; */
+        /* cur = q->beg; */
         process_chunk(ix, chunk_buf, pileup_fh, *q, &cur);
 
         if (less_locus_pos(&cur, &q->end) >= 0)
