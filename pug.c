@@ -12,7 +12,6 @@ int pug_usage()
             "\nUsage: dep pug [options] sample.pileup loci_to_retrieve.rdb contig_order.rdb\n"
             "Options:\n\n"
             "-l INT      maximum length of a pileup line in bytes.  {Nuisance parameter} [100000]\n"
-            "-s INT      target leaf size of a file chunk in which no more index building is done [1e7]\n"
             "\n"
             "loci_to_retrieve.rdb has lines like:\n"
             "chr1<tab>100<tab>200\n"
@@ -101,6 +100,18 @@ unsigned num_contigs = 0;
     } while (0)
 
 
+/* initialize a locus from a character line */
+#define INIT_LOCUS(line, locus)                                   \
+    do {                                                          \
+        char contig[50];                                          \
+        unsigned pos;                                             \
+        int nparsed = sscanf(line, "%s\t%u\t", contig, &pos);     \
+        assert(nparsed == 2);                                     \
+        INIT_CONTIG(contig, (locus).contig);                      \
+        (locus).pos = pos;                                        \
+    } while (0)                                                   \
+
+    
 /* Do not pass arguments that are evaluated */
 #define CMP(a, b) ((a) < (b) ? -1 : (a) > (b) ? 1 : 0)
 
@@ -133,8 +144,6 @@ struct locus_range {
 };
 
 
-long target_leaf_size = 1e7;
-
 /* allows mapping file offsets to loci */
 struct off_index {
     struct locus_range span;
@@ -164,53 +173,38 @@ int contains(struct off_index *ix, struct locus_pos loc)
 }
 
 
-/* Post-condition: ixp points to an index node smaller than
-   target_leaf_size that contains cur.
-
-find (or create) a minimal index node that contains cur, using a
-   two-phase search.  the expansion phase traverses up the index tree
-   until ix contains cur.  the contraction phase creates new,
-   successively smaller nodes as needed, until a minimal index node
-   that contains cur exists or is found.  if the root index node (with
-   parent == NULL) still doesn't contain cur, return 0.  return 1 on
-   success.
-*/
-int update_index_node(struct off_index **ixp, struct locus_pos cur, FILE *pileup_fh)
+/* find a loose-fitting index that contains cur, starting at ix, using
+   only binary search.  Does not guarantee to find the tightest
+   possible index because the bisection is done based on file offsets,
+   not loci positions. */
+struct off_index *
+find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
 {
-
     /* expansion phase */
-    while (! contains(*ixp, cur))
+    while (! contains(ix, cur))
     {
-        if (! (*ixp)->parent) return 1;
-        *ixp = (*ixp)->parent;
+        if (! ix->parent) return NULL;
+        ix = ix->parent;
     }
-
     /* contraction phase.  assume ix contains cur. */
     char contig[50];
-    unsigned pos, ci;
+    unsigned pos;
     struct locus_pos midpoint_loc;
-    size_t midpoint_off;
+    long midpoint_off = 0, prev_off = -1;
     int line_start;
 
-    struct off_index *ix = *ixp;
-    while (ix->end_offset - ix->start_offset > target_leaf_size)
+    while (prev_off != midpoint_off)
     {
         /* find the midpoint */
+        prev_off = midpoint_off;
         if (ix->left == NULL && ix->right == NULL)
         {
             fseek(pileup_fh, (ix->end_offset + ix->start_offset) / 2, SEEK_SET);
             long partial_pos = ftell(pileup_fh);
             fscanf(pileup_fh, "%*[^\n]\n%n%s\t%u\t", &line_start, contig, &pos);
-            INIT_CONTIG(contig, ci);
-            midpoint_loc.contig = ci;
+            INIT_CONTIG(contig, midpoint_loc.contig);
             midpoint_loc.pos = pos;
             midpoint_off = partial_pos + line_start;
-            
-            /* tests we shouldn't have to do... */
-            fseek(pileup_fh, partial_pos + line_start - 1, SEEK_SET);
-            char c;
-            fscanf(pileup_fh, "%c", &c);
-            assert(c == '\n');
             
         }
         else
@@ -245,13 +239,140 @@ int update_index_node(struct off_index **ixp, struct locus_pos cur, FILE *pileup
         }
 
         /* traverse to appropriate child node */
+        ix = cmp < 0 ? ix->left : ix->right;
+        assert(ix != NULL);
+    }
+    return ix;
+
+}
+
+
+
+
+/* Scan forward locus by locus, creating a tightest index containing
+   cur.  this will be an orphan index node with no parent, and will
+   not attach itself to ix */
+struct off_index
+get_tight_index(const struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
+{
+    struct off_index t;
+    struct locus_pos locus = ix->span.beg;
+    size_t nbytes_wanted = ix->end_offset - ix->start_offset;
+    char *buf = (char *)malloc(nbytes_wanted), *start = buf, *end = buf + nbytes_wanted;
+    
+    
+    fseek(pileup_fh, ix->start_offset, SEEK_SET);
+    size_t nbytes_read = fread(buf, 1, nbytes_wanted, pileup_fh);
+    assert(nbytes_read == nbytes_wanted);
+
+    while (less_locus_pos(&locus, &cur) < 0)
+    {
+        start = strchr(start, '\n') + 1;
+        INIT_LOCUS(start, locus);
+    }
+    t.span.beg = locus;
+    t.start_offset = ix->start_offset + (start - buf);
+
+    while (less_locus_pos(&locus, &cur) == 0)
+    {
+        start = strchr(start, '\n') + 1;
+        if (start == end)
+        {
+            locus = ix->span.end;
+            break;
+        }
+        INIT_LOCUS(start, locus);
+    }
+    t.span.end = locus;
+    t.end_offset = ix->start_offset + (start - buf);
+
+    free(buf);
+    return t;
+}
+
+/* Post-condition: ixp points to an index node smaller than
+   target_leaf_size that contains cur.
+
+find (or create) a minimal index node that contains cur, using a
+   two-phase search.  the expansion phase traverses up the index tree
+   until ix contains cur.  the contraction phase creates new,
+   successively smaller nodes as needed, until a minimal index node
+   that contains cur exists or is found.  if the root index node (with
+   parent == NULL) still doesn't contain cur, return 0.  return 1 on
+   success.
+*/
+/*
+int update_index_node(struct off_index **ixp, struct locus_pos cur, FILE *pileup_fh)
+{
+
+    // expansion phase
+    while (! contains(*ixp, cur))
+    {
+        if (! (*ixp)->parent) return 1;
+        *ixp = (*ixp)->parent;
+    }
+
+    // contraction phase.  assume ix contains cur.
+    char contig[50];
+    unsigned pos, ci;
+    struct locus_pos midpoint_loc;
+    size_t midpoint_off;
+    int line_start;
+
+    struct off_index *ix = *ixp;
+    while (ix->end_offset - ix->start_offset > target_leaf_size)
+    {
+        // find the midpoint
+        if (ix->left == NULL && ix->right == NULL)
+        {
+            fseek(pileup_fh, (ix->end_offset + ix->start_offset) / 2, SEEK_SET);
+            long partial_pos = ftell(pileup_fh);
+            fscanf(pileup_fh, "%*[^\n]\n%n%s\t%u\t", &line_start, contig, &pos);
+            INIT_CONTIG(contig, ci);
+            midpoint_loc.contig = ci;
+            midpoint_loc.pos = pos;
+            midpoint_off = partial_pos + line_start;
+            
+        }
+        else
+        {
+            midpoint_loc = ix->left ? ix->left->span.end : ix->right->span.beg;
+            midpoint_off = ix->left ? ix->left->end_offset : ix->right->start_offset;
+        }
+        
+        // create a new child node as necessary
+        int cmp = less_locus_pos(&cur, &midpoint_loc);
+        if (cmp < 0 && ! ix->left)
+        {
+            ix->left = (struct off_index *)malloc(sizeof(struct off_index));
+            struct off_index *p = ix->left;
+            p->span.beg = ix->span.beg;
+            p->span.end = midpoint_loc;
+            p->start_offset = ix->start_offset;
+            p->end_offset = midpoint_off;
+            p->parent = ix;
+            p->left = p->right = NULL;
+        }            
+        if (cmp >= 0 && ! ix->right)
+        {
+            ix->right = (struct off_index *)malloc(sizeof(struct off_index));
+            struct off_index *p = ix->right;
+            p->span.beg = midpoint_loc;
+            p->span.end = ix->span.end;
+            p->start_offset = midpoint_off;
+            p->end_offset = ix->end_offset;
+            p->parent = ix;
+            p->left = p->right = NULL;
+        }
+
+        // traverse to appropriate child node
         *ixp = cmp < 0 ? ix->left : ix->right;
         assert(*ixp != NULL);
         ix = *ixp;
     }
     return 0;
 }
-
+*/
 
 void free_index(struct off_index *root)
 {
@@ -275,6 +396,7 @@ void free_index(struct off_index *root)
 
    
 */
+/*
 void process_chunk(struct off_index *ix,
                    char *chunk_buf,
                    FILE *pileup_fh,
@@ -291,7 +413,6 @@ void process_chunk(struct off_index *ix,
 
     assert(chunk_buf[nbytes_read - 1] == '\n');
 
-    /* scan forwards, updating locus and start, until */
     struct locus_pos locus = ix->span.beg;
     
     while (less_locus_pos(&locus, cur) < 0)
@@ -310,9 +431,9 @@ void process_chunk(struct off_index *ix,
         locus.pos = pos;
     }
 
-    /* there exists at least one existing locus that is not less than
-       c. continue scanning forwards to find the first locus not less
-       than query.end */
+    // there exists at least one existing locus that is not less than
+    // c. continue scanning forwards to find the first locus not less
+    // than query.end
     end = start;
     while (less_locus_pos(&locus, &query.end) < 0)
     {
@@ -329,13 +450,13 @@ void process_chunk(struct off_index *ix,
         locus.contig = ci;
         locus.pos = pos;
     }
-    /* just write to stdout */
+
     write(1, start, end - start);
     fflush(stdout);
     *cur = locus;
 
 }
-                   
+*/                   
 
 
 int main_pug(int argc, char ** argv)
@@ -348,7 +469,6 @@ int main_pug(int argc, char ** argv)
         switch(c)
         {
         case 'l': max_pileup_line_size = (size_t)atof(optarg); break;
-        case 's': target_leaf_size = (size_t)atof(optarg); break;
         default: return pug_usage(); break;
         }
     }
@@ -460,40 +580,34 @@ int main_pug(int argc, char ** argv)
     ++root->span.end.pos;
     INIT_CONTIG(contig, root->span.end.contig);
 
+    free(target_line);
+
     fseek(pileup_fh, 0, SEEK_SET);
 
     /* main loop */
     q = queries;
     qend = queries + num_queries;
 
-    struct off_index *ix = root;
-    struct locus_pos cur = q->beg;
-
-    char *chunk_buf = (char *)malloc(target_leaf_size + 1);
+    struct off_index *lbeg = root, *lend, tbeg, tend;
 
     while (q != qend)
     {
-        /* updates ix to point to an index node that contains cur */
-        update_index_node(&ix, cur, pileup_fh);
-
-        /* output all loci in pileup_fh that fall within ix, are >=
-           cur, and within *q.  update cur to point to  */
-        /* ++q; */
-        /* cur = q->beg; */
-        process_chunk(ix, chunk_buf, pileup_fh, *q, &cur);
-
-        if (less_locus_pos(&cur, &q->end) >= 0)
-        {
-            ++q;
-            if (q != qend)
-                cur = q->beg;
-        }
+        lbeg = find_loose_index(lbeg, q->beg, pileup_fh);
+        lend = find_loose_index(lbeg, q->end, pileup_fh); /* lbeg first argument intentional */
+        tbeg = get_tight_index(lbeg, q->beg, pileup_fh);
+        tend = get_tight_index(lend, q->end, pileup_fh);
         
+        fseek(pileup_fh, tbeg.start_offset, SEEK_SET);
+        size_t nbytes_wanted = tend.start_offset - tbeg.start_offset;
+        char *buf = (char *)malloc(nbytes_wanted);
+        size_t nbytes_read = fread(buf, 1, nbytes_wanted, pileup_fh);
+        assert(nbytes_read == nbytes_wanted);
+        write(1, buf, nbytes_read);
+        free(buf);
+        
+        ++q;
     }
 
-    free(contig_buf);
-    free(chunk_buf);
-    free(target_line);
     free(queries);
     free_index(root);
 
