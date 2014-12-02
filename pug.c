@@ -6,6 +6,8 @@
 #include <string.h>
 #include <assert.h>
 
+#define _FILE_OFFSET_BITS 64
+
 int pug_usage()
 {
     fprintf(stderr,
@@ -153,7 +155,7 @@ struct locus_range {
 /* allows mapping file offsets to loci */
 struct off_index {
     struct locus_range span;
-    long start_offset, end_offset;
+    off_t start_offset, end_offset;
     struct off_index *left, *right, *parent;
 };
 
@@ -197,7 +199,7 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
     char contig[50];
     unsigned pos;
     struct locus_pos midpoint_loc;
-    long midpoint_off = ix->end_offset;
+    off_t midpoint_off = ix->end_offset;
     int rval;
 
     while (1)
@@ -205,7 +207,7 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
         /* find the midpoint */
         if (ix->left == NULL && ix->right == NULL)
         {
-            fseek(pileup_fh, (ix->end_offset + ix->start_offset) / 2, SEEK_SET);
+            fseeko(pileup_fh, (ix->end_offset + ix->start_offset) / 2, SEEK_SET);
             int nextchar = fgetc(pileup_fh);
 
             if ((char)nextchar != '\n')
@@ -215,7 +217,7 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
             }
             /* now, pileup_fh is queued up to the start of a line */
 
-            midpoint_off = ftell(pileup_fh);
+            midpoint_off = ftello(pileup_fh);
             if (midpoint_off == ix->end_offset)
                 break;
             
@@ -262,20 +264,6 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
 
         /* traverse to appropriate child node */
         ix = cmp < 0 ? ix->left : ix->right;
-        /* char c; */
-        /* if (ix->start_offset != 0) */
-        /* { */
-        /*     fseek(pileup_fh, ix->start_offset - 1, SEEK_SET); */
-        /*     fscanf(pileup_fh, "%c", &c); */
-        /*     assert(c == '\n'); */
-        /* } */
-        /* if (ix->end_offset != 259707606333) */
-        /* { */
-        /*     fseek(pileup_fh, ix->end_offset - 1, SEEK_SET); */
-        /*     fscanf(pileup_fh, "%c", &c); */
-        /*     assert(c == '\n'); */
-        /* } */
-        
     }
     return ix;
 
@@ -296,7 +284,7 @@ get_tight_index(const struct off_index *ix, struct locus_pos cur, FILE *pileup_f
     char *buf = (char *)malloc(nbytes_wanted), *start = buf, *end = buf + nbytes_wanted;
     
     
-    fseek(pileup_fh, ix->start_offset, SEEK_SET);
+    fseeko(pileup_fh, ix->start_offset, SEEK_SET);
     size_t nbytes_read = fread(buf, 1, nbytes_wanted, pileup_fh);
     assert(nbytes_read == nbytes_wanted);
 
@@ -454,9 +442,9 @@ int main_pug(int argc, char ** argv)
     root->start_offset = 0;
     fscanf(pileup_fh, "%s\t%u\t", contig, &root->span.beg.pos);
     INIT_CONTIG(contig, root->span.beg.contig);
-    fseek(pileup_fh, -(long)max_pileup_line_size, SEEK_END);
+    fseeko(pileup_fh, (off_t)-max_pileup_line_size, SEEK_END);
     size_t len = fread(target_line, 1, max_pileup_line_size, pileup_fh);
-    root->end_offset = ftell(pileup_fh);
+    root->end_offset = ftello(pileup_fh);
     assert(len > 1);
     
     root->left = root->right = root->parent = NULL;
@@ -468,7 +456,7 @@ int main_pug(int argc, char ** argv)
 
     free(target_line);
 
-    fseek(pileup_fh, 0, SEEK_SET);
+    fseeko(pileup_fh, 0, SEEK_SET);
 
     /* main loop */
     q = queries;
@@ -484,7 +472,7 @@ int main_pug(int argc, char ** argv)
         tend = get_tight_index(lend, q->end, pileup_fh);
 
         fprintf(stderr, "Processed %u: %u-%u\n", q->beg.contig, q->beg.pos, q->end.pos);
-        /* fseek(pileup_fh, tbeg.start_offset, SEEK_SET); */
+        /* fseeko(pileup_fh, tbeg.start_offset, SEEK_SET); */
         /* size_t bytes_to_write = tend.start_offset - tbeg.start_offset; */
         /* while (bytes_to_write) */
         /* { */
@@ -493,7 +481,7 @@ int main_pug(int argc, char ** argv)
         /*     assert(nbytes_read == chunk_bytes); */
         /*     write(1, chunk_buffer, nbytes_read); */
         /*     bytes_to_write -= chunk_bytes; */
-        /* }         */
+        /* } */
         ++q;
     }
 
