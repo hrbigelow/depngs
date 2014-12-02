@@ -482,7 +482,7 @@ int main_pug(int argc, char ** argv)
         lend = find_loose_index(lbeg, q->end, pileup_fh); /* lbeg first argument intentional */
         tend = get_tight_index(lend, q->end, pileup_fh);
 
-        fprintf(stderr, "Processed %s: %Zu-%Zu\n", q->beg.contig, q->beg.pos, q->end.pos);
+        fprintf(stderr, "Processed %s: %u-%u\n", q->beg.contig, q->beg.pos, q->end.pos);
         /* fseek(pileup_fh, tbeg.start_offset, SEEK_SET); */
         /* size_t bytes_to_write = tend.start_offset - tbeg.start_offset; */
         /* while (bytes_to_write) */
