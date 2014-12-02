@@ -102,7 +102,7 @@ int run_comp_or_mode(size_t max_mem,
     // bool use_independence_chain_mh = true;
 
     // create the reusable resources here
-    wrapper_input * worker_inputs = new wrapper_input[num_threads];
+    wrapper_input *worker_inputs = new wrapper_input[num_threads];
 
     pthread_mutex_t file_writing_mutex;
 
@@ -128,12 +128,15 @@ int run_comp_or_mode(size_t max_mem,
     // the functions in the workers require this.
     gsl_set_error_handler_off();
 
+    /* redo the input strategy assuming off_index input */
+    
+
     while (! feof(pileup_input_fh))
     {
         nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
 
         std::vector<char *> pileup_lines =
-            FileUtils::find_complete_lines_nullify(chunk_buffer_in, & last_fragment);
+            FileUtils::find_complete_lines_nullify(chunk_buffer_in, &last_fragment);
 
         chunk_buffer_out = new char[output_unit_size * pileup_lines.size() + 1];
         output_lines = new char*[pileup_lines.size()];
@@ -173,9 +176,8 @@ int run_comp_or_mode(size_t max_mem,
         
         // write the buffers
         for (size_t l = 0; l != pileup_lines.size(); ++l)
-        {
             fwrite(output_lines[l], 1, strlen(output_lines[l]), posterior_output_fh);
-        }
+
         fflush(posterior_output_fh);
 
         nbytes_unused = strlen(last_fragment);

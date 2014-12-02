@@ -481,17 +481,18 @@ int main_pug(int argc, char ** argv)
         tbeg = get_tight_index(lbeg, q->beg, pileup_fh);
         lend = find_loose_index(lbeg, q->end, pileup_fh); /* lbeg first argument intentional */
         tend = get_tight_index(lend, q->end, pileup_fh);
-        
-        fseek(pileup_fh, tbeg.start_offset, SEEK_SET);
-        size_t bytes_to_write = tend.start_offset - tbeg.start_offset;
-        while (bytes_to_write)
-        {
-            size_t chunk_bytes = MIN(bytes_to_write, max_chunk_size);
-            size_t nbytes_read = fread(chunk_buffer, 1, chunk_bytes, pileup_fh);
-            assert(nbytes_read == chunk_bytes);
-            write(1, chunk_buffer, nbytes_read);
-            bytes_to_write -= chunk_bytes;
-        }        
+
+        fprintf(stderr, "Processed %s: %Zu-%Zu\n", q->beg.contig, q->beg.pos, q->end.pos);
+        /* fseek(pileup_fh, tbeg.start_offset, SEEK_SET); */
+        /* size_t bytes_to_write = tend.start_offset - tbeg.start_offset; */
+        /* while (bytes_to_write) */
+        /* { */
+        /*     size_t chunk_bytes = MIN(bytes_to_write, max_chunk_size); */
+        /*     size_t nbytes_read = fread(chunk_buffer, 1, chunk_bytes, pileup_fh); */
+        /*     assert(nbytes_read == chunk_bytes); */
+        /*     write(1, chunk_buffer, nbytes_read); */
+        /*     bytes_to_write -= chunk_bytes; */
+        /* }         */
         ++q;
     }
 

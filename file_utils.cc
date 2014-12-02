@@ -268,8 +268,11 @@ FileUtils::find_complete_lines(char * lines, char ** last_fragment)
     return find_complete_lines_aux(lines, false, last_fragment);
 }
 
+/* modify a null-terminated character string 'lines' in-place, setting
+   \n to \0, and returning a vector of starts.  set 'last_fragment' to
+   point to the remaining line fragment */
 std::vector<char *> 
-FileUtils::find_complete_lines_nullify(char * lines, char ** last_fragment)
+FileUtils::find_complete_lines_nullify(char *lines, char **last_fragment)
 {
     return find_complete_lines_aux(lines, true, last_fragment);
 }
