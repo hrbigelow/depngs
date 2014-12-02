@@ -182,7 +182,8 @@ int contains(struct off_index *ix, struct locus_pos loc)
 /* find a loose-fitting index that contains cur, starting at ix, using
    only binary search.  Does not guarantee to find the tightest
    possible index because the bisection is done based on file offsets,
-   not loci positions. */
+   not loci positions. returns NULL if the root doesn't even contain
+   cur */
 struct off_index *
 find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
 {
@@ -482,7 +483,7 @@ int main_pug(int argc, char ** argv)
         lend = find_loose_index(lbeg, q->end, pileup_fh); /* lbeg first argument intentional */
         tend = get_tight_index(lend, q->end, pileup_fh);
 
-        fprintf(stderr, "Processed %s: %u-%u\n", q->beg.contig, q->beg.pos, q->end.pos);
+        fprintf(stderr, "Processed %u: %u-%u\n", q->beg.contig, q->beg.pos, q->end.pos);
         /* fseek(pileup_fh, tbeg.start_offset, SEEK_SET); */
         /* size_t bytes_to_write = tend.start_offset - tbeg.start_offset; */
         /* while (bytes_to_write) */
