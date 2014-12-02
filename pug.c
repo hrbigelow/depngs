@@ -90,6 +90,8 @@ unsigned num_contigs = 0;
 size_t max_chunk_size = 1e8;
 char *chunk_buffer;
 
+char *pileup_read_buf;
+
 /* look up a contig and assign its index if available.  assumes c_iter
    is valid to begin with, and maintains this invariant. */
 #define INIT_CONTIG(contig, c_index)                                    \
@@ -426,13 +428,27 @@ int main_pug(int argc, char ** argv)
         }
         p = q;
     }
-    
+
+    pileup_read_buf = (char *)malloc(max_chunk_size);
+    if (! pileup_read_buf)
+    {
+        fprintf(stderr, "Error: Couldn't allocate a read buffer of size %zu\n", max_chunk_size);
+        exit(1);
+    }
+
     FILE *pileup_fh = fopen(pileup_file, "r");
     if (! pileup_fh)
     {
-        fprintf(stderr, "Couldn't find pileup file %s\n", pileup_file);
+        fprintf(stderr, "Error: Couldn't find pileup file %s\n", pileup_file);
         exit(1);
     }
+
+    if (setvbuf(pileup_fh, pileup_read_buf, _IOFBF, max_chunk_size))
+    {
+        fprintf(stderr, "Error: call to setvbuf failed for some reason\n");
+        exit(1);
+    }
+
 
     char *target_line = (char *)malloc(max_pileup_line_size + 1);
 
