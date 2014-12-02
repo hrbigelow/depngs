@@ -91,6 +91,12 @@ size_t max_chunk_size = 1e8;
 char *chunk_buffer;
 
 char *pileup_read_buf;
+char *pileup_line_buf;
+
+off_t pileup_read_off; /* kept in synch with pileup_read_buf.  -1
+                          means pileup_read_buf is undefined.  other
+                          values mean that pileup_read_buf holds the
+                          contents of pileup_fh at that offset. */
 
 /* look up a contig and assign its index if available.  assumes c_iter
    is valid to begin with, and maintains this invariant. */
@@ -159,6 +165,8 @@ struct off_index {
     struct locus_range span;
     off_t start_offset, end_offset;
     struct off_index *left, *right, *parent;
+    char *span_contents; /* if non-null, will contain contents of
+                            file */
 };
 
 
@@ -201,32 +209,51 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
     char contig[50];
     unsigned pos;
     struct locus_pos midpoint_loc;
-    off_t midpoint_off = ix->end_offset;
+    off_t midpoint_off;
     int rval;
-
+    size_t dummy, span;
+    ssize_t nchars_read;
+    pileup_read_off = -1;
+    char *line_start;
     while (1)
     {
         /* find the midpoint */
+        if (pileup_read_off == -1
+            && (span = ix->end_offset - ix->start_offset) <= max_chunk_size)
+        {
+            pileup_read_off = ix->start_offset;
+            fseeko(pileup_fh, ix->start_offset, SEEK_SET);
+            fread(pileup_read_buf, 1, span, pileup_fh);
+            /* buf_end = pileup_read_buf + span; */
+        }
         if (ix->left == NULL && ix->right == NULL)
         {
-            fseeko(pileup_fh, (ix->end_offset + ix->start_offset) / 2, SEEK_SET);
-            int nextchar = fgetc(pileup_fh);
-
-            if ((char)nextchar != '\n')
+            midpoint_off = (ix->end_offset + ix->start_offset) / 2;
+            if (pileup_read_off != -1)
             {
-                ungetc(nextchar, pileup_fh);
-                fscanf(pileup_fh, "%*[^\n]\n"); /* throw away extra lines */
+                /* initialize midpoint_off, midpoint_loc from memory */
+                line_start = strchr(pileup_read_buf + (midpoint_off - pileup_read_off), '\n') + 1;
+                midpoint_off = pileup_read_off + (line_start - pileup_read_buf);
+                if (midpoint_off == ix->end_offset)
+                    break;
+                rval = sscanf(line_start, "%s\t%u\t", contig, &pos);
+                assert(rval == 2);
             }
-            /* now, pileup_fh is queued up to the start of a line */
+            else
+            {
+                /* initialize midpoint_off, midpoint_loc from file */
+                fseeko(pileup_fh, midpoint_off, SEEK_SET);
+                nchars_read = getline(&pileup_line_buf, &dummy, pileup_fh);
+                assert(nchars_read != -1);
+                
+                midpoint_off += nchars_read;
+                if (midpoint_off == ix->end_offset)
+                    break;
+                
+                rval = fscanf(pileup_fh, "%s\t%u\t", contig, &pos);
+                assert(rval == 2);
+            }
 
-            midpoint_off = ftello(pileup_fh);
-            if (midpoint_off == ix->end_offset)
-                break;
-            
-
-            rval = fscanf(pileup_fh, "%s\t%u\t", contig, &pos);
-            assert(rval == 2);
-            /* assert(strncmp(contig_ptr->contig, "chr", 3) == 0); */
             INIT_CONTIG(contig, midpoint_loc.contig);
             midpoint_loc.pos = pos;
             
@@ -249,6 +276,7 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
             p->end_offset = midpoint_off;
             p->parent = ix;
             p->left = p->right = NULL;
+            p->span_contents = NULL;
             assert(p->start_offset < p->end_offset);
         }            
         if (cmp >= 0 && ! ix->right)
@@ -261,12 +289,15 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
             p->end_offset = ix->end_offset;
             p->parent = ix;
             p->left = p->right = NULL;
+            p->span_contents = NULL;
             assert(p->start_offset < p->end_offset);
         }
 
         /* traverse to appropriate child node */
         ix = cmp < 0 ? ix->left : ix->right;
     }
+    ix->span_contents = strndup(pileup_read_buf + (ix->start_offset - pileup_read_off),
+                                ix->end_offset - ix->start_offset);
     return ix;
 
 }
@@ -278,17 +309,15 @@ find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
    cur.  this will be an orphan index node with no parent, and will
    not attach itself to ix */
 struct off_index
-get_tight_index(const struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
+get_tight_index(const struct off_index *ix, struct locus_pos cur)
 {
     struct off_index t;
+    t.left = t.right = t.parent = t.span_contents = NULL;
+
     struct locus_pos locus = ix->span.beg;
-    size_t nbytes_wanted = ix->end_offset - ix->start_offset;
-    char *buf = (char *)malloc(nbytes_wanted), *start = buf, *end = buf + nbytes_wanted;
-    
-    
-    fseeko(pileup_fh, ix->start_offset, SEEK_SET);
-    size_t nbytes_read = fread(buf, 1, nbytes_wanted, pileup_fh);
-    assert(nbytes_read == nbytes_wanted);
+    char 
+        *start = ix->span_contents, 
+        *end = start + (ix->end_offset - ix->start_offset);
 
     while (less_locus_pos(&locus, &cur) < 0)
     {
@@ -301,7 +330,7 @@ get_tight_index(const struct off_index *ix, struct locus_pos cur, FILE *pileup_f
         INIT_LOCUS(start, locus);
     }
     t.span.beg = locus;
-    t.start_offset = ix->start_offset + (start - buf);
+    t.start_offset = ix->start_offset + (start - ix->span_contents);
 
     while (less_locus_pos(&locus, &cur) == 0)
     {
@@ -314,9 +343,8 @@ get_tight_index(const struct off_index *ix, struct locus_pos cur, FILE *pileup_f
         INIT_LOCUS(start, locus);
     }
     t.span.end = locus;
-    t.end_offset = ix->start_offset + (start - buf);
+    t.end_offset = ix->start_offset + (start - ix->span_contents);
 
-    free(buf);
     return t;
 }
 
@@ -324,6 +352,8 @@ void free_index(struct off_index *root)
 {
     if (root->left) free_index(root->left);
     if (root->right) free_index(root->right);
+    if (root->span_contents) 
+        free(root->span_contents);
     free(root);
 }
 
@@ -436,6 +466,15 @@ int main_pug(int argc, char ** argv)
         exit(1);
     }
 
+    pileup_line_buf = (char *)malloc(max_pileup_line_size);
+    if (! pileup_line_buf)
+    {
+        fprintf(stderr, "Error: Couldn't allocate a line buffer of size %zu\n", 
+                max_pileup_line_size);
+        exit(1);
+    }
+
+
     FILE *pileup_fh = fopen(pileup_file, "r");
     if (! pileup_fh)
     {
@@ -443,12 +482,7 @@ int main_pug(int argc, char ** argv)
         exit(1);
     }
 
-    if (setvbuf(pileup_fh, pileup_read_buf, _IOFBF, max_chunk_size))
-    {
-        fprintf(stderr, "Error: call to setvbuf failed for some reason\n");
-        exit(1);
-    }
-
+    setbuf(pileup_fh, NULL);
 
     char *target_line = (char *)malloc(max_pileup_line_size + 1);
 
@@ -464,6 +498,7 @@ int main_pug(int argc, char ** argv)
     assert(len > 1);
     
     root->left = root->right = root->parent = NULL;
+    root->span_contents = NULL;
 
     char *last_line = (char *)memrchr(target_line, '\n', len - 1) + 1;
     sscanf(last_line, "%s\t%u\t", contig, &root->span.end.pos);
@@ -483,9 +518,9 @@ int main_pug(int argc, char ** argv)
     while (q != qend)
     {
         lbeg = find_loose_index(lbeg, q->beg, pileup_fh);
-        tbeg = get_tight_index(lbeg, q->beg, pileup_fh);
+        tbeg = get_tight_index(lbeg, q->beg);
         lend = find_loose_index(lbeg, q->end, pileup_fh); /* lbeg first argument intentional */
-        tend = get_tight_index(lend, q->end, pileup_fh);
+        tend = get_tight_index(lend, q->end);
 
         fprintf(stderr, "Processed %u: %u-%u\n", q->beg.contig, q->beg.pos, q->end.pos);
         /* fseeko(pileup_fh, tbeg.start_offset, SEEK_SET); */
