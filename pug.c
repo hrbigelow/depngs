@@ -482,7 +482,7 @@ int main_pug(int argc, char ** argv)
         exit(1);
     }
 
-    setbuf(pileup_fh, NULL);
+    // setbuf(pileup_fh, NULL);
 
     char *target_line = (char *)malloc(max_pileup_line_size + 1);
 
