@@ -124,8 +124,10 @@ char *print_discrete_comp(PileupSummary *locus,
 struct wrapper_input
 {
     posterior_wrapper *worker;
-    std::vector<char *>::iterator beg, end;
-    char **out_start;
+    char *beg, *end;
+    char *out_buf;
+    size_t out_size, out_alloc; /* current size of used and allocated
+                                   space at out_buf */
 
     // if any non-reference base has its test_quantile greater than
     // min_quantile_value it will be reported.

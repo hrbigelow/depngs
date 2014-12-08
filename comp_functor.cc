@@ -623,20 +623,39 @@ char *posterior_wrapper::process_line_mode(const char *pileup_line,
 
 
 
+/* iterate through the input range of lines.  nullifies the newline
+   characters of the input.  responsible for allocating output
+   buffer. */
 void *comp_worker(void *args)
 {
-    wrapper_input *input = static_cast<wrapper_input *>(args);
-    std::vector<char *>::iterator it;
-    char **out = input->out_start;
-    double *sample_points_buf = new double[input->worker->s.final_num_points * 4];
-    for (it = input->beg; it != input->end; ++it)
+    wrapper_input *input = (wrapper_input *)args;
+
+    char *write_ptr = input->out_buf, *old_write_ptr;
+
+    double *sample_points_buf = 
+        (double *)malloc(input->worker->s.final_num_points * 4 * sizeof(double));
+
+    char *line = input->beg, *next;
+    while (line != input->end)
     {
-        input->worker->process_line_comp(*it, *out, sample_points_buf,
-                                         input->test_quantile,
-                                         input->min_test_quantile_value);
-        ++out;
+        next = strchr(line, '\n') + 1;
+        next[-1] = '\0'; /* weird, but works */
+
+        ALLOC_GROW(input->out_buf, 
+                   write_ptr - input->out_buf + max_output_line,
+                   input->out_alloc);
+
+        write_ptr =
+            input->worker->process_line_comp(line, write_ptr,
+                                             sample_points_buf,
+                                             input->test_quantile,
+                                             input->min_test_quantile_value);
+        line = next;
+        
     }
-    delete sample_points_buf;
+    free(sample_points_buf);
+    input->out_size = write_ptr - input->out_buf;
+
     pthread_exit((void*) 0);
 }
 

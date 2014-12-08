@@ -8,6 +8,7 @@
 
 #include "dict.h"
 #include "cache.h"
+#include "file_binary_search.h"
 
 #define _FILE_OFFSET_BITS 64
 
@@ -42,22 +43,8 @@ int pug_usage()
 /* Do not pass arguments that are evaluated */
 #define CMP(a, b) ((a) < (b) ? -1 : (a) > (b) ? 1 : 0)
 
-/* GOTCHA!  Do NOT subtract two unsigned's and expect it to convert to
-   a signed quantity */
-// #define CMP(a, b) ((int)(a) - (int)(b))
-// #define CMP(a, b) ((a) - (b))
-
-
 size_t max_chunk_size = 1e8;
 char *chunk_buffer;
-
-char *pileup_read_buf;
-char *pileup_line_buf;
-
-off_t pileup_read_off; /* kept in synch with pileup_read_buf.  -1
-                          means pileup_read_buf is undefined.  other
-                          values mean that pileup_read_buf holds the
-                          contents of pileup_fh at that offset. */
 
 #define MISSING_CONTIG(CTG)                         \
     do {                                            \
@@ -74,53 +61,28 @@ struct locus_pos {
         
 
 /* initialize a locus from a character line */
-void init_locus(const char *line, 
-                struct locus_pos *loc)
+struct file_bsearch_ord init_locus(const char *line)
 {
-    char contig[50];
+    char contig[200];
     unsigned pos;
+    struct file_bsearch_ord o;
     int nparsed = sscanf(line, "%s\t%u\t", contig, &pos);
     assert(nparsed == 2);
     long ix;
     if ((ix = dict_search(contig)) >= 0)
-        loc->contig = (unsigned)ix;
+        o.hi = (size_t)ix;
     else
         MISSING_CONTIG(contig);
-
-    loc->pos = pos;
-
+    o.lo = (size_t)pos;
+    return o;
 }
 
-    
-int less_locus_pos(const void *pa, const void *pb)
-{
-    const struct locus_pos
-        *a = (struct locus_pos *)pa,
-        *b = (struct locus_pos *)pb;
-
-    int ccmp;
-    return
-        (ccmp = CMP(a->contig, b->contig)) != 0
-        ? ccmp
-        : CMP(a->pos, b->pos);
-        
-}
 
 struct locus_range {
-    struct locus_pos beg, end;
+    struct file_bsearch_ord beg, end;
 };
 
-
-/* allows mapping file offsets to loci */
-struct off_index {
-    struct locus_range span;
-    off_t start_offset, end_offset;
-    struct off_index *left, *right, *parent;
-    char *span_contents; /* if non-null, will contain contents of
-                            file */
-};
-
-
+          
 int less_locus_range(const void *pa, const void *pb)
 {
     const struct locus_range
@@ -129,173 +91,11 @@ int less_locus_range(const void *pa, const void *pb)
 
     int bcmp;
     return 
-        (bcmp = less_locus_pos(&a->beg, &b->beg)) != 0
+        (bcmp = less_file_bsearch_ord(&a->beg, &b->beg)) != 0
         ? bcmp
-        : less_locus_pos(&a->end, &b->end);
+        : less_file_bsearch_ord(&a->end, &b->end);
 }
 
-
-int contains(struct off_index *ix, struct locus_pos loc)
-{
-    return (less_locus_pos(&ix->span.beg, &loc) <= 0
-            && less_locus_pos(&loc, &ix->span.end) < 0);
-}
-
-
-/* find a loose-fitting index that contains cur, starting at ix, using
-   only binary search.  Does not guarantee to find the tightest
-   possible index because the bisection is done based on file offsets,
-   not loci positions. returns NULL if the root doesn't even contain
-   cur */
-struct off_index *
-find_loose_index(struct off_index *ix, struct locus_pos cur, FILE *pileup_fh)
-{
-    /* expansion phase */
-    while (! contains(ix, cur))
-    {
-        if (! ix->parent) return NULL;
-        ix = ix->parent;
-    }
-    /* contraction phase.  assume ix contains cur. */
-    char contig[50];
-    unsigned pos;
-    struct locus_pos midpoint_loc;
-    off_t midpoint_off;
-    int rval;
-    size_t dummy, span;
-    ssize_t nchars_read;
-    pileup_read_off = -1;
-    char *line_start;
-    while (1)
-    {
-        /* find the midpoint */
-        if (pileup_read_off == -1
-            && (span = ix->end_offset - ix->start_offset) <= max_chunk_size)
-        {
-            pileup_read_off = ix->start_offset;
-            fseeko(pileup_fh, ix->start_offset, SEEK_SET);
-            fread(pileup_read_buf, 1, span, pileup_fh);
-            /* buf_end = pileup_read_buf + span; */
-        }
-        if (ix->left == NULL && ix->right == NULL)
-        {
-            midpoint_off = (ix->end_offset + ix->start_offset) / 2;
-            if (pileup_read_off != -1)
-            {
-                /* initialize midpoint_off, midpoint_loc from memory */
-                line_start = strchr(pileup_read_buf + (midpoint_off - pileup_read_off), '\n') + 1;
-                midpoint_off = pileup_read_off + (line_start - pileup_read_buf);
-                if (midpoint_off == ix->end_offset)
-                    break;
-                rval = sscanf(line_start, "%s\t%u\t", contig, &pos);
-                assert(rval == 2);
-            }
-            else
-            {
-                /* initialize midpoint_off, midpoint_loc from file */
-                fseeko(pileup_fh, midpoint_off, SEEK_SET);
-                nchars_read = getline(&pileup_line_buf, &dummy, pileup_fh);
-                assert(nchars_read != -1);
-                
-                midpoint_off += nchars_read;
-                if (midpoint_off == ix->end_offset)
-                    break;
-                
-                rval = fscanf(pileup_fh, "%s\t%u\t", contig, &pos);
-                assert(rval == 2);
-            }
-
-            long cix = dict_search(contig);
-            if (cix < 0)
-                MISSING_CONTIG(contig);
-            midpoint_loc.contig = (unsigned)cix;
-            midpoint_loc.pos = pos;
-            
-        }
-        else
-        {
-            midpoint_loc = ix->left ? ix->left->span.end : ix->right->span.beg;
-            midpoint_off = ix->left ? ix->left->end_offset : ix->right->start_offset;
-        }
-
-        /* create a new child node as necessary */
-        int cmp = less_locus_pos(&cur, &midpoint_loc);
-        if (cmp < 0 && ! ix->left)
-        {
-            ix->left = (struct off_index *)malloc(sizeof(struct off_index));
-            struct off_index *p = ix->left;
-            p->span.beg = ix->span.beg;
-            p->span.end = midpoint_loc;
-            p->start_offset = ix->start_offset;
-            p->end_offset = midpoint_off;
-            p->parent = ix;
-            p->left = p->right = NULL;
-            p->span_contents = NULL;
-            assert(p->start_offset < p->end_offset);
-        }            
-        if (cmp >= 0 && ! ix->right)
-        {
-            ix->right = (struct off_index *)malloc(sizeof(struct off_index));
-            struct off_index *p = ix->right;
-            p->span.beg = midpoint_loc;
-            p->span.end = ix->span.end;
-            p->start_offset = midpoint_off;
-            p->end_offset = ix->end_offset;
-            p->parent = ix;
-            p->left = p->right = NULL;
-            p->span_contents = NULL;
-            assert(p->start_offset < p->end_offset);
-        }
-
-        /* traverse to appropriate child node */
-        ix = cmp < 0 ? ix->left : ix->right;
-    }
-    ix->span_contents = strndup(pileup_read_buf + (ix->start_offset - pileup_read_off),
-                                ix->end_offset - ix->start_offset);
-    return ix;
-
-}
-
-
-/* Scan forward locus by locus, creating a tightest index containing
-   cur. */
-#define OFF_BOUND(WHICH, OP)                                            \
-    off_t off_ ## WHICH ## _bound(const struct off_index *ix,           \
-                                  struct locus_pos cur)                 \
-    {                                                                   \
-        struct locus_pos locus = ix->span.beg;                          \
-        char                                                            \
-            *start = ix->span_contents,                                 \
-            *end = start + (ix->end_offset - ix->start_offset);         \
-                                                                        \
-        while (less_locus_pos(&locus, &cur) OP 0)                       \
-        {                                                               \
-            start = strchr(start, '\n') + 1;                            \
-            if (start == end)                                           \
-            {                                                           \
-                locus = ix->span.end;                                   \
-                break;                                                  \
-            }                                                           \
-            init_locus(start, &locus);                                   \
-        }                                                               \
-        return ix->start_offset + (start - ix->span_contents);          \
-    }                                                                   \
-    
-
-/* searches ix for the file offset of the lower bound of cur */
-OFF_BOUND(lower, <)
-
-/* searches ix for the file offset of the upper bound of cur */
-OFF_BOUND(upper, <=)
-
-void free_index(struct off_index *root)
-{
-    if (root->left) free_index(root->left);
-    if (root->right) free_index(root->right);
-    if (root->span_contents) 
-        free(root->span_contents);
-    free(root);
-}
 
 int main_pug(int argc, char ** argv)
 {
@@ -318,6 +118,13 @@ int main_pug(int argc, char ** argv)
     const char *locus_file = argv[optind + 1];
     const char *contig_order_file = argv[optind + 2];
 
+
+    /* the size of a chunk of file for which it is more efficient to
+       read this whole chunk rather than continue to scan through the
+       file */
+    size_t scan_thresh_size = 1e6;
+    file_bsearch_init(init_locus, scan_thresh_size);
+    
     chunk_buffer = (char *)malloc(max_chunk_size);
     if (! chunk_buffer)
     {
@@ -359,16 +166,16 @@ int main_pug(int argc, char ** argv)
         *qend,
         *q;
     
-    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, 
-                  &queries[num_queries].beg.pos, 
-                  &queries[num_queries].end.pos) == 3)
+    char reformat_buf[1000];
+    unsigned beg_pos, end_pos;
+    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, &beg_pos, &end_pos) == 3)
     {
-        cix = dict_search(contig);
-        if (cix < 0)
-            MISSING_CONTIG(contig);
+        sprintf(reformat_buf, "%s\t%u\t", contig, beg_pos);
+        queries[num_queries].beg = init_locus(reformat_buf);
 
-        queries[num_queries].beg.contig = (unsigned)cix;
-        queries[num_queries].end.contig = (unsigned)cix;
+        sprintf(reformat_buf, "%s\t%u\t", contig, end_pos);
+        queries[num_queries].end = init_locus(reformat_buf);
+
         ++num_queries;
         ALLOC_GROW(queries, num_queries + 1, num_alloc);
     }   
@@ -380,31 +187,16 @@ int main_pug(int argc, char ** argv)
     struct locus_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
-        if (p && less_locus_pos(&p->end, &q->beg) > 0)
+        if (p && less_file_bsearch_ord(&p->end, &q->beg) > 0)
         {
             /* must be on same contig if they are overlapping and
                sorted */
-            assert(p->end.contig == q->beg.contig);
-            q->beg.pos = p->end.pos;
-            if (q->end.pos < q->beg.pos)
-                q->end.pos = q->beg.pos;
+            assert(p->end.hi == q->beg.hi);
+            q->beg.lo = p->end.lo;
+            if (q->end.lo < q->beg.lo)
+                q->end.lo = q->beg.lo;
         }
         p = q;
-    }
-
-    pileup_read_buf = (char *)malloc(max_chunk_size);
-    if (! pileup_read_buf)
-    {
-        fprintf(stderr, "Error: Couldn't allocate a read buffer of size %zu\n", max_chunk_size);
-        exit(1);
-    }
-
-    pileup_line_buf = (char *)malloc(max_pileup_line_size);
-    if (! pileup_line_buf)
-    {
-        fprintf(stderr, "Error: Couldn't allocate a line buffer of size %zu\n", 
-                max_pileup_line_size);
-        exit(1);
     }
 
 
@@ -415,41 +207,15 @@ int main_pug(int argc, char ** argv)
         exit(1);
     }
 
-    // setbuf(pileup_fh, NULL);
-
-    char *target_line = (char *)malloc(max_pileup_line_size + 1);
-
-    /* 3. create and initialize a root index node representing the entire pileup file */
-    struct off_index *root = (struct off_index *) malloc(sizeof(struct off_index));
-
-    root->start_offset = 0;
-    fscanf(pileup_fh, "%s\t%u\t", contig, &root->span.beg.pos);
-    cix = dict_search(contig);
-    if (cix < 0)
-        MISSING_CONTIG(contig);
-    root->span.beg.contig = (unsigned)cix;
-
-    fseeko(pileup_fh, (off_t)-max_pileup_line_size, SEEK_END);
-    size_t len = fread(target_line, 1, max_pileup_line_size, pileup_fh);
-    root->end_offset = ftello(pileup_fh);
-    assert(len > 1);
-    
-    root->left = root->right = root->parent = NULL;
-    root->span_contents = NULL;
-
-    char *last_line = (char *)memrchr(target_line, '\n', len - 1) + 1;
-    init_locus(last_line, &root->span.end);
-    root->span.end.pos++;
-
-    free(target_line);
-
-    fseeko(pileup_fh, 0, SEEK_SET);
+    /* 3. create and initialize a root index node representing the
+       entire pileup file */
+    struct file_bsearch_index *root = find_root_index(pileup_fh);
 
     /* main loop */
     q = queries;
     qend = queries + num_queries;
-
-    struct off_index *lbeg = root, *lend;
+    
+    struct file_bsearch_index *lbeg = root, *lend;
     off_t tbeg, tend;
     while (q != qend)
     {
@@ -458,7 +224,7 @@ int main_pug(int argc, char ** argv)
         lend = find_loose_index(lbeg, q->end, pileup_fh); /* lbeg first argument intentional */
         tend = off_upper_bound(lend, q->end);
 
-        fprintf(stderr, "Processed %u: %u-%u\n", q->beg.contig, q->beg.pos, q->end.pos);
+        fprintf(stderr, "Processed %zu: %zu-%zu\n", q->beg.hi, q->beg.lo, q->end.lo);
         /* fseeko(pileup_fh, tbeg.start_offset, SEEK_SET); */
         /* size_t bytes_to_write = tend.start_offset - tbeg.start_offset; */
         /* while (bytes_to_write) */
@@ -473,8 +239,9 @@ int main_pug(int argc, char ** argv)
     }
 
     free(queries);
-    free_index(root);
+    file_bsearch_index_free(root);
     dict_free();
+    file_bsearch_free();
 
     fclose(pileup_fh);
 

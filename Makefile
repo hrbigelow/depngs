@@ -39,7 +39,7 @@ dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o comp_functor.o		\
 	stats_tools.o slice_sampling.o dirichlet.o hilbert.o simulation.o	\
 	nucleotide_stats.o usage_strings.o run_comp_or_mode.o				\
 	anomaly_tools.o dist.o dist_worker.o locus_comp.o pug.o vcf.o		\
-	file_utils.o)
+	file_utils.o file_binary_search.o)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)
