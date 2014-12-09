@@ -8,7 +8,7 @@
 
 #include <string.h>
 
-#include "run_comp_or_mode.h"
+#include "run_comp.h"
 #include "comp_functor.h"
 #include "tools.h"
 #include "usage_strings.h"

@@ -128,7 +128,6 @@ struct wrapper_input
     char *out_buf;
     size_t out_size, out_alloc; /* current size of used and allocated
                                    space at out_buf */
-
     // if any non-reference base has its test_quantile greater than
     // min_quantile_value it will be reported.
     float test_quantile, min_test_quantile_value; 

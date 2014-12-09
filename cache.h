@@ -23,4 +23,16 @@
         }                                           \
     } while (0)
 
+
+#define ALLOC_GROW_TYPED(x, nr, alloc)                          \
+    do {                                                        \
+        if ((nr) > alloc) {                                     \
+            if (alloc_nr(alloc) < (nr))                         \
+                alloc = (nr);                                   \
+            else                                                \
+                alloc = alloc_nr(alloc);                        \
+            x = (typeof(x))realloc((x), alloc * sizeof(*(x)));  \
+        }                                                       \
+    } while (0)
+
 #endif /* _CACHE_H */

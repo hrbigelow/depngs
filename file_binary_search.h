@@ -16,7 +16,9 @@
 #ifndef _FILE_BINARY_SEARCH_H
 #define _FILE_BINARY_SEARCH_H
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE /* needed for memrchr */
+#endif
 
 #include <unistd.h>
 #include <stdio.h>

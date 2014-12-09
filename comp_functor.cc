@@ -15,6 +15,7 @@
 #include "slice_sampling.h"
 #include "error_estimate.h"
 #include "defs.h"
+#include "cache.h"
 
 // input: the null-terminated pileup line
 // side-effects: populate the appropriate line buffer with the output
@@ -566,7 +567,7 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
 }
 
 
-
+/*
 char *posterior_wrapper::process_line_mode(const char *pileup_line,
                                            char *out_buffer)
 {
@@ -619,7 +620,7 @@ char *posterior_wrapper::process_line_mode(const char *pileup_line,
     
     return out_buffer;
 }
-
+*/
 
 
 
@@ -630,20 +631,22 @@ void *comp_worker(void *args)
 {
     wrapper_input *input = (wrapper_input *)args;
 
-    char *write_ptr = input->out_buf, *old_write_ptr;
+    char *write_ptr = input->out_buf;
 
     double *sample_points_buf = 
         (double *)malloc(input->worker->s.final_num_points * 4 * sizeof(double));
 
     char *line = input->beg, *next;
+    size_t max_output_line = 1000;
+
     while (line != input->end)
     {
         next = strchr(line, '\n') + 1;
         next[-1] = '\0'; /* weird, but works */
 
-        ALLOC_GROW(input->out_buf, 
-                   write_ptr - input->out_buf + max_output_line,
-                   input->out_alloc);
+        ALLOC_GROW_TYPED(input->out_buf, 
+                         write_ptr - input->out_buf + max_output_line,
+                         input->out_alloc);
 
         write_ptr =
             input->worker->process_line_comp(line, write_ptr,
@@ -656,20 +659,5 @@ void *comp_worker(void *args)
     free(sample_points_buf);
     input->out_size = write_ptr - input->out_buf;
 
-    pthread_exit((void*) 0);
-}
-
-
-
-void *mode_worker(void *args)
-{
-    wrapper_input *input = static_cast<wrapper_input *>(args);
-    std::vector<char *>::iterator it;
-    char **out = input->out_start;
-    for (it = input->beg; it != input->end; ++it)
-    {
-        input->worker->process_line_mode(*it, *out);
-        ++out;
-    }
     pthread_exit((void*) 0);
 }

@@ -2,7 +2,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "run_comp_or_mode.h"
+#include "run_comp.h"
 #include "comp_functor.h"
 
 #include "usage_strings.h"
@@ -10,9 +10,10 @@
 int comp_usage()
 {
     fprintf(stderr, 
-            "\nUsage: dep comp [options] input.jpd input.pileup output.comp [output.points]\n" 
+            "\nUsage: dep comp [options] input.jpd input.pileup output.comp contig_order.rdb [output.points]\n" 
             "Options:\n\n"
             "-l STRING   %s\n"
+            "-r STRING   range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
             "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
@@ -81,10 +82,13 @@ int main_comp(int argc, char ** argv)
     size_t min_quality_score = 5;
     const char *fastq_type = NULL;
 
-    char const* jpd_data_params_file;
-    char const* pileup_input_file;
-    char const* posterior_output_file;
-    char const* cdfs_output_file;
+    const char 
+        *jpd_data_params_file,
+        *pileup_input_file,
+        *contig_order_file,
+        *query_range_file = NULL,
+        *posterior_output_file,
+        *cdfs_output_file;
 
     bool verbose = false;
 
@@ -94,6 +98,7 @@ int main_comp(int argc, char ** argv)
         switch(c)
         {
         case 'l': strcpy(label_string, optarg); break;
+        case 'r': query_range_file = optarg; break;
         case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
         case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
         case 'z': pset.gradient_tolerance = atof(optarg); break;
@@ -112,32 +117,33 @@ int main_comp(int argc, char ** argv)
         default: return comp_usage(); break;
         }
     }
-    if (argc - optind < 3 || argc - optind > 4)
-    {
+    if (argc - optind < 4 || argc - optind > 5)
         return comp_usage();
-    }
 
     jpd_data_params_file = argv[optind];
     pileup_input_file = argv[optind + 1];
     posterior_output_file = argv[optind + 2];
+    contig_order_file = argv[optind + 3];
 
-    cdfs_output_file = (optind + 3 < argc) ? argv[optind + 3] : "/dev/null";
+    cdfs_output_file = (optind + 4 < argc) ? argv[optind + 4] : "/dev/null";
 
-    return run_comp_or_mode(max_mem,
-                            num_threads,
-                            min_quality_score,
-                            fastq_type,
-                            label_string,
-                            quantiles_file,
-                            prior_alpha,
-                            pileup_input_file,
-                            jpd_data_params_file,
-                            posterior_output_file,
-                            cdfs_output_file,
-                            &pset,
-                            test_quantile,
-                            min_test_quantile_value,
-                            verbose,
-                            &comp_worker);
-
+    return run_comp(max_mem,
+                    num_threads,
+                    min_quality_score,
+                    fastq_type,
+                    label_string,
+                    quantiles_file,
+                    prior_alpha,
+                    pileup_input_file,
+                    contig_order_file,
+                    query_range_file,
+                    jpd_data_params_file,
+                    posterior_output_file,
+                    cdfs_output_file,
+                    &pset,
+                    test_quantile,
+                    min_test_quantile_value,
+                    verbose,
+                    &comp_worker);
+    
 }

@@ -1,33 +1,36 @@
 #include <cstddef>
 
-#include "run_comp_or_mode.h"
+#include "run_comp.h"
 #include "pileup_tools.h"
 #include "comp_functor.h"
 #include "file_utils.h"
 #include "defs.h"
+extern "C" {
 #include "cache.h"
-#include "file_binary_search.h"
+#include "dict.h"
+#include "pileup_bsearch.h"
+}
 
 #include <gsl/gsl_errno.h>
 
-int run_comp_or_mode(size_t max_mem,
-                     size_t num_threads,
-                     size_t min_quality_score,
-                     const char *fastq_type,
-                     const char *label_string,
-                     const char *quantiles_file,
-                     float prior_alpha,
-                     const char *pileup_input_file,
-                     const char *contig_order_file,
-                     const char *query_range_file,
-                     const char *jpd_data_params_file,
-                     const char *posterior_output_file,
-                     const char *cdfs_output_file,
-                     struct posterior_settings *pset,
-                     double test_quantile,
-                     double min_test_quantile_value,
-                     bool verbose,
-                     void * (*worker)(void *))
+int run_comp(size_t max_mem,
+             size_t num_threads,
+             size_t min_quality_score,
+             const char *fastq_type,
+             const char *label_string,
+             const char *quantiles_file,
+             float prior_alpha,
+             const char *pileup_input_file,
+             const char *contig_order_file,
+             const char *query_range_file,
+             const char *jpd_data_params_file,
+             const char *posterior_output_file,
+             const char *cdfs_output_file,
+             struct posterior_settings *pset,
+             double test_quantile,
+             double min_test_quantile_value,
+             bool verbose,
+             void * (*worker)(void *))
 {
     double * quantiles;
     size_t num_quantiles;
@@ -43,9 +46,7 @@ int run_comp_or_mode(size_t max_mem,
         num_quantiles = 5;
     }
     else
-    {
         quantiles = ParseNumbersFile(quantiles_file, & num_quantiles);
-    }
 
     double prior_alphas[NUM_NUCS];
     for (size_t i = 0; i != NUM_NUCS; ++i)
@@ -53,9 +54,10 @@ int run_comp_or_mode(size_t max_mem,
     
     
 
-    FILE * posterior_output_fh = open_if_present(posterior_output_file, "w");
-    FILE * cdfs_output_fh = open_if_present(cdfs_output_file, "w");
-    FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
+    FILE *posterior_output_fh = open_if_present(posterior_output_file, "w");
+    FILE *cdfs_output_fh = open_if_present(cdfs_output_file, "w");
+    FILE *pileup_input_fh = open_if_present(pileup_input_file, "r");
+    FILE *query_range_fh = open_if_present(query_range_file, "r");
 
     size_t base_chunk_size = max_mem; /* user provided.  Must be >= 1e8 (100MB) */
     size_t max_pileup_line_size; /* defaulted to 10000.  automatically updated */
@@ -69,7 +71,6 @@ int run_comp_or_mode(size_t max_mem,
     }
 
     char contig[1024];
-    long cix;
     unsigned index;
     while (! feof(contig_order_fh))
     {
@@ -79,6 +80,10 @@ int run_comp_or_mode(size_t max_mem,
     fclose(contig_order_fh);
     
     dict_build();
+
+    struct locus_range {
+        struct file_bsearch_ord beg, end;
+    };
 
     /* 1. parse all query ranges into 'queries' and sort them */
     unsigned num_queries = 0, num_alloc = 10;
@@ -90,7 +95,7 @@ int run_comp_or_mode(size_t max_mem,
     /* construct the set of non-overlapping query ranges */
     char reformat_buf[1000];
     unsigned beg_pos, end_pos;
-    while (fscanf(locus_fh, "%s\t%u\t%u\n", contig, &beg_pos, &end_pos) == 3)
+    while (fscanf(query_range_fh, "%s\t%u\t%u\n", contig, &beg_pos, &end_pos) == 3)
     {
         sprintf(reformat_buf, "%s\t%u\t", contig, beg_pos);
         queries[num_queries].beg = init_locus(reformat_buf);
@@ -99,9 +104,9 @@ int run_comp_or_mode(size_t max_mem,
         queries[num_queries].end = init_locus(reformat_buf);
 
         ++num_queries;
-        ALLOC_GROW(queries, num_queries + 1, num_alloc);
+        ALLOC_GROW_TYPED(queries, num_queries + 1, num_alloc);
     }   
-    fclose(locus_fh);
+    fclose(query_range_fh);
 
     qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
     
@@ -175,8 +180,8 @@ int run_comp_or_mode(size_t max_mem,
     }
     
     // number of characters needed for a single inference
-    size_t output_unit_size = 
-        (strlen(label_string) + 112 + (10 * num_quantiles) + (14 + num_quantiles)) * 5;
+    // size_t output_unit_size = 
+    //     (strlen(label_string) + 112 + (10 * num_quantiles) + (14 + num_quantiles)) * 5;
 
     // the functions in the workers require this.
     gsl_set_error_handler_off();
@@ -200,6 +205,8 @@ int run_comp_or_mode(size_t max_mem,
     /* allocate a reasonable size for the output buffer */
     size_t t;
     size_t out_buf_size = 1e7;
+    off_t start_off, end_off;
+
     for (t = 0; t != num_threads; ++t)
     {
         worker_inputs[t].out_buf = (char *)malloc(out_buf_size);
@@ -256,8 +263,8 @@ int run_comp_or_mode(size_t max_mem,
 
                 /* update q->beg to the position just after the last line read */
                 char *last_line = (char *)memrchr(chunk_buf, '\n', write_ptr - chunk_buf - 1) + 1;
-                q->beg = init_locus(prev);
-                ++q->beg.pos;
+                q->beg = init_locus(last_line);
+                ++q->beg.lo; /* lo is the locus position, hi is the contig */
                 new_query = 0;
             }
         }
@@ -268,7 +275,7 @@ int run_comp_or_mode(size_t max_mem,
         pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t) * num_threads);
         char *cut;
         
-        worker_inputs[0].beg = read_beg;
+        worker_inputs[0].beg = chunk_buf;
         for (size_t t = 1; t != num_threads; ++t)
         {
             cut = chunk_buf + (write_ptr - chunk_buf) * t / num_threads;
@@ -297,7 +304,7 @@ int run_comp_or_mode(size_t max_mem,
         free(threads);
         
         for (t = 0; t != num_threads; ++t)
-            fwrite(worker_inputs[t].out_buf, 1, worker_inputs.out_size, posterior_output_fh);
+            fwrite(worker_inputs[t].out_buf, 1, worker_inputs[t].out_size, posterior_output_fh);
 
         fflush(posterior_output_fh);
 

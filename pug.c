@@ -8,7 +8,7 @@
 
 #include "dict.h"
 #include "cache.h"
-#include "file_binary_search.h"
+#include "pileup_bsearch.h"
 
 #define _FILE_OFFSET_BITS 64
 
@@ -38,75 +38,18 @@ int pug_usage()
 }
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
-#define MAX(a,b) ((a) < (b) ? (b) : (a))
-
-/* Do not pass arguments that are evaluated */
-#define CMP(a, b) ((a) < (b) ? -1 : (a) > (b) ? 1 : 0)
 
 size_t max_chunk_size = 1e8;
 char *chunk_buffer;
 
-#define MISSING_CONTIG(CTG)                         \
-    do {                                            \
-    fprintf(stderr, "Error at %s: %u. "             \
-            "Contig %s not found in dictionary.\n", \
-            __FILE__, __LINE__, (contig));          \
-    exit(1);                                        \
-} while (0)
-      
-      
-struct locus_pos { 
-    unsigned contig, pos;
-};
-        
-
-/* initialize a locus from a character line */
-struct file_bsearch_ord init_locus(const char *line)
-{
-    char contig[200];
-    unsigned pos;
-    struct file_bsearch_ord o;
-    int nparsed = sscanf(line, "%s\t%u\t", contig, &pos);
-    assert(nparsed == 2);
-    long ix;
-    if ((ix = dict_search(contig)) >= 0)
-        o.hi = (size_t)ix;
-    else
-        MISSING_CONTIG(contig);
-    o.lo = (size_t)pos;
-    return o;
-}
-
-
-struct locus_range {
-    struct file_bsearch_ord beg, end;
-};
-
-          
-int less_locus_range(const void *pa, const void *pb)
-{
-    const struct locus_range
-        *a = (struct locus_range *)pa,
-        *b = (struct locus_range *)pb;
-
-    int bcmp;
-    return 
-        (bcmp = less_file_bsearch_ord(&a->beg, &b->beg)) != 0
-        ? bcmp
-        : less_file_bsearch_ord(&a->end, &b->end);
-}
-
-
 int main_pug(int argc, char ** argv)
 {
     char c;
-    size_t max_pileup_line_size = 1e6;
 
-    while ((c = getopt(argc, argv, "l:m:")) >= 0)
+    while ((c = getopt(argc, argv, "m:")) >= 0)
     {
         switch(c)
         {
-        case 'l': max_pileup_line_size = (size_t)atof(optarg); break;
         case 'm': max_chunk_size = (size_t)atof(optarg); break;
         default: return pug_usage(); break;
         }
@@ -141,7 +84,6 @@ int main_pug(int argc, char ** argv)
     }
 
     char contig[1024];
-    long cix;
     unsigned index;
     while (! feof(contig_order_fh))
     {
