@@ -57,24 +57,26 @@ int run_comp(size_t max_mem,
     FILE *posterior_output_fh = open_if_present(posterior_output_file, "w");
     FILE *cdfs_output_fh = open_if_present(cdfs_output_file, "w");
     FILE *pileup_input_fh = open_if_present(pileup_input_file, "r");
-    FILE *query_range_fh = open_if_present(query_range_file, "r");
+
+
+    FILE *contig_order_fh = open_if_present(contig_order_file, "r");
 
     size_t base_chunk_size = max_mem; /* user provided.  Must be >= 1e8 (100MB) */
     size_t max_pileup_line_size; /* defaulted to 10000.  automatically updated */
 
-    // 0. parse contig_order file
-    FILE *contig_order_fh = fopen(contig_order_file, "r");
-    if (! contig_order_fh)
-    {
-        fprintf(stderr, "Couldn't open contig order file %s\n", contig_order_file);
-        exit(1);
-    }
-
+    
+    /* 0. parse contig order file */
     char contig[1024];
     unsigned index;
     while (! feof(contig_order_fh))
     {
-        fscanf(contig_order_fh, "%s\t%u\n", contig, &index);
+        int n = fscanf(contig_order_fh, "%s\t%u\n", contig, &index);
+        if (n != 2)
+        {
+            fprintf(stderr, "Error: contig order file %s doesn't have the proper format\n",
+                    contig_order_file);
+            exit(1);
+        }
         dict_add_item(contig, index);
     }
     fclose(contig_order_fh);
@@ -85,32 +87,60 @@ int run_comp(size_t max_mem,
         struct file_bsearch_ord beg, end;
     };
 
-    /* 1. parse all query ranges into 'queries' and sort them */
-    unsigned num_queries = 0, num_alloc = 10;
-    struct locus_range *queries = 
-        (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range)),
-        *qend,
-        *q;
+    struct locus_range *queries, *q, *qend;
+    unsigned num_queries = 0, num_alloc;
+
+    /* 1. create and initialize a root index node representing the
+       entire pileup file */
+    size_t scan_thresh_size = 1e6;
+    file_bsearch_init(init_locus, scan_thresh_size);
     
-    /* construct the set of non-overlapping query ranges */
-    char reformat_buf[1000];
-    unsigned beg_pos, end_pos;
-    while (fscanf(query_range_fh, "%s\t%u\t%u\n", contig, &beg_pos, &end_pos) == 3)
+    struct file_bsearch_index
+        *root = find_root_index(pileup_input_fh),
+        *ix = root;
+
+    /* 2. parse all query ranges into 'queries' and sort them */
+    char beg_contig[500], end_contig[500];
+    if (query_range_file)
     {
-        sprintf(reformat_buf, "%s\t%u\t", contig, beg_pos);
-        queries[num_queries].beg = init_locus(reformat_buf);
-
-        sprintf(reformat_buf, "%s\t%u\t", contig, end_pos);
-        queries[num_queries].end = init_locus(reformat_buf);
-
-        ++num_queries;
-        ALLOC_GROW_TYPED(queries, num_queries + 1, num_alloc);
-    }   
-    fclose(query_range_fh);
+        FILE *query_range_fh = open_if_present(query_range_file, "r");
+        
+        num_alloc = 10;
+        queries = 
+            (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range));
+        
+        /* construct the set of non-overlapping query ranges */
+        char reformat_buf[1000];
+        unsigned beg_pos, end_pos;
+        while (fscanf(query_range_fh, "%s\t%u\t%s\t%u\n", 
+                      beg_contig, &beg_pos, end_contig, &end_pos) == 4)
+        {
+            sprintf(reformat_buf, "%s\t%u\t", beg_contig, beg_pos);
+            queries[num_queries].beg = init_locus(reformat_buf);
+            
+            sprintf(reformat_buf, "%s\t%u\t", end_contig, end_pos);
+            queries[num_queries].end = init_locus(reformat_buf);
+            
+            ++num_queries;
+            ALLOC_GROW_TYPED(queries, num_queries + 1, num_alloc);
+        }   
+        fclose(query_range_fh);
+    }        
+    else
+    {
+        /* simply set the 'query' to the entire file */
+        num_alloc = 1;
+        num_queries = 1;
+        queries = 
+            (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range));
+        queries[0].beg = root->span.beg;
+        queries[0].end = root->span.end;
+        queries[0].end.lo--; /* so that root contains this query */
+    }
 
     qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
     
-    /* 2. edit queries to eliminate interval overlap */
+    /* 3. edit queries to eliminate interval overlap */
     struct locus_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
@@ -186,12 +216,6 @@ int run_comp(size_t max_mem,
     // the functions in the workers require this.
     gsl_set_error_handler_off();
 
-    /* 3. create and initialize a root index node representing the
-       entire pileup file */
-    struct file_bsearch_index
-        *root = find_root_index(pileup_input_fh),
-        *ix = root;
-
     int new_query = 1;
 
     /* cast to ptrdiff_t so we can do signed-comparison, even though these
@@ -217,7 +241,8 @@ int run_comp(size_t max_mem,
     /* redo the input strategy assuming off_index input */
     while (q != qend)
     {
-        while (BASE_LEFT() > 0)
+        /* kludgy re-use of q != qend test.  is there a better way to write this? */
+        while (BASE_LEFT() > 0 && q != qend)
         {
             /* find file offsets for current query, creating index nodes and
                updating ix in the process */
@@ -241,10 +266,11 @@ int run_comp(size_t max_mem,
             }
             else
             {
-                /* read up to the base buffer, then read the next line
-                   fragment.  realloc both chunk_buf and line_buf as
-                   necessary */
+                /* partially consume the query range.  read up to the
+                   base buffer, then read the next line fragment.
+                   realloc both chunk_buf and line_buf as necessary */
                 write_ptr += fread(write_ptr, 1, BASE_LEFT(), pileup_input_fh);
+
                 size_t oldmax = max_pileup_line_size;
                 ssize_t line_length = getline(&line_buf, &max_pileup_line_size, pileup_input_fh);
                 assert(line_length >= 0);
@@ -260,6 +286,7 @@ int run_comp(size_t max_mem,
                 }
                 strcpy(write_ptr, line_buf);
                 write_ptr += line_length;
+                start_off = ftell(pileup_input_fh);
 
                 /* update q->beg to the position just after the last line read */
                 char *last_line = (char *)memrchr(chunk_buf, '\n', write_ptr - chunk_buf - 1) + 1;
@@ -275,13 +302,19 @@ int run_comp(size_t max_mem,
         pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t) * num_threads);
         char *cut;
         
+        /* initialize ranges (notice the t = 1 initialization) */
         worker_inputs[0].beg = chunk_buf;
         for (size_t t = 1; t != num_threads; ++t)
         {
             cut = chunk_buf + (write_ptr - chunk_buf) * t / num_threads;
             cut = strchr(cut, '\n') + 1;
-
             worker_inputs[t].beg = worker_inputs[t-1].end = cut;
+        }
+        worker_inputs[num_threads - 1].end = write_ptr;
+
+        /* initialize all other fieds (this time, t = 0 initialization) */
+        for (size_t t = 0; t != num_threads; ++t)
+        {
             worker_inputs[t].out_size = 0; /* we are re-freshing the output */
 
             /* out_buf and out_alloc are set before this, and are
@@ -296,9 +329,9 @@ int run_comp(size_t max_mem,
             assert(rc == 0);
         }
 
-        for (size_t t = 0; t < num_threads; ++t) {
+        for (size_t t = 0; t != num_threads; ++t) {
             int rc = pthread_join(threads[t], NULL);
-            assert(0 == rc);
+            assert(rc == 0);
         }
 
         free(threads);
@@ -308,69 +341,10 @@ int run_comp(size_t max_mem,
 
         fflush(posterior_output_fh);
 
-
+        /* tells main loop we need to read more */
+        write_ptr = chunk_buf;
     }
     
-    /* 
-    while (! feof(pileup_input_fh))
-    {
-        nbytes_read = fread(read_pointer, 1, chunk_size - nbytes_unused, pileup_input_fh);
-
-        std::vector<char *> pileup_lines =
-            FileUtils::find_complete_lines_nullify(chunk_buffer_in, &last_fragment);
-
-        chunk_buffer_out = new char[output_unit_size * pileup_lines.size() + 1];
-        output_lines = new char*[pileup_lines.size()];
-
-        char * current_line = chunk_buffer_out;
-        for (size_t l = 0; l != pileup_lines.size(); ++l)
-        {
-            output_lines[l] = current_line;
-            current_line += output_unit_size;
-        }
-
-        read_pointer[nbytes_read] = '\0';
-
-        // here, create N pthreads.  Each should be
-        pthread_t *threads = new pthread_t[num_threads];
-        size_t worker_load = pileup_lines.size() / num_threads;
-        for (size_t t = 0; t != num_threads; ++t)
-        {
-            worker_inputs[t].beg = pileup_lines.begin() + (t * worker_load);
-            worker_inputs[t].end = (t == num_threads - 1) 
-                ? pileup_lines.end()
-                : pileup_lines.begin() + ((t + 1) * worker_load);
-            worker_inputs[t].out_start = output_lines + (t * worker_load);
-            worker_inputs[t].test_quantile = test_quantile;
-            worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
-
-            int rc = pthread_create(&threads[t], NULL, 
-                                    worker,
-                                    static_cast<void *>(& worker_inputs[t]));
-            assert(rc == 0);
-        }
-
-        for (size_t t = 0; t < num_threads; ++t) {
-            int rc = pthread_join(threads[t], NULL);
-            assert(0 == rc);
-        }
-        
-        // write the buffers
-        for (size_t l = 0; l != pileup_lines.size(); ++l)
-            fwrite(output_lines[l], 1, strlen(output_lines[l]), posterior_output_fh);
-
-        fflush(posterior_output_fh);
-
-        nbytes_unused = strlen(last_fragment);
-        memmove(chunk_buffer_in, last_fragment, nbytes_unused);
-        read_pointer = chunk_buffer_in + nbytes_unused;
-        delete chunk_buffer_out;
-        delete output_lines;
-        delete threads;
-
-    }
-    */
-
     fclose(pileup_input_fh);
     free(chunk_buf);
 

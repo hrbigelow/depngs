@@ -20,6 +20,8 @@
 #define _GNU_SOURCE /* needed for memrchr */
 #endif
 
+#define _FILE_OFFSET_BITS 64
+
 #include <unistd.h>
 #include <stdio.h>
 
@@ -27,7 +29,6 @@
 struct file_bsearch_ord {
     size_t hi, lo;
 };
-
 
 /* allows mapping file offsets to loci */
 struct file_bsearch_index {

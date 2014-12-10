@@ -638,13 +638,13 @@ void *comp_worker(void *args)
 
     char *line = input->beg, *next;
     size_t max_output_line = 1000;
-
     while (line != input->end)
     {
         next = strchr(line, '\n') + 1;
         next[-1] = '\0'; /* weird, but works */
 
-        ALLOC_GROW_TYPED(input->out_buf, 
+        ALLOC_GROW_REMAP(input->out_buf,
+                         write_ptr,
                          write_ptr - input->out_buf + max_output_line,
                          input->out_alloc);
 

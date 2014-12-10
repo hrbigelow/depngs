@@ -35,4 +35,22 @@
         }                                                       \
     } while (0)
 
+/* Realloc the buffer pointed at by 'x' so it holds at least 'nr'
+   entries; the number of entries currently allocated is 'alloc',
+   using growing factor alloc_nr().  If realloc is necessary, also
+   remap 'ptr' into the proper new offset, which is assumed to point
+   into the buffer pointed at by 'x'.*/
+#define ALLOC_GROW_REMAP(x, ptr, nr, alloc)                     \
+    do {                                                        \
+        if ((nr) > alloc) {                                     \
+            if (alloc_nr(alloc) < (nr))                         \
+                alloc = (nr);                                   \
+            else                                                \
+                alloc = alloc_nr(alloc);                        \
+            ptrdiff_t offset = (ptr) - (x);                     \
+            x = (typeof(x))realloc((x), alloc * sizeof(*(x)));  \
+            (ptr) = x + offset;                                 \
+        }                                                       \
+    } while (0)
+
 #endif /* _CACHE_H */

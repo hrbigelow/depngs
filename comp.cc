@@ -10,7 +10,7 @@
 int comp_usage()
 {
     fprintf(stderr, 
-            "\nUsage: dep comp [options] input.jpd input.pileup output.comp contig_order.rdb [output.points]\n" 
+            "\nUsage: dep comp [options] input.jpd input.pileup contig_order.rdb output.comp [output.points]\n" 
             "Options:\n\n"
             "-l STRING   %s\n"
             "-r STRING   range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
@@ -93,7 +93,7 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:t:m:z:T:f:X:y:a:I:M:C:p:q:F:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:r:t:m:z:T:f:X:y:a:I:M:C:p:q:F:v")) >= 0)
     {
         switch(c)
         {
@@ -122,8 +122,8 @@ int main_comp(int argc, char ** argv)
 
     jpd_data_params_file = argv[optind];
     pileup_input_file = argv[optind + 1];
-    posterior_output_file = argv[optind + 2];
-    contig_order_file = argv[optind + 3];
+    contig_order_file = argv[optind + 2];
+    posterior_output_file = argv[optind + 3];
 
     cdfs_output_file = (optind + 4 < argc) ? argv[optind + 4] : "/dev/null";
 

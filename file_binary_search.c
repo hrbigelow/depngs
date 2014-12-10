@@ -4,8 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-
-#define _FILE_OFFSET_BITS 64
+#include <stdint.h>
 
 #define CMP(a, b) ((a) < (b) ? -1 : (a) > (b) ? 1 : 0)
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -77,11 +76,18 @@ void file_bsearch_free()
     get_line_ord = NULL;
 }
 
+#if 0
 /* generate a root index that spans the whole file */
 struct file_bsearch_index *find_root_index(FILE *fh)
 {
     struct file_bsearch_index *root = 
         (struct file_bsearch_index *) malloc(sizeof(struct file_bsearch_index));
+
+    if (! get_line_ord)
+    {
+        fprintf(stderr, "file_binary_search: error, you didn't call file_besearch_init()\n");
+        exit(1);
+    }
 
     root->start_offset = 0;
     fseeko(fh, 0, SEEK_SET);
@@ -112,6 +118,34 @@ struct file_bsearch_index *find_root_index(FILE *fh)
     root->span_contents = NULL;
     return root;
 }
+#endif
+
+
+static struct file_bsearch_ord min_ord = { 0, 0 };
+static struct file_bsearch_ord max_ord = { SIZE_MAX, SIZE_MAX };
+
+/* generate a root index that spans the whole file */
+struct file_bsearch_index *find_root_index(FILE *fh)
+{
+    struct file_bsearch_index *root = 
+        (struct file_bsearch_index *) malloc(sizeof(struct file_bsearch_index));
+
+    if (! get_line_ord)
+    {
+        fprintf(stderr, "file_binary_search: error, you didn't call file_besearch_init()\n");
+        exit(1);
+    }
+    root->span.beg = min_ord;
+    root->span.end = max_ord;
+    root->start_offset = 0;
+    fseeko(fh, 0, SEEK_END);
+    root->end_offset = ftello(fh);
+    root->left = root->right = root->parent = NULL;
+    root->span_contents = NULL;
+
+    return root;
+}
+
 
 /* find a loose-fitting index that contains cur, starting at ix, using
    only binary search.  Does not guarantee to find the tightest
@@ -170,6 +204,7 @@ find_loose_index(struct file_bsearch_index *ix, struct file_bsearch_ord cur, FIL
                 nchars_read = getline(&line_buf, &line_len, fh);
                 assert(nchars_read != -1);
 
+                line_start = line_buf;
                 midpoint_ord = get_line_ord(line_start);
             }
 
