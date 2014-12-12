@@ -93,8 +93,11 @@ char *print_marginal_quantiles(char *out_buf,
 
     for (size_t d = 0; d != num_dimensions; ++d)
     {
-        out_buf += sprintf(out_buf, "%s\t%s\t%Zu", line_label, dimension_labels[d], mean_rank_order[d]);
-        compute_marginal_quantiles(sample_points, num_points, d, quantiles, num_quantiles, quantile_values);
+        out_buf += sprintf(out_buf, "%s\t%s\t%Zu", line_label, 
+                           dimension_labels[d], mean_rank_order[d]);
+
+        compute_marginal_quantiles(sample_points, num_points, d, 
+                                   quantiles, num_quantiles, quantile_values);
 
         out_buf += sprintf(out_buf, "\t%10.8f", mean[d]);
 

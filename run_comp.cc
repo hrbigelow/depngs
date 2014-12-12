@@ -13,6 +13,94 @@ extern "C" {
 
 #include <gsl/gsl_errno.h>
 
+
+static int new_query = 1;
+
+/* cast to ptrdiff_t so we can do signed-comparison, even though these
+   are always positive. */
+#define CHUNK_SIZE() (ptrdiff_t)(base_chunk_size + max_pileup_line_size)
+#define FILE_SPAN() (ptrdiff_t)(end_off - start_off)
+
+/* already a ptrdiff_t type */
+#define BASE_LEFT() (base_end - write_ptr)
+
+
+void read_more()
+{
+
+    /* allocate a reasonable size for the output buffer */
+    size_t t;
+    size_t out_buf_size = 1e7;
+    off_t start_off, end_off;
+
+    for (t = 0; t != num_threads; ++t)
+    {
+        worker_inputs[t].out_buf = (char *)malloc(out_buf_size);
+        worker_inputs[t].out_alloc = out_buf_size;
+        worker_inputs[t].out_size = 0;
+    }
+
+    /* redo the input strategy assuming off_index input */
+    while (q != qend)
+    {
+        /* kludgy re-use of q != qend test.  is there a better way to write this? */
+        while (BASE_LEFT() > 0 && q != qend)
+        {
+            /* find file offsets for current query, creating index nodes and
+               updating ix in the process */
+            if (new_query)
+            {
+                ix = find_loose_index(ix, q->beg, pileup_input_fh);
+                start_off = off_lower_bound(ix, q->beg);
+                ix = find_loose_index(ix, q->end, pileup_input_fh);
+                end_off = off_upper_bound(ix, q->end);
+
+                fseeko(pileup_input_fh, start_off, SEEK_SET);
+            }
+
+            /* fill the buffer as much as possible with the next query range.
+               afterwards, q now points to the next range to retrieve. */
+            if (FILE_SPAN() < BASE_LEFT())
+            {
+                write_ptr += fread(write_ptr, 1, FILE_SPAN(), pileup_input_fh);
+                ++q;
+                new_query = 1;
+            }
+            else
+            {
+                /* partially consume the query range.  read up to the
+                   base buffer, then read the next line fragment.
+                   realloc both chunk_buf and line_buf as necessary */
+                write_ptr += fread(write_ptr, 1, BASE_LEFT(), pileup_input_fh);
+
+                size_t oldmax = max_pileup_line_size;
+                ssize_t line_length = getline(&line_buf, &max_pileup_line_size, pileup_input_fh);
+                assert(line_length >= 0);
+
+                if (oldmax != max_pileup_line_size)
+                {
+                    /* should happen very rarely.  if so, realloc and
+                       update buffers. */
+                    size_t write_pos = write_ptr - chunk_buf;
+                    chunk_buf = (char *)realloc(chunk_buf, CHUNK_SIZE());
+                    base_end = chunk_buf + base_chunk_size;
+                    write_ptr = chunk_buf + write_pos;
+                }
+                strcpy(write_ptr, line_buf);
+                write_ptr += line_length;
+                start_off = ftell(pileup_input_fh);
+
+                /* update q->beg to the position just after the last line read */
+                char *last_line = (char *)memrchr(chunk_buf, '\n', write_ptr - chunk_buf - 1) + 1;
+                q->beg = init_locus(last_line);
+                ++q->beg.lo; /* lo is the locus position, hi is the contig */
+                new_query = 0;
+            }
+        }
+
+
+
+
 int run_comp(size_t max_mem,
              size_t num_threads,
              size_t min_quality_score,
@@ -216,85 +304,7 @@ int run_comp(size_t max_mem,
     // the functions in the workers require this.
     gsl_set_error_handler_off();
 
-    int new_query = 1;
-
-    /* cast to ptrdiff_t so we can do signed-comparison, even though these
-       are always positive. */
-#define CHUNK_SIZE() (ptrdiff_t)(base_chunk_size + max_pileup_line_size)
-#define FILE_SPAN() (ptrdiff_t)(end_off - start_off)
-    
-    /* already a ptrdiff_t type */
-#define BASE_LEFT() (base_end - write_ptr)
-
-    /* allocate a reasonable size for the output buffer */
-    size_t t;
-    size_t out_buf_size = 1e7;
-    off_t start_off, end_off;
-
-    for (t = 0; t != num_threads; ++t)
-    {
-        worker_inputs[t].out_buf = (char *)malloc(out_buf_size);
-        worker_inputs[t].out_alloc = out_buf_size;
-        worker_inputs[t].out_size = 0;
-    }
-
-    /* redo the input strategy assuming off_index input */
-    while (q != qend)
-    {
-        /* kludgy re-use of q != qend test.  is there a better way to write this? */
-        while (BASE_LEFT() > 0 && q != qend)
-        {
-            /* find file offsets for current query, creating index nodes and
-               updating ix in the process */
-            if (new_query)
-            {
-                ix = find_loose_index(ix, q->beg, pileup_input_fh);
-                start_off = off_lower_bound(ix, q->beg);
-                ix = find_loose_index(ix, q->end, pileup_input_fh);
-                end_off = off_upper_bound(ix, q->end);
-
-                fseeko(pileup_input_fh, start_off, SEEK_SET);
-            }
-
-            /* fill the buffer as much as possible with the next query range.
-               afterwards, q now points to the next range to retrieve. */
-            if (FILE_SPAN() < BASE_LEFT())
-            {
-                write_ptr += fread(write_ptr, 1, FILE_SPAN(), pileup_input_fh);
-                ++q;
-                new_query = 1;
-            }
-            else
-            {
-                /* partially consume the query range.  read up to the
-                   base buffer, then read the next line fragment.
-                   realloc both chunk_buf and line_buf as necessary */
-                write_ptr += fread(write_ptr, 1, BASE_LEFT(), pileup_input_fh);
-
-                size_t oldmax = max_pileup_line_size;
-                ssize_t line_length = getline(&line_buf, &max_pileup_line_size, pileup_input_fh);
-                assert(line_length >= 0);
-
-                if (oldmax != max_pileup_line_size)
-                {
-                    /* should happen very rarely.  if so, realloc and
-                       update buffers. */
-                    size_t write_pos = write_ptr - chunk_buf;
-                    chunk_buf = (char *)realloc(chunk_buf, CHUNK_SIZE());
-                    base_end = chunk_buf + base_chunk_size;
-                    write_ptr = chunk_buf + write_pos;
-                }
-                strcpy(write_ptr, line_buf);
-                write_ptr += line_length;
-                start_off = ftell(pileup_input_fh);
-
-                /* update q->beg to the position just after the last line read */
-                char *last_line = (char *)memrchr(chunk_buf, '\n', write_ptr - chunk_buf - 1) + 1;
-                q->beg = init_locus(last_line);
-                ++q->beg.lo; /* lo is the locus position, hi is the contig */
-                new_query = 0;
-            }
-        }
+    /* LEFT OFF */
 
         /* at this point, the range [chunk_buf, write_ptr) contains a full
            set of lines, and q identifies the next set of loci to
