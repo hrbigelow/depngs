@@ -16,7 +16,7 @@
 
 */
 
-/* the main configuration object. this is intentionally */
+/* the main configuration object. opaque type using pimpl pattern */
 struct thread_queue;
 
 /* initialize resources */
