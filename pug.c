@@ -105,8 +105,8 @@ int main_pug(int argc, char ** argv)
 
     /* 1. parse all query ranges into 'queries' and sort them */
     unsigned num_queries = 0, num_alloc = 10;
-    struct locus_range *queries = 
-        (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range)),
+    struct file_bsearch_range *queries = 
+        malloc(num_alloc * sizeof(struct file_bsearch_range)),
         *qend,
         *q;
     
@@ -134,7 +134,7 @@ int main_pug(int argc, char ** argv)
     qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
     
     /* 2. edit queries to eliminate interval overlap */
-    struct locus_range *p = NULL;
+    struct file_bsearch_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
         if (p && less_file_bsearch_ord(&p->end, &q->beg) > 0)

@@ -143,7 +143,6 @@ int main_comp(int argc, char ** argv)
                     &pset,
                     test_quantile,
                     min_test_quantile_value,
-                    verbose,
-                    &comp_worker);
+                    verbose);
     
 }

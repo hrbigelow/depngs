@@ -627,37 +627,29 @@ char *posterior_wrapper::process_line_mode(const char *pileup_line,
 /* iterate through the input range of lines.  nullifies the newline
    characters of the input.  responsible for allocating output
    buffer. */
-void *comp_worker(void *args)
+void comp_worker(void *par, const char *in_buf, size_t in_size,
+                 char **out_buf, size_t *out_size, size_t *out_alloc)
 {
-    wrapper_input *input = (wrapper_input *)args;
+    struct comp_worker_input *param = 
+        (struct comp_worker_input *)par;
 
-    char *write_ptr = input->out_buf;
+    char *write_ptr = *out_buf;
 
-    double *sample_points_buf = 
-        (double *)malloc(input->worker->s.final_num_points * 4 * sizeof(double));
-
-    char *line = input->beg, *next;
-    size_t max_output_line = 1000;
-    while (line != input->end)
+    const char *line = in_buf, *end = in_buf + in_size, *next;
+    size_t max_line = 1000;
+    while (line != end)
     {
         next = strchr(line, '\n') + 1;
-        next[-1] = '\0'; /* weird, but works */
-
-        ALLOC_GROW_REMAP(input->out_buf,
-                         write_ptr,
-                         write_ptr - input->out_buf + max_output_line,
-                         input->out_alloc);
+        ALLOC_GROW_REMAP(*out_buf, write_ptr, 
+                         write_ptr - *out_buf + max_line, *out_alloc);
 
         write_ptr =
-            input->worker->process_line_comp(line, write_ptr,
-                                             sample_points_buf,
-                                             input->test_quantile,
-                                             input->min_test_quantile_value);
+            param->worker->process_line_comp(line, write_ptr,
+                                             param->sample_points_buf,
+                                             param->test_quantile,
+                                             param->min_test_quantile_value);
         line = next;
         
     }
-    free(sample_points_buf);
-    input->out_size = write_ptr - input->out_buf;
-
-    pthread_exit((void*) 0);
+    *out_size = write_ptr - *out_buf;
 }

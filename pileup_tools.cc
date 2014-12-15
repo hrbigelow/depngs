@@ -70,18 +70,17 @@ PileupSummary::~PileupSummary()
 }
 
 
-// load and parse a single line.  Assumes the line has all required fields.
-// consumes the current line including newline character.
-// assume the line is zero-terminated, not newline terminated
-// !!! TODO:  Add formatting error checking.
-void PileupSummary::load_line(char const* read_pointer)
+/* load and parse a single line.  Assumes the line has all required
+   fields.  Reads the input until the first newline or nul.
+*/
+void PileupSummary::load_line(const char *read_ptr)
 {
 
     size_t span_depth;
     int read_pos, qual_pos;
 
     int scanned_fields =
-        sscanf(read_pointer, "%s\t%i\t%c\t%zi\t%n%*[^\t]\t%n", 
+        sscanf(read_ptr, "%s\t%i\t%c\t%zi\t%n%*[^\t]\t%n", 
                this->reference, 
                &this->position, 
                &this->reference_base, 
@@ -95,7 +94,7 @@ void PileupSummary::load_line(char const* read_pointer)
         exit(10);
     }
 
-    read_pointer += read_pos;
+    read_ptr += read_pos;
 
     if (this->quality_codes != NULL) delete[] this->quality_codes;
     this->quality_codes = new char[span_depth + 1];
@@ -110,7 +109,7 @@ void PileupSummary::load_line(char const* read_pointer)
     
     int rawlen = qual_pos - read_pos - 1;
     this->bases_raw = new char[rawlen + 1]; // includes the extra space
-    strncpy(this->bases_raw, read_pointer, rawlen);
+    strncpy(this->bases_raw, read_ptr, rawlen);
     this->bases_raw[rawlen] = '\0';
 
     const int max_indel_size = 1000;
@@ -123,10 +122,10 @@ void PileupSummary::load_line(char const* read_pointer)
     int current_read = 0;
     //int deletion_read = 0;
 
-    while(*read_pointer != '\0')
+    while(*read_ptr != '\0' && *read_ptr != '\n')
     {
-        pileup_ccode = *read_pointer;
-        ++read_pointer;
+        pileup_ccode = *read_ptr;
+        ++read_ptr;
 
         //reduce the pileup code
         int pileup_code = pileup_ccode;
@@ -143,6 +142,12 @@ void PileupSummary::load_line(char const* read_pointer)
             { 
                 // ACGTN.acgtn, are mapped to 'N'
                 char real_base;
+                switch(pileup_ccode) {
+                case '.': real_base = toupper(this->reference_base); break;
+                case ',': real_base = tolower(this->reference_base); break;
+                default : real_base = pileup_ccode; break;
+                }
+                /* 
                 if (pileup_ccode == '.')
                 {
                     real_base = toupper(this->reference_base);
@@ -155,6 +160,7 @@ void PileupSummary::load_line(char const* read_pointer)
                 {
                     real_base = pileup_ccode;
                 }
+                */
 
                 pileup_value = Nucleotide::base_to_index[static_cast<int>(real_base)];
 
@@ -171,11 +177,11 @@ void PileupSummary::load_line(char const* read_pointer)
             else 
             {
                 //indel
-                sscanf(read_pointer, "%i%n", &indel_size, &read_pos);
-                read_pointer += read_pos;
+                sscanf(read_ptr, "%i%n", &indel_size, &read_pos);
+                read_ptr += read_pos;
 
                 // insertion
-                memcpy(indel_sequence, read_pointer, MIN(indel_size, max_indel_size));
+                memcpy(indel_sequence, read_ptr, MIN(indel_size, max_indel_size));
                 indel_sequence[MIN(indel_size, max_indel_size)] = '\0';
                 char *p = indel_sequence;
                 while (*p != '\0') { *p = toupper(*p); ++p; }
@@ -186,7 +192,7 @@ void PileupSummary::load_line(char const* read_pointer)
                     ? (void)container->insert(CHAR_MAP::value_type(strdup(indel_sequence), 1))
                     : (void)(*it).second++;
 
-                read_pointer += indel_size;
+                read_ptr += indel_size;
             }
         }
 
@@ -194,8 +200,8 @@ void PileupSummary::load_line(char const* read_pointer)
         {
             //beginning of a read
             //ignore the next one character (a character-encoded mapping quality)
-            // sscanf(read_pointer, "%*c");
-            ++read_pointer;
+            // sscanf(read_ptr, "%*c");
+            ++read_ptr;
         }
         else if (pileup_redux == '$')
         {
@@ -215,11 +221,11 @@ void PileupSummary::load_line(char const* read_pointer)
                  pileup_redux == ' ')
         {
             //end of read_string, get the qual string
-            sscanf(read_pointer, " %n", & read_pos); //eat white space
-            read_pointer += read_pos;
+            sscanf(read_ptr, " %n", & read_pos); //eat white space
+            read_ptr += read_pos;
 
-            memcpy(this->quality_codes, read_pointer, span_depth);
-            read_pointer += span_depth;
+            memcpy(this->quality_codes, read_ptr, span_depth);
+            read_ptr += span_depth;
 
             this->quality_codes[span_depth] = '\0';
 

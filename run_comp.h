@@ -21,7 +21,6 @@ int run_comp(size_t max_mem,
              posterior_settings *pset,
              double test_quantile,
              double min_test_quantile_value,
-             bool verbose,
-             void * (*worker)(void *));
+             bool verbose);
 
 #endif // _RUN_COMP_H

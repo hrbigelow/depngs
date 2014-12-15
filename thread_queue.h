@@ -15,14 +15,46 @@
    are encountered.
 
 */
+#ifndef _THREAD_QUEUE_H
+#define _THREAD_QUEUE_H
+
+#include <unistd.h>
 
 /* the main configuration object. opaque type using pimpl pattern */
 struct thread_queue;
 
+/* this client-provided reader function is expected to manage its
+   buf/size/alloc space as needed.  The thread_queue mechanism will
+   pass NULL, 0, 0 as arguments for the first call to reader. The
+   thread_queue library will de-allocate once work is done
+   however.  */
+typedef void (thread_queue_reader_t)(void *par, char **buf,
+                                      size_t *size, size_t *alloc);
+
+/* the client-provided worker consumes the input produced from the
+   reader and outputs it into out_buf, managing out_size and
+   out_alloc.*/
+typedef void (thread_queue_worker_t)(void *par, 
+                                      const char *in_buf, size_t in_size,
+                                      char **out_buf, 
+                                      size_t *out_size, size_t *out_alloc);
+
+/* this function will be called on each output chunk in input order,
+   and as soon as the output chunk is finished writing. buf and size
+   are the buffer and size of output produced by the writer function.
+   par controls the behavior of this offloading function.  once the
+   offload is called, the buffer can be re-used by a new thread.
+   */
+typedef void (thread_queue_offload_t)(void *par, const char *buf, size_t size);
+
 /* initialize resources */
 struct thread_queue *
-thread_queue_init(void *(*worker)(void *),
-                  void (*reader)(FILE *fh),
+thread_queue_init(thread_queue_reader_t reader,
+                  void *reader_par,
+                  thread_queue_worker_t worker,
+                  void *worker_par,
+                  thread_queue_offload_t offload,
+                  void *offload_par,
                   size_t num_threads,
                   size_t num_extra_in_pool);
 
@@ -32,4 +64,6 @@ int thread_queue_run(struct thread_queue *tq);
 
 
 /* release resources */
-int thread_queue_free(struct thread_queue *tq);
+void thread_queue_free(struct thread_queue *tq);
+
+#endif /* THREAD_QUEUE_H */

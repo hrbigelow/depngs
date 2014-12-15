@@ -30,6 +30,10 @@ struct file_bsearch_ord {
     size_t hi, lo;
 };
 
+struct file_bsearch_range {
+    struct file_bsearch_ord beg, end;
+};
+
 /* allows mapping file offsets to loci */
 struct file_bsearch_index {
     struct { 
@@ -41,8 +45,10 @@ struct file_bsearch_index {
                             file */
 };
 
+typedef struct file_bsearch_ord (*get_line_ord_t)(const char *line);
+
 /* initialize static function pointers */
-void file_bsearch_init(struct file_bsearch_ord (*_get_line_ord)(const char *line),
+void file_bsearch_init(get_line_ord_t _get_line_ord,
                        size_t _mem_scan_threshold);
 
 

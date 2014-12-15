@@ -33,9 +33,7 @@ struct file_bsearch_ord init_locus(const char *line)
 
 int less_locus_range(const void *pa, const void *pb)
 {
-    const struct locus_range
-        *a = (struct locus_range *)pa,
-        *b = (struct locus_range *)pb;
+    const struct file_bsearch_range *a = pa, *b = pb;
 
     int bcmp;
     return 

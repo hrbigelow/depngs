@@ -49,7 +49,7 @@ static size_t line_len = 1e5;
 static char *line_buf; 
 
 /* initialize resources */
-void file_bsearch_init(struct file_bsearch_ord (*_get_line_ord)(const char *line),
+void file_bsearch_init(get_line_ord_t _get_line_ord,
                        size_t _mem_scan_threshold)
 {
     get_line_ord = _get_line_ord;

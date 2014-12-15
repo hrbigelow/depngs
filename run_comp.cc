@@ -5,14 +5,22 @@
 #include "comp_functor.h"
 #include "file_utils.h"
 #include "defs.h"
+
 extern "C" {
 #include "cache.h"
 #include "dict.h"
 #include "pileup_bsearch.h"
+#include "range_line_reader.h"
 }
 
 #include <gsl/gsl_errno.h>
 
+
+void result_offload(void *par, const char *buf, size_t size)
+{
+    FILE **fh = (FILE **)par;
+    fwrite(buf, 1, size, *fh);
+}
 
 
 int run_comp(size_t max_mem,
@@ -31,8 +39,7 @@ int run_comp(size_t max_mem,
              struct posterior_settings *pset,
              double test_quantile,
              double min_test_quantile_value,
-             bool verbose,
-             void * (*worker)(void *))
+             bool verbose)
 {
     double * quantiles;
     size_t num_quantiles;
@@ -64,8 +71,6 @@ int run_comp(size_t max_mem,
     FILE *contig_order_fh = open_if_present(contig_order_file, "r");
 
     size_t base_chunk_size = max_mem; /* user provided.  Must be >= 1e8 (100MB) */
-    size_t max_pileup_line_size; /* defaulted to 10000.  automatically updated */
-
     
     /* 0. parse contig order file */
     char contig[1024];
@@ -85,11 +90,7 @@ int run_comp(size_t max_mem,
     
     dict_build();
 
-    struct locus_range {
-        struct file_bsearch_ord beg, end;
-    };
-
-    struct locus_range *queries, *q, *qend;
+    struct file_bsearch_range *queries, *q, *qend;
     unsigned num_queries = 0, num_alloc;
 
     /* 1. create and initialize a root index node representing the
@@ -108,8 +109,8 @@ int run_comp(size_t max_mem,
         FILE *query_range_fh = open_if_present(query_range_file, "r");
         
         num_alloc = 10;
-        queries = 
-            (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range));
+        queries = (struct file_bsearch_range *)
+            malloc(num_alloc * sizeof(struct file_bsearch_range));
         
         /* construct the set of non-overlapping query ranges */
         char reformat_buf[1000];
@@ -133,8 +134,8 @@ int run_comp(size_t max_mem,
         /* simply set the 'query' to the entire file */
         num_alloc = 1;
         num_queries = 1;
-        queries = 
-            (struct locus_range *)malloc(num_alloc * sizeof(struct locus_range));
+        queries = (struct file_bsearch_range *)
+            malloc(num_alloc * sizeof(struct file_bsearch_range));
         queries[0].beg = root->span.beg;
         queries[0].end = root->span.end;
         queries[0].end.lo--; /* so that root contains this query */
@@ -143,7 +144,7 @@ int run_comp(size_t max_mem,
     qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
     
     /* 3. edit queries to eliminate interval overlap */
-    struct locus_range *p = NULL;
+    struct file_bsearch_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
         if (p && less_file_bsearch_ord(&p->end, &q->beg) > 0)
@@ -161,17 +162,16 @@ int run_comp(size_t max_mem,
     q = queries;
     qend = queries + num_queries;
     
-    char *chunk_buf = (char *)malloc(base_chunk_size),
-        *base_end = chunk_buf + base_chunk_size,
-        *write_ptr = chunk_buf,
-        *line_buf = (char *)malloc(max_pileup_line_size);
-
     int offset;
 
     if (fastq_type)
         offset = fastq_type_to_offset(fastq_type);
     else
+    {
+        char *chunk_buf = (char *)malloc(base_chunk_size);
         offset = fastq_offset(pileup_input_file, chunk_buf, base_chunk_size);
+        free(chunk_buf);
+    }
 
     if (offset == -1)
     {
@@ -192,7 +192,9 @@ int run_comp(size_t max_mem,
     // bool use_independence_chain_mh = true;
 
     // create the reusable resources here
-    wrapper_input *worker_inputs = (wrapper_input *)malloc(num_threads * sizeof(wrapper_input));
+    struct comp_worker_input *worker_inputs = 
+        (struct comp_worker_input *)
+        malloc(num_threads * sizeof(struct comp_worker_input));
 
     pthread_mutex_t file_writing_mutex;
 
@@ -209,77 +211,94 @@ int run_comp(size_t max_mem,
                                   & file_writing_mutex,
                                   *pset,
                                   verbose);
+        worker_inputs[t].sample_points_buf = 
+            (double *)malloc(pset->final_num_points * 4 * sizeof(double));
+        worker_inputs[t].test_quantile = test_quantile;
+        worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
     }
     
-    // number of characters needed for a single inference
-    // size_t output_unit_size = 
-    //     (strlen(label_string) + 112 + (10 * num_quantiles) + (14 + num_quantiles)) * 5;
-
     // the functions in the workers require this.
     gsl_set_error_handler_off();
-
-    /* LEFT OFF */
-
     
-        /* at this point, the range [chunk_buf, write_ptr) contains a full
-           set of lines, and q identifies the next set of loci to
-           process.  process the loci in the range. */
-        pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t) * num_threads);
-        char *cut;
-        
-        /* initialize ranges (notice the t = 1 initialization) */
-        worker_inputs[0].beg = chunk_buf;
-        for (size_t t = 1; t != num_threads; ++t)
-        {
-            cut = chunk_buf + (write_ptr - chunk_buf) * t / num_threads;
-            cut = strchr(cut, '\n') + 1;
-            worker_inputs[t].beg = worker_inputs[t-1].end = cut;
-        }
-        worker_inputs[num_threads - 1].end = write_ptr;
+    struct range_line_reader_par reader_par = {
+        pileup_input_fh, ix, q, qend,
+        init_locus, 1, 
+        1000, /* max_line_size */
+        max_mem / num_threads
+    };
 
-        /* initialize all other fieds (this time, t = 0 initialization) */
-        for (size_t t = 0; t != num_threads; ++t)
-        {
-            worker_inputs[t].out_size = 0; /* we are re-freshing the output */
+    size_t num_extra = num_threads / 2;
 
-            /* out_buf and out_alloc are set before this, and are
-               automatincally updated as needed during the worker
-               execution. */
-            worker_inputs[t].test_quantile = test_quantile;
-            worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
+    struct thread_queue *tqueue = 
+        thread_queue_init(range_line_reader,
+                          &reader_par,
+                          comp_worker,
+                          worker_inputs,
+                          result_offload,
+                          &posterior_output_fh,
+                          num_threads,
+                          num_extra);
 
-            int rc = pthread_create(&threads[t], NULL, 
-                                    worker,
-                                    static_cast<void *>(& worker_inputs[t]));
-            assert(rc == 0);
-        }
+    thread_queue_run(tqueue);
 
-        for (size_t t = 0; t != num_threads; ++t) {
-            int rc = pthread_join(threads[t], NULL);
-            assert(rc == 0);
-        }
+    thread_queue_free(tqueue);
 
-        free(threads);
-        
-        for (t = 0; t != num_threads; ++t)
-            fwrite(worker_inputs[t].out_buf, 1, worker_inputs[t].out_size, posterior_output_fh);
-
-        fflush(posterior_output_fh);
-
-        /* tells main loop we need to read more */
-        write_ptr = chunk_buf;
-    }
-    
     fclose(pileup_input_fh);
-    free(chunk_buf);
-
     fclose(posterior_output_fh);
     if (cdfs_output_fh != NULL)
         fclose(cdfs_output_fh);
 
     delete quantiles;
+    size_t t;
+    for (t = 0; t != num_threads; ++t)
+        free(worker_inputs[t].sample_points_buf);
+
     free(worker_inputs);
 
     return 0;
     
 }
+
+
+#if 0    
+    pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t) * num_threads);
+    char *cut;
+    
+    /* initialize ranges (notice the t = 1 initialization) */
+    worker_inputs[0].beg = chunk_buf;
+    for (size_t t = 1; t != num_threads; ++t)
+    {
+        cut = chunk_buf + (write_ptr - chunk_buf) * t / num_threads;
+        cut = strchr(cut, '\n') + 1;
+        worker_inputs[t].beg = worker_inputs[t-1].end = cut;
+    }
+    worker_inputs[num_threads - 1].end = write_ptr;
+
+    /* initialize all other fieds (this time, t = 0 initialization) */
+    for (size_t t = 0; t != num_threads; ++t)
+    {
+        worker_inputs[t].test_quantile = test_quantile;
+        worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
+
+        int rc = pthread_create(&threads[t], NULL, 
+                                worker,
+                                static_cast<void *>(& worker_inputs[t]));
+        assert(rc == 0);
+    }
+
+    for (size_t t = 0; t != num_threads; ++t) {
+        int rc = pthread_join(threads[t], NULL);
+        assert(rc == 0);
+    }
+
+    free(threads);
+        
+    for (t = 0; t != num_threads; ++t)
+        fwrite(worker_inputs[t].out_buf, 1, worker_inputs[t].out_size, posterior_output_fh);
+
+    fflush(posterior_output_fh);
+
+    /* tells main loop we need to read more */
+    write_ptr = chunk_buf;
+#endif
+        

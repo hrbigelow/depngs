@@ -4,6 +4,10 @@
 #include <vector>
 #include <fstream>
 
+extern "C" {
+#include "thread_queue.h"
+}
+
 class NucleotideStats;
 class ErrorEstimate;
 class Dirichlet;
@@ -102,10 +106,10 @@ struct posterior_wrapper
     char *print_quantiles(sample_details *sd, char *out_buffer);
 
     char *process_line_comp(const char *pileup_line, char *out_buffer, 
-                             double *sample_points_buf,
-                             float test_quantile,
-                             float min_test_quantile_value);
-
+                            double *sample_points_buf,
+                            float test_quantile,
+                            float min_test_quantile_value);
+    
     char *process_line_mode(const char *pileup_line, char *out_buffer);
 };
 
@@ -113,28 +117,28 @@ struct posterior_wrapper
 size_t discrete_comp_locus_bytes(size_t num_discrete_values);
 
 char *print_discrete_comp(PileupSummary *locus,
-                           const char *sample_label,
-                           double *discrete_values,
-                           size_t num_discrete_values,
-                           size_t num_discrete_points_to_print,
-                           double min_value_to_print,
-                           char *out_buf);
+                          const char *sample_label,
+                          double *discrete_values,
+                          size_t num_discrete_values,
+                          size_t num_discrete_points_to_print,
+                          double min_value_to_print,
+                          char *out_buf);
 
 
-struct wrapper_input
+struct comp_worker_input
 {
     posterior_wrapper *worker;
-    char *beg, *end;
-    char *out_buf;
-    size_t out_size, out_alloc; /* current size of used and allocated
-                                   space at out_buf */
-    // if any non-reference base has its test_quantile greater than
-    // min_quantile_value it will be reported.
+
+    double *sample_points_buf; /* must be posterior_wrapper::final_num_points * 4 */
+
+    /* if any non-reference base has its test_quantile greater than
+       min_quantile_value it will be reported. */
     float test_quantile, min_test_quantile_value; 
 };
 
 
-void *comp_worker(void *args);
+thread_queue_worker_t comp_worker;
+
 void *mode_worker(void *args);
 
 #endif // _COMP_FUNCTOR_H
