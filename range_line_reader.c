@@ -15,7 +15,7 @@ void range_line_reader(void *par, char **in_buf, size_t *in_size, size_t *in_all
 {
     struct range_line_reader_par *rr = par;
     size_t new_line_size, seen_line_size = rr->max_line_size;
-    off_t beg_off, end_off, span;
+    off_t beg_off = 0, end_off = 0, span;
     ptrdiff_t base_left;
     char *line_buf = NULL;
 

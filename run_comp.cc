@@ -103,7 +103,6 @@ int run_comp(size_t max_mem,
         *ix = root;
 
     /* 2. parse all query ranges into 'queries' and sort them */
-    char beg_contig[500], end_contig[500];
     if (query_range_file)
     {
         FILE *query_range_fh = open_if_present(query_range_file, "r");
@@ -115,13 +114,13 @@ int run_comp(size_t max_mem,
         /* construct the set of non-overlapping query ranges */
         char reformat_buf[1000];
         unsigned beg_pos, end_pos;
-        while (fscanf(query_range_fh, "%s\t%u\t%s\t%u\n", 
-                      beg_contig, &beg_pos, end_contig, &end_pos) == 4)
+        while (fscanf(query_range_fh, "%s\t%u\t%u\n", 
+                      contig, &beg_pos, &end_pos) == 3)
         {
-            sprintf(reformat_buf, "%s\t%u\t", beg_contig, beg_pos);
+            sprintf(reformat_buf, "%s\t%u\t", contig, beg_pos);
             queries[num_queries].beg = init_locus(reformat_buf);
             
-            sprintf(reformat_buf, "%s\t%u\t", end_contig, end_pos);
+            sprintf(reformat_buf, "%s\t%u\t", contig, end_pos);
             queries[num_queries].end = init_locus(reformat_buf);
             
             ++num_queries;
