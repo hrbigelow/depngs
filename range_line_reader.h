@@ -12,7 +12,6 @@ struct range_line_reader_par {
     get_line_ord_t get_line_ord;
     int new_query;
     size_t max_line_size;
-    size_t base_size;
 };
 
 void range_line_reader(void *par, char **in_buf, size_t *in_size, size_t *in_alloc);

@@ -25,7 +25,7 @@ void compute_marginal_quantiles(double *sample_points,
 
     for (size_t f = 0; f != num_quantiles; ++f)
     {
-        cut = dim_points + static_cast<size_t>(std::round(quantiles[f] *num_points));
+        cut = dim_points + (size_t)std::round(quantiles[f] * num_points);
         std::nth_element(start, cut, end);
         quantile_values[f] = cut == end ? 0.0 : *cut;
         start = cut;
@@ -113,9 +113,8 @@ char *print_marginal_quantiles(char *out_buf,
     out_buf += sprintf(out_buf, "\t%10.8f", mean_sum);
 
     for (size_t q = 0; q != num_quantiles; ++q)
-    {
         out_buf += sprintf(out_buf, "\t%10.8f", quantile_sums[q]);
-    }
+
     out_buf += sprintf(out_buf, "\n");
     
     delete mean_rank_order;

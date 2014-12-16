@@ -35,9 +35,9 @@ typedef void (thread_queue_reader_t)(void *par, char **buf,
    reader and outputs it into out_buf, managing out_size and
    out_alloc.*/
 typedef void (thread_queue_worker_t)(void *par, 
-                                      const char *in_buf, size_t in_size,
-                                      char **out_buf, 
-                                      size_t *out_size, size_t *out_alloc);
+                                     const char *in_buf, size_t in_size,
+                                     char **out_buf, 
+                                     size_t *out_size, size_t *out_alloc);
 
 /* this function will be called on each output chunk in input order,
    and as soon as the output chunk is finished writing. buf and size
@@ -56,7 +56,8 @@ thread_queue_init(thread_queue_reader_t reader,
                   thread_queue_offload_t offload,
                   void *offload_par,
                   size_t num_threads,
-                  size_t num_extra_in_pool);
+                  size_t num_extra_in_pool,
+                  size_t max_input_mem);
 
 
 /* start things running. */

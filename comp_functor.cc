@@ -567,62 +567,6 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
 }
 
 
-/*
-char *posterior_wrapper::process_line_mode(const char *pileup_line,
-                                           char *out_buffer)
-{
-
-    PileupSummary locus;
-    locus.load_line(pileup_line);
-    locus.parse(this->min_quality_score);
-    this->params->pack(& locus.counts);
-
-    //divide locus data to plus and minus-strand data
-    // double pos_anomaly_score =
-    //     strand_locus_anomaly_score(posterior, params.,
-    //                                locus, data_reader, '+', verbose);
-            
-    // double neg_anomaly_score =
-    //     strand_locus_anomaly_score(posterior, global_counts,
-    //                                locus, data_reader, '-', verbose);
-            
-            
-    // double full_anomaly_score =
-    //     locus_anomaly_score(posterior, global_counts,
-    //                         locus, data_reader, verbose);
-
-
-    this->model->locus_data = &locus.counts;
-    // this->posterior->initialize(this->gradient_tolerance, this->max_modefinding_iterations, 
-    //                             initial_point, verbose);
-
-    this->model->find_mode_point(this->s.gradient_tolerance,
-                                 this->s.max_modefinding_iterations,
-                                 this->initial_point,
-                                 this->on_zero_boundary,
-                                 this->verbose,
-                                 this->mode_point);
-
-    out_buffer += 
-        sprintf(out_buffer, 
-                "%s\t%s\t%i\t%c\t%Zu\t%Zu\t%5.5f\t%5.5f\t%5.5f\t%5.5f\n",
-                label_string, 
-                locus.reference, 
-                locus.position, 
-                locus.reference_base, 
-                locus.read_depth,
-                locus.read_depth_high_qual,
-                this->mode_point[0],
-                this->mode_point[1],
-                this->mode_point[2],
-                this->mode_point[3]
-                );
-    
-    return out_buffer;
-}
-*/
-
-
 
 /* iterate through the input range of lines.  nullifies the newline
    characters of the input.  responsible for allocating output
@@ -633,6 +577,7 @@ void comp_worker(void *par, const char *in_buf, size_t in_size,
     struct comp_worker_input *param = 
         (struct comp_worker_input *)par;
 
+    assert(*out_alloc > 0);
     char *write_ptr = *out_buf;
 
     const char *line = in_buf, *end = in_buf + in_size, *next;

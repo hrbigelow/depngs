@@ -192,15 +192,17 @@ int run_comp(size_t max_mem,
     // bool use_independence_chain_mh = true;
 
     // create the reusable resources here
-    struct comp_worker_input *worker_inputs = 
-        (struct comp_worker_input *)
-        malloc(num_threads * sizeof(struct comp_worker_input));
+    struct comp_worker_input **worker_inputs =
+        (struct comp_worker_input **)
+        malloc(num_threads * sizeof(struct comp_worker_input *));
 
     pthread_mutex_t file_writing_mutex;
 
-    for (size_t t = 0; t != num_threads; ++t)
+    size_t t;
+    for (t = 0; t != num_threads; ++t)
     {
-        worker_inputs[t].worker = 
+        worker_inputs[t] = (struct comp_worker_input *)malloc(sizeof(struct comp_worker_input));
+        worker_inputs[t]->worker = 
             new posterior_wrapper(jpd_data_params_file,
                                   prior_alphas,
                                   min_quality_score,
@@ -211,10 +213,10 @@ int run_comp(size_t max_mem,
                                   & file_writing_mutex,
                                   *pset,
                                   verbose);
-        worker_inputs[t].sample_points_buf = 
+        worker_inputs[t]->sample_points_buf = 
             (double *)malloc(pset->final_num_points * 4 * sizeof(double));
-        worker_inputs[t].test_quantile = test_quantile;
-        worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
+        worker_inputs[t]->test_quantile = test_quantile;
+        worker_inputs[t]->min_test_quantile_value = min_test_quantile_value;
     }
     
     // the functions in the workers require this.
@@ -223,11 +225,13 @@ int run_comp(size_t max_mem,
     struct range_line_reader_par reader_par = {
         pileup_input_fh, ix, q, qend,
         init_locus, 1, 
-        1000, /* max_line_size */
-        max_mem / num_threads
+        1000 /* max_line_size */
     };
 
-    size_t num_extra = num_threads / 2;
+    /* theoretically, this will allow for one chunk to take twice as
+       long as all the others, and still not cause a thread to wait
+       for a free buffer. */
+    size_t num_extra = num_threads;
 
     struct thread_queue *tqueue = 
         thread_queue_init(range_line_reader,
@@ -237,7 +241,8 @@ int run_comp(size_t max_mem,
                           result_offload,
                           &posterior_output_fh,
                           num_threads,
-                          num_extra);
+                          num_extra,
+                          max_mem);
 
     thread_queue_run(tqueue);
 
@@ -249,56 +254,14 @@ int run_comp(size_t max_mem,
         fclose(cdfs_output_fh);
 
     delete quantiles;
-    size_t t;
     for (t = 0; t != num_threads; ++t)
-        free(worker_inputs[t].sample_points_buf);
+    {
+        free(worker_inputs[t]->sample_points_buf);
+        free(worker_inputs[t]);
+    }
 
     free(worker_inputs);
 
     return 0;
     
 }
-
-
-#if 0    
-    pthread_t *threads = (pthread_t *)malloc(sizeof(pthread_t) * num_threads);
-    char *cut;
-    
-    /* initialize ranges (notice the t = 1 initialization) */
-    worker_inputs[0].beg = chunk_buf;
-    for (size_t t = 1; t != num_threads; ++t)
-    {
-        cut = chunk_buf + (write_ptr - chunk_buf) * t / num_threads;
-        cut = strchr(cut, '\n') + 1;
-        worker_inputs[t].beg = worker_inputs[t-1].end = cut;
-    }
-    worker_inputs[num_threads - 1].end = write_ptr;
-
-    /* initialize all other fieds (this time, t = 0 initialization) */
-    for (size_t t = 0; t != num_threads; ++t)
-    {
-        worker_inputs[t].test_quantile = test_quantile;
-        worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
-
-        int rc = pthread_create(&threads[t], NULL, 
-                                worker,
-                                static_cast<void *>(& worker_inputs[t]));
-        assert(rc == 0);
-    }
-
-    for (size_t t = 0; t != num_threads; ++t) {
-        int rc = pthread_join(threads[t], NULL);
-        assert(rc == 0);
-    }
-
-    free(threads);
-        
-    for (t = 0; t != num_threads; ++t)
-        fwrite(worker_inputs[t].out_buf, 1, worker_inputs[t].out_size, posterior_output_fh);
-
-    fflush(posterior_output_fh);
-
-    /* tells main loop we need to read more */
-    write_ptr = chunk_buf;
-#endif
-        
