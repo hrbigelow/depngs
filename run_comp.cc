@@ -16,10 +16,10 @@ extern "C" {
 #include <gsl/gsl_errno.h>
 
 
-void result_offload(void *par, const char *buf, size_t size)
+void result_offload(void *par, const struct managed_buf *buf)
 {
     FILE **fh = (FILE **)par;
-    fwrite(buf, 1, size, *fh);
+    fwrite(buf->buf, 1, buf->size, *fh);
 }
 
 
@@ -90,7 +90,7 @@ int run_comp(size_t max_mem,
     
     dict_build();
 
-    struct file_bsearch_range *queries, *q, *qend;
+    struct pair_ordering_range *queries, *q, *qend;
     unsigned num_queries = 0, num_alloc;
 
     /* 1. create and initialize a root index node representing the
@@ -98,9 +98,7 @@ int run_comp(size_t max_mem,
     size_t scan_thresh_size = 1e6;
     file_bsearch_init(init_locus, scan_thresh_size);
     
-    struct file_bsearch_index
-        *root = find_root_index(pileup_input_fh),
-        *ix = root;
+    struct file_bsearch_index ix = file_bsearch_make_index(pileup_input_fh);
 
     /* 2. parse all query ranges into 'queries' and sort them */
     if (query_range_file)
@@ -108,8 +106,8 @@ int run_comp(size_t max_mem,
         FILE *query_range_fh = open_if_present(query_range_file, "r");
         
         num_alloc = 10;
-        queries = (struct file_bsearch_range *)
-            malloc(num_alloc * sizeof(struct file_bsearch_range));
+        queries = (struct pair_ordering_range *)
+            malloc(num_alloc * sizeof(struct pair_ordering_range));
         
         /* construct the set of non-overlapping query ranges */
         char reformat_buf[1000];
@@ -133,20 +131,20 @@ int run_comp(size_t max_mem,
         /* simply set the 'query' to the entire file */
         num_alloc = 1;
         num_queries = 1;
-        queries = (struct file_bsearch_range *)
-            malloc(num_alloc * sizeof(struct file_bsearch_range));
-        queries[0].beg = root->span.beg;
-        queries[0].end = root->span.end;
+        queries = (struct pair_ordering_range *)
+            malloc(num_alloc * sizeof(struct pair_ordering_range));
+        queries[0].beg = ix.root->span_beg;
+        queries[0].end = ix.root->span_end;
         queries[0].end.lo--; /* so that root contains this query */
     }
 
-    qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
+    qsort(queries, num_queries, sizeof(queries[0]), less_pair_ordering_range);
     
     /* 3. edit queries to eliminate interval overlap */
-    struct file_bsearch_range *p = NULL;
+    struct pair_ordering_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
-        if (p && less_file_bsearch_ord(&p->end, &q->beg) > 0)
+        if (p && less_pair_ordering(&p->end, &q->beg) > 0)
         {
             /* must be on same contig if they are overlapping and
                sorted */
@@ -222,9 +220,12 @@ int run_comp(size_t max_mem,
     gsl_set_error_handler_off();
     
     struct range_line_reader_par reader_par = {
-        pileup_input_fh, ix, q, qend,
-        init_locus, 1, 
-        1000 /* max_line_size */
+        .ix = &ix, 
+        .n_ix = 1,
+        .q = q, 
+        .qend = qend,
+        .get_line_ord = init_locus, 
+        .new_query = 1
     };
 
     /* theoretically, this will allow for one chunk to take twice as
@@ -241,6 +242,8 @@ int run_comp(size_t max_mem,
                           &posterior_output_fh,
                           num_threads,
                           num_extra,
+                          1, /* number of input files */
+                          1, /* number of output files */
                           max_mem);
 
     thread_queue_run(tqueue);

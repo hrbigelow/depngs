@@ -1,6 +1,8 @@
 #ifndef _CACHE_H
 #define _CACHE_H
 
+#include <unistd.h>
+
 /* taken from git source code */
 #define alloc_nr(x) (((x)+16)*3/2)
 
@@ -52,5 +54,13 @@
             (ptr) = x + offset;                                 \
         }                                                       \
     } while (0)
+
+
+struct managed_buf {
+    char *buf;
+    size_t size, alloc;
+};
+
+
 
 #endif /* _CACHE_H */

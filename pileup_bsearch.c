@@ -14,11 +14,11 @@
       
       
 /* initialize a locus from a character line */
-struct file_bsearch_ord init_locus(const char *line)
+struct pair_ordering init_locus(const char *line)
 {
     char contig[200];
     unsigned pos;
-    struct file_bsearch_ord o;
+    struct pair_ordering o;
     int nparsed = sscanf(line, "%s\t%u\t", contig, &pos);
     assert(nparsed == 2);
     long ix;
@@ -28,16 +28,4 @@ struct file_bsearch_ord init_locus(const char *line)
         MISSING_CONTIG(contig);
     o.lo = (size_t)pos;
     return o;
-}
-
-
-int less_locus_range(const void *pa, const void *pb)
-{
-    const struct file_bsearch_range *a = pa, *b = pb;
-
-    int bcmp;
-    return 
-        (bcmp = less_file_bsearch_ord(&a->beg, &b->beg)) != 0
-        ? bcmp
-        : less_file_bsearch_ord(&a->end, &b->end);
 }

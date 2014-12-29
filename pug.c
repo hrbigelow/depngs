@@ -105,8 +105,9 @@ int main_pug(int argc, char ** argv)
 
     /* 1. parse all query ranges into 'queries' and sort them */
     unsigned num_queries = 0, num_alloc = 10;
-    struct file_bsearch_range *queries = 
-        malloc(num_alloc * sizeof(struct file_bsearch_range)),
+    
+    struct pair_ordering_range 
+        *queries = malloc(num_alloc * sizeof(*queries)),
         *qend,
         *q;
     
@@ -123,7 +124,9 @@ int main_pug(int argc, char ** argv)
         sprintf(reformat_buf, "%s\t%u\t", contig, beg_pos);
         queries[num_queries].beg = init_locus(reformat_buf);
 
+        if (! half_open_ranges) end_pos++;
         sprintf(reformat_buf, "%s\t%u\t", contig, end_pos);
+
         queries[num_queries].end = init_locus(reformat_buf);
 
         ++num_queries;
@@ -131,13 +134,13 @@ int main_pug(int argc, char ** argv)
     }   
     fclose(locus_fh);
 
-    qsort(queries, num_queries, sizeof(queries[0]), less_locus_range);
+    qsort(queries, num_queries, sizeof(queries[0]), less_pair_ordering_range);
     
     /* 2. edit queries to eliminate interval overlap */
-    struct file_bsearch_range *p = NULL;
+    struct pair_ordering_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
-        if (p && less_file_bsearch_ord(&p->end, &q->beg) > 0)
+        if (p && less_pair_ordering(&p->end, &q->beg) > 0)
         {
             /* must be on same contig if they are overlapping and
                sorted */
@@ -157,39 +160,35 @@ int main_pug(int argc, char ** argv)
         exit(1);
     }
 
-    /* 3. create and initialize a root index node representing the
-       entire pileup file */
-    struct file_bsearch_index *root = find_root_index(pileup_fh);
-
     /* main loop */
     q = queries;
     qend = queries + num_queries;
-    
-    struct file_bsearch_index *lbeg = root, *lend;
-    off_t tbeg, tend;
+
+    struct file_bsearch_index ix = file_bsearch_make_index(pileup_fh);
+    struct pair_ordering cur_beg, cur_end;
     while (q != qend)
     {
-        lbeg = find_loose_index(lbeg, q->beg, pileup_fh);
-        tbeg = off_lower_bound(lbeg, q->beg);
-        lend = find_loose_index(lbeg, q->end, pileup_fh); /* lbeg first argument intentional */
-        tend = half_open_ranges ? off_lower_bound(lend, q->end) : off_upper_bound(lend, q->end);
-
+        
         fprintf(stderr, "Processed %zu: %zu-%zu\n", q->beg.hi, q->beg.lo, q->end.lo);
-        fseeko(pileup_fh, tbeg, SEEK_SET);
-        size_t bytes_to_write = tend - tbeg;
+        size_t bytes_to_write = range_to_size(&ix, q->beg, q->end);
+
+        cur_beg = q->beg;
+
         while (bytes_to_write)
         {
-            size_t chunk_bytes = MIN(bytes_to_write, max_chunk_size);
-            size_t nbytes_read = fread(chunk_buffer, 1, chunk_bytes, pileup_fh);
-            assert(nbytes_read == chunk_bytes);
+            cur_end = bytes_to_write <= max_chunk_size
+                ? q->end
+                : size_to_range(&ix, cur_beg, max_chunk_size);
+            size_t nbytes_read = read_range(&ix, cur_beg, cur_end, chunk_buffer);
             write(1, chunk_buffer, nbytes_read);
-            bytes_to_write -= chunk_bytes;
+            bytes_to_write -= nbytes_read;
+            cur_beg = cur_end;
         }
         ++q;
     }
 
     free(queries);
-    file_bsearch_index_free(root);
+    file_bsearch_index_free(ix);
     dict_free();
     file_bsearch_free();
 

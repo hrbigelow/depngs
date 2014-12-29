@@ -571,22 +571,26 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
 /* iterate through the input range of lines.  nullifies the newline
    characters of the input.  responsible for allocating output
    buffer. */
-void comp_worker(void *par, const char *in_buf, size_t in_size,
-                 char **out_buf, size_t *out_size, size_t *out_alloc)
+void comp_worker(void *par, const struct managed_buf *in_buf,
+                 struct managed_buf *out_buf)
 {
     struct comp_worker_input *param = 
         (struct comp_worker_input *)par;
 
-    assert(*out_alloc > 0);
-    char *write_ptr = *out_buf;
+    assert(out_buf->alloc > 0);
+    char *write_ptr = out_buf->buf;
 
-    const char *line = in_buf, *end = in_buf + in_size, *next;
+    const char
+        *line = in_buf->buf,
+        *end = in_buf->buf + in_buf->size,
+        *next;
+
     size_t max_line = 1000;
     while (line != end)
     {
         next = strchr(line, '\n') + 1;
-        ALLOC_GROW_REMAP(*out_buf, write_ptr, 
-                         write_ptr - *out_buf + max_line, *out_alloc);
+        ALLOC_GROW_REMAP(out_buf->buf, write_ptr, 
+                         write_ptr - out_buf->buf + max_line, out_buf->alloc);
 
         write_ptr =
             param->worker->process_line_comp(line, write_ptr,
@@ -596,5 +600,5 @@ void comp_worker(void *par, const char *in_buf, size_t in_size,
         line = next;
         
     }
-    *out_size = write_ptr - *out_buf;
+    out_buf->size = write_ptr - out_buf->buf;
 }

@@ -6,7 +6,7 @@
 
 #include "file_binary_search.h"
 
-struct file_bsearch_ord init_locus(const char *line);
+struct pair_ordering init_locus(const char *line);
 
 int less_locus_range(const void *pa, const void *pb);          
 

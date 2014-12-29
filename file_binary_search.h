@@ -25,48 +25,34 @@
 #include <unistd.h>
 #include <stdio.h>
 
-/* a generic space in which to store line ordinal information */
-struct file_bsearch_ord {
-    size_t hi, lo;
-};
-
-struct file_bsearch_range {
-    struct file_bsearch_ord beg, end;
-};
+#include "ordering.h"
 
 /* allows mapping file offsets to loci */
-struct file_bsearch_index {
-    struct { 
-        struct file_bsearch_ord beg, end; 
-    } span;
+struct file_bsearch_node {
+    struct pair_ordering span_beg, span_end; 
     off_t start_offset, end_offset;
-    struct file_bsearch_index *left, *right, *parent;
+    struct file_bsearch_node *left, *right, *parent;
     char *span_contents; /* if non-null, will contain contents of
                             file */
 };
 
-typedef struct file_bsearch_ord (*get_line_ord_t)(const char *line);
+/* represents the index tree 'as a whole', together with the
+   associated structure(s) needed to use it */
+struct file_bsearch_index {
+    FILE *fh;
+    off_t file_end;
+    struct file_bsearch_node *root, *cur_node;
+};
+
+typedef struct pair_ordering (*get_line_ord_t)(const char *line);
 
 /* initialize static function pointers */
 void file_bsearch_init(get_line_ord_t _get_line_ord,
                        size_t _mem_scan_threshold);
 
 
-/* defines the ordering logic for the file_bsearch_ord structure. */
-int less_file_bsearch_ord(const void *pa, const void *pb);
-
-
-/* generate a root index that spans the whole file */
-struct file_bsearch_index *find_root_index(FILE *fh);
-
-
-/* cuts the index range in two, finding the nearest linebreak after
-   the offset midpoint, and then choosing the portion that contains
-   cur. uses file seeking until a predefined size, then reads the
-   entire range into span_contents.  stops when the nearest linebreak
-   is at the end of the range. */
-struct file_bsearch_index *
-find_loose_index(struct file_bsearch_index *ix, struct file_bsearch_ord cur, FILE *fh);
+/* generate an index that spans the whole file */
+struct file_bsearch_index file_bsearch_make_index(FILE *fh);
 
 
 /* release resources.  call this after you are done searching, or
@@ -75,17 +61,29 @@ find_loose_index(struct file_bsearch_index *ix, struct file_bsearch_ord cur, FIL
 void file_bsearch_free();
 
 
-/* return offset position of start of line where cur is (or would be
-   inserted) */
-off_t off_lower_bound(const struct file_bsearch_index *ix, struct file_bsearch_ord cur);
+/* return an estimated upper size limit to contain the logical range
+   [beg, end) */
+size_t range_to_size(struct file_bsearch_index *ix,
+                     struct pair_ordering beg,
+                     struct pair_ordering end);
 
-/* return offset position of start of line just after cur (or just
-   after where cur would be inserted) */
-off_t off_upper_bound(const struct file_bsearch_index *ix, struct file_bsearch_ord cur);
+
+/* return an estimated highegst upper bound logical position that uses
+   <= size bytes */
+struct pair_ordering size_to_range(struct file_bsearch_index *ix,
+                                   struct pair_ordering beg,
+                                   size_t size);
+
+
+/* read a logical range into a buffer */
+size_t read_range(struct file_bsearch_index *ix,
+                  struct pair_ordering beg,
+                  struct pair_ordering end,
+                  char *buf);
 
 
 /* free the index tree */
-void file_bsearch_index_free(struct file_bsearch_index *root);
+void file_bsearch_index_free(struct file_bsearch_index ix);
 
 
 #endif /* _FILE_BINARY_SEARCH_H */

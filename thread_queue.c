@@ -17,8 +17,8 @@ enum buf_status {
    the same thread each time. */
 struct output_node {
     struct output_node *next;
-    char *buf; /* alloc'ed by thread */
-    size_t size, alloc;
+    struct managed_buf *buf;
+    size_t nbufs;
     enum buf_status status;
 };
 
@@ -27,8 +27,8 @@ struct output_node {
    each thread will use the same one for its lifespan. */
 struct thread_comp_input {
     void *worker_par; /* generic parameters to be passed to the worker */
-    char *buf;
-    size_t size, alloc;
+    struct managed_buf *buf;
+    size_t nbufs;
     struct output_node *out;
     struct thread_queue *tq;
 };
@@ -48,7 +48,7 @@ struct thread_queue {
     pthread_mutex_t pool_mtx, read_mtx;
     pthread_t *threads;
     /* struct pthread_attr_t thread_attr; */
-    size_t num_threads, num_extra;
+    size_t num_threads, num_extra, num_inputs, num_outputs;
 };
 
 
@@ -62,6 +62,8 @@ thread_queue_init(thread_queue_reader_t reader,
                   void *offload_par,
                   size_t num_threads,
                   size_t num_extra,
+                  size_t num_inputs,
+                  size_t num_outputs,
                   size_t max_input_mem)
 {
     struct thread_queue *tq = malloc(sizeof(struct thread_queue));
@@ -80,28 +82,38 @@ thread_queue_init(thread_queue_reader_t reader,
     tq->threads = malloc(num_threads * sizeof(pthread_t));
     tq->num_threads = num_threads;
     tq->num_extra = num_extra;
-
+    tq->num_inputs = num_inputs;
+    tq->num_outputs = num_outputs;
 
     /* only need initialize the pointer to NULL */
-    size_t p, t;
+    size_t p, t, b;
     void **worker_pars = worker_par;
     for (t = 0; t != num_threads; ++t)
     {
         tq->input[t].worker_par = worker_pars[t];
-        tq->input[t].alloc = max_input_mem / num_threads;
-        tq->input[t].buf = malloc(tq->input[t].alloc);
-        tq->input[t].size = 0;
+        tq->input[t].buf = malloc(num_inputs * sizeof(struct managed_buf));
+        for (b = 0; b != num_inputs; ++b)
+        {
+            tq->input[t].buf[b].alloc = max_input_mem / num_threads / num_inputs;
+            tq->input[t].buf[b].buf = malloc(tq->input[t].buf[b].alloc);
+            tq->input[t].buf[b].size = 0;
+        }
         tq->input[t].tq = tq;
     }
 
     /* by default, use 2% of the memory of the input for the whole
        initial output */
-    size_t out_chunk_size = max_input_mem * 2 / 100 / (num_threads + num_extra) + 10;
-    for (p = 0; p != num_threads + num_extra; ++p)
+    size_t num_pool = num_threads + num_extra;
+    size_t out_chunk_size = max_input_mem * 2 / 100 / num_pool + 10;
+    for (p = 0; p != num_pool; ++p)
     {
-        tq->out_pool[p].alloc = out_chunk_size;
-        tq->out_pool[p].size = 0;
-        tq->out_pool[p].buf = malloc(tq->out_pool[p].alloc);
+        tq->out_pool[p].buf = malloc(num_pool * sizeof(struct managed_buf));
+        for (b = 0; b != num_inputs; ++b)
+        {
+            tq->out_pool[p].buf[b].alloc = out_chunk_size;
+            tq->out_pool[p].buf[b].size = 0;
+            tq->out_pool[p].buf[b].buf = malloc(tq->out_pool[p].buf[b].alloc);
+        }
     }
 
     return tq;
@@ -145,13 +157,21 @@ void thread_queue_free(struct thread_queue *tq)
     pthread_mutex_destroy(&tq->read_mtx);
     free(tq->threads);
 
-    size_t t;
+    size_t t, b;
     for (t = 0; t != tq->num_threads; ++t)
+    {
+        for (b = 0; b != tq->num_inputs; ++b)
+            free(tq->input[t].buf[b].buf);
         free(tq->input[t].buf);
+    }
     free(tq->input);
 
     for (t = 0; t != tq->num_threads + tq->num_extra; ++t)
+    {
+        for (b = 0; b != tq->num_outputs; ++b)
+            free(tq->out_pool[t].buf[b].buf);
         free(tq->out_pool[t].buf);
+    }
     free(tq->out_pool);
 }
 
@@ -162,8 +182,10 @@ void mutex_change_status(struct thread_queue *tq, struct output_node *out, enum 
     int rc = pthread_mutex_lock(&tq->pool_mtx);
     CHECK_THREAD(rc);
     out->status = status;
+    size_t b;
     if (status == EMPTY)
-        out->size = 0;
+        for (b = 0; b != tq->num_outputs; ++b)
+            out->buf[b].size = 0;
 
     rc = pthread_mutex_unlock(&tq->pool_mtx);
     CHECK_THREAD(rc);
@@ -206,14 +228,21 @@ static void *worker_func(void *args)
         CHECK_THREAD(rc);
 
         PROGRESS_START();
-        tq->reader(tq->reader_par, &in->buf, &in->size, &in->alloc);
+        tq->reader(tq->reader_par, in->buf);
         PROGRESS_MSG("Read input");
 
         rc = pthread_mutex_unlock(&tq->read_mtx);
         CHECK_THREAD(rc);
 
         /* no need to free any resources here */
-        if (! in->size)
+        size_t sz = 0, b;
+        for (b = 0; b != tq->num_inputs; ++b)
+            if (in->buf[b].size)
+            {
+                sz = 1;
+                break;
+            }
+        if (sz == 0)
             pthread_exit(NULL);
 
         /* search for EMPTY output buffer, append, and set status
@@ -251,8 +280,8 @@ static void *worker_func(void *args)
 
         PROGRESS_START();
         /* load the output buffer. */
-        tq->worker(in->worker_par, in->buf, in->size, 
-                   &in->out->buf, &in->out->size, &in->out->alloc);
+        tq->worker(in->worker_par, in->buf, in->out->buf);
+
         PROGRESS_MSG("Work");
 
         mutex_change_status(tq, in->out, FULL);
@@ -262,14 +291,16 @@ static void *worker_func(void *args)
         {
             PROGRESS_START();
             mutex_change_status(tq, tq->out_head, UNLOADING);
-            tq->offload(tq->offload_par, tq->out_head->buf, tq->out_head->size);
+            tq->offload(tq->offload_par, tq->out_head->buf);
             PROGRESS_MSG("Unload");
 
             rc = pthread_mutex_lock(&tq->pool_mtx);
             CHECK_THREAD(rc);
 
             tq->out_head->status = EMPTY;
-            tq->out_head->size = 0;
+            for (b = 0; b != tq->num_outputs; ++b)
+                tq->out_head->buf[b].size = 0;
+
             tq->out_head = tq->out_head->next;
 
             rc = pthread_mutex_unlock(&tq->pool_mtx);

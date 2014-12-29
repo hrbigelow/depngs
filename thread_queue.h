@@ -19,6 +19,7 @@
 #define _THREAD_QUEUE_H
 
 #include <unistd.h>
+#include "cache.h"
 
 /* the main configuration object. opaque type using pimpl pattern */
 struct thread_queue;
@@ -28,16 +29,14 @@ struct thread_queue;
    pass NULL, 0, 0 as arguments for the first call to reader. The
    thread_queue library will de-allocate once work is done
    however.  */
-typedef void (thread_queue_reader_t)(void *par, char **buf,
-                                      size_t *size, size_t *alloc);
+typedef void (thread_queue_reader_t)(void *par, struct managed_buf *bufs);
 
 /* the client-provided worker consumes the input produced from the
    reader and outputs it into out_buf, managing out_size and
    out_alloc.*/
 typedef void (thread_queue_worker_t)(void *par, 
-                                     const char *in_buf, size_t in_size,
-                                     char **out_buf, 
-                                     size_t *out_size, size_t *out_alloc);
+                                     const struct managed_buf *in_bufs,
+                                     struct managed_buf *out_bufs);
 
 /* this function will be called on each output chunk in input order,
    and as soon as the output chunk is finished writing. buf and size
@@ -45,7 +44,8 @@ typedef void (thread_queue_worker_t)(void *par,
    par controls the behavior of this offloading function.  once the
    offload is called, the buffer can be re-used by a new thread.
    */
-typedef void (thread_queue_offload_t)(void *par, const char *buf, size_t size);
+typedef void (thread_queue_offload_t)(void *par, 
+                                      const struct managed_buf *bufs);
 
 /* initialize resources */
 struct thread_queue *
@@ -57,6 +57,8 @@ thread_queue_init(thread_queue_reader_t reader,
                   void *offload_par,
                   size_t num_threads,
                   size_t num_extra_in_pool,
+                  size_t num_inputs,
+                  size_t num_outputs,
                   size_t max_input_mem);
 
 
