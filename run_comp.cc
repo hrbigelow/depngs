@@ -1,10 +1,11 @@
-#include <cstddef>
-
 #include "run_comp.h"
 #include "pileup_tools.h"
 #include "comp_functor.h"
-#include "file_utils.h"
+
 #include "defs.h"
+#include "tools.h"
+
+#include <string.h>
 
 extern "C" {
 #include "cache.h"
@@ -220,12 +221,7 @@ int run_comp(size_t max_mem,
     gsl_set_error_handler_off();
     
     struct range_line_reader_par reader_par = {
-        .ix = &ix, 
-        .n_ix = 1,
-        .q = q, 
-        .qend = qend,
-        .get_line_ord = init_locus, 
-        .new_query = 1
+        &ix, 1, q, qend, init_locus, 1
     };
 
     /* theoretically, this will allow for one chunk to take twice as
