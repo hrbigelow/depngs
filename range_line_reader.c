@@ -94,6 +94,7 @@ void range_line_reader(void *par, struct managed_buf *bufs)
     
     while (rr->new_query && rr->q != rr->qend)
     {
+        max_span = 0;
         for (i = 0; i != n_ix; ++i)
         {
             span[i] = range_to_size(&rr->ix[i], rr->q->beg, rr->q->end);
@@ -142,7 +143,6 @@ void range_line_reader(void *par, struct managed_buf *bufs)
             rr->q->beg = trunc_pos;
             rr->new_query = 0;
         }
-        space_left = write_end - write_ptr;
     }
     for (i = 0; i != n_ix; ++i)
         bufs[i].size = write_ptr[i] - bufs[i].buf;

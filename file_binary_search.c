@@ -80,9 +80,7 @@ struct file_bsearch_index file_bsearch_make_index(FILE *fh)
     root->left = root->right = root->parent = NULL;
     root->span_contents = NULL;
 
-    fseeko(fh, 0, SEEK_END);
-    off_t file_end = ftello(fh);
-    struct file_bsearch_index ix = { fh, file_end, root, root };
+    struct file_bsearch_index ix = { fh, root, root };
     return ix;
 }
 
@@ -255,7 +253,7 @@ struct pair_ordering size_to_range(struct file_bsearch_index *ix,
                                    size_t size)
 {
     off_t off_end = off_lower_bound(ix, beg) + (off_t)size;
-    if (off_end > ix->file_end)
+    if (off_end > ix->root->end_offset)
         return max_pair_ord;
 
     fseeko(ix->fh, off_end, SEEK_SET);
@@ -271,7 +269,6 @@ struct pair_ordering size_to_range(struct file_bsearch_index *ix,
         if (newline) newline = memrchr(buf, '\n', newline - buf);
         off *= 2;
     }
-    newline++;
     struct pair_ordering end = get_line_ord(newline + 1);
     free(buf);
     return end;
@@ -286,7 +283,7 @@ size_t read_range(struct file_bsearch_index *ix,
                   char *buf)
 {
     off_t off_beg = off_lower_bound(ix, beg);
-    off_t off_end = off_upper_bound(ix, end);
+    off_t off_end = off_lower_bound(ix, end);
     fseeko(ix->fh, off_beg, SEEK_SET);
     return fread(buf, 1, off_end - off_beg, ix->fh);
 }

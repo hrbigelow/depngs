@@ -40,7 +40,6 @@ struct file_bsearch_node {
    associated structure(s) needed to use it */
 struct file_bsearch_index {
     FILE *fh;
-    off_t file_end;
     struct file_bsearch_node *root, *cur_node;
 };
 
