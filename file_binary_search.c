@@ -242,7 +242,7 @@ size_t range_to_size(struct file_bsearch_index *ix,
                      struct pair_ordering beg,
                      struct pair_ordering end)
 {
-    return off_upper_bound(ix, end) - off_lower_bound(ix, beg);
+    return off_lower_bound(ix, end) - off_lower_bound(ix, beg);
 }
 
 
