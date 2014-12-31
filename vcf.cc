@@ -77,7 +77,7 @@ need to just output an arbitrary genotype.
 #include "vcf.h"
 #include "dist_worker.h"
 #include "pileup_tools.h"
-#include "comp_functor.h"
+#include "comp_worker.h"
 
 double diploid_points[10][4] = {
     { 1.0, 0.0, 0.0, 0.0 },
@@ -114,7 +114,7 @@ char * print_vcf_line(sample_details * samples,
 {
     // find the first sample for which is_next is true
     PileupSummary * locus = NULL;
-    for (size_t s = 0; s != input->num_samples; ++s)
+    for (size_t s = 0; s != input->n_samples; ++s)
     {
         if (samples[s].is_next)
         {
@@ -135,9 +135,9 @@ char * print_vcf_line(sample_details * samples,
                       locus->reference_base);
 
     bool alts[4] = { false, false, false, false };
-    int * min_inds = new int[input->num_samples];
+    int * min_inds = new int[input->n_samples];
 
-    for (size_t s = 0; s != input->num_samples; ++s)
+    for (size_t s = 0; s != input->n_samples; ++s)
     {
         /*
           1. get (A,C,G,T) composition estimate from samples[s], or NULL estimate if ! is_next
@@ -147,7 +147,7 @@ char * print_vcf_line(sample_details * samples,
         if (samples[s].is_next)
         {
             double mean_point[4] = { 0.0, 0.0, 0.0, 0.0 };
-            const size_t np = samples[s].num_sample_points;
+            const size_t np = samples[s].n_sample_points;
 
             // compute mean
             double * point = samples[s].sample_points;
@@ -233,7 +233,7 @@ char * print_vcf_line(sample_details * samples,
                       vcf_info,
                       vcf_format);
 
-    for (size_t s = 0; s != input->num_samples; ++s)
+    for (size_t s = 0; s != input->n_samples; ++s)
     {
         int locus_allele[2] = { 0, 0 };
         if (min_inds[s] != -1)

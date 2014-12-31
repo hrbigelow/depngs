@@ -3,7 +3,7 @@
 #include <unistd.h>
 
 #include "run_comp.h"
-#include "comp_functor.h"
+#include "comp_worker.h"
 
 #include "usage_strings.h"
 
@@ -61,8 +61,8 @@ int main_comp(int argc, char ** argv)
         1e-5,   // gradient_tolerance
         3000,   // max_modefinding_iterations
         10,     // max_tuning_iterations
-        1000,    // tuning_num_points
-        1000,    // final_num_points
+        1000,    // tuning_n_points
+        1000,    // final_n_points
         20,      // autocor_max_offset
         0.2,    // autocor_max_value
         30,     // initial_autocor_offset
@@ -99,15 +99,15 @@ int main_comp(int argc, char ** argv)
         {
         case 'l': strcpy(label_string, optarg); break;
         case 'r': query_range_file = optarg; break;
-        case 't': num_threads = static_cast<size_t>(atof(optarg)); break;
-        case 'm': max_mem = static_cast<size_t>(atof(optarg)); break;
+        case 't': num_threads = (size_t)atof(optarg); break;
+        case 'm': max_mem = (size_t)atof(optarg); break;
         case 'z': pset.gradient_tolerance = atof(optarg); break;
-        case 'T': pset.tuning_num_points = static_cast<size_t>(atof(optarg)); break;
-        case 'f': pset.final_num_points = static_cast<size_t>(atof(optarg)); break;
+        case 'T': pset.tuning_n_points = (size_t)atof(optarg); break;
+        case 'f': pset.final_n_points = (size_t)atof(optarg); break;
         case 'X': test_quantile = atof(optarg); break;
         case 'y': min_test_quantile_value = atof(optarg); break;
-        case 'a': pset.target_autocor_offset = static_cast<size_t>(atof(optarg)); break;
-        case 'I': pset.max_tuning_iterations = static_cast<size_t>(atof(optarg)); break;
+        case 'a': pset.target_autocor_offset = (size_t)atof(optarg); break;
+        case 'I': pset.max_tuning_iterations = (size_t)atof(optarg); break;
         case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'C': strcpy(quantiles_file, optarg); break;
         case 'p': prior_alpha = atof(optarg); break;

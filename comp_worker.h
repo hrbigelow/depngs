@@ -6,6 +6,7 @@
 
 extern "C" {
 #include "thread_queue.h"
+#include "ordering.h"
 }
 
 class NucleotideStats;
@@ -23,18 +24,19 @@ enum sampling_method
         FAILED = '-'
     };
 
-
+/* */
 struct sample_details
 {
     PileupSummary *locus;
     bool is_next;
     unsigned char dist_printed;
     double *sample_points;
-    unsigned num_sample_points;
+    unsigned n_sample_points;
     sampling_method samp_method;
     bool mode_computed;
     size_t autocor_offset;
-    std::vector<char *>::iterator current;
+    char *current, *end;
+    pair_ordering locus_ord;
     sample_details(void);
 };
 
@@ -44,8 +46,8 @@ struct posterior_settings
     double gradient_tolerance;
     size_t max_modefinding_iterations;
     size_t max_tuning_iterations;
-    size_t tuning_num_points;
-    size_t final_num_points;
+    size_t tuning_n_points;
+    size_t final_n_points;
     double autocor_max_offset;
     double autocor_max_value;
 
@@ -67,7 +69,7 @@ struct posterior_wrapper
     bool verbose;
     /* double prior_alpha0; */
     size_t min_quality_score;
-    size_t num_quantiles;
+    size_t n_quantiles;
     double *quantiles;
     FILE *cdfs_output_fh;
     pthread_mutex_t *file_writing_mutex;
@@ -86,7 +88,7 @@ struct posterior_wrapper
                       double *prior_alphas,
                       size_t min_quality_score,
                       double *quantiles,
-                      size_t num_quantiles,
+                      size_t n_quantiles,
                       const char *label_string,
                       FILE *cdfs_output_fh,
                       pthread_mutex_t *file_writing_mutex,
@@ -99,9 +101,9 @@ struct posterior_wrapper
     void tune(sample_details *sd, double *estimated_mean);
     size_t tune_mh(PileupSummary *locus, double *sample_points_buf, double *estimated_mean);
     size_t tune_ss(PileupSummary *locus, double *sample_points_buf, double *estimated_mean);
-    void sample(sample_details *sd, double *initial_point, size_t num_points);
+    void sample(sample_details *sd, double *initial_point, size_t n_points);
     // void sample(PileupSummary *locus, double *sample_points_buf, char *algorithm_used);
-    void values(double *points, size_t num_points, double *values);
+    void values(double *points, size_t n_points, double *values);
 
     char *print_quantiles(sample_details *sd, char *out_buffer);
 
@@ -114,13 +116,13 @@ struct posterior_wrapper
 };
 
 
-size_t discrete_comp_locus_bytes(size_t num_discrete_values);
+size_t discrete_comp_locus_bytes(size_t n_discrete_values);
 
 char *print_discrete_comp(PileupSummary *locus,
                           const char *sample_label,
                           double *discrete_values,
-                          size_t num_discrete_values,
-                          size_t num_discrete_points_to_print,
+                          size_t n_discrete_values,
+                          size_t n_discrete_points_to_print,
                           double min_value_to_print,
                           char *out_buf);
 
@@ -128,8 +130,7 @@ char *print_discrete_comp(PileupSummary *locus,
 struct comp_worker_input
 {
     posterior_wrapper *worker;
-
-    double *sample_points_buf; /* must be posterior_wrapper::final_num_points * 4 */
+    double *sample_points_buf; /* must be posterior_wrapper::final_n_points * 4 */
 
     /* if any non-reference base has its test_quantile greater than
        min_quantile_value it will be reported. */
@@ -138,7 +139,5 @@ struct comp_worker_input
 
 
 thread_queue_worker_t comp_worker;
-
-void *mode_worker(void *args);
 
 #endif // _COMP_FUNCTOR_H

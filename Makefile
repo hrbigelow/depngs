@@ -33,14 +33,14 @@ EXE = dep test_dirichlet
 .PHONY : all
 all : $(EXE)
 
-dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o comp_functor.o		\
+dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o comp_worker.o			\
 	simp.o simc.o bqs.o bqslocus.o bqs2jpd.o metropolis.o sampling.o	\
 	tools.o transformation.o error_estimate.o pileup_tools.o			\
 	stats_tools.o slice_sampling.o dirichlet.o hilbert.o simulation.o	\
 	nucleotide_stats.o usage_strings.o run_comp.o anomaly_tools.o		\
-	dist.o dist_worker.o locus_comp.o pug.o vcf.o file_utils.o			\
-	file_binary_search.o ordering.o pileup_bsearch.o					\
-	range_line_reader.o thread_queue.o)
+	dist.o dist_worker.o pug.o vcf.o file_utils.o						\
+	file_binary_search.o ordering.o locus.o range_line_reader.o			\
+	thread_queue.o)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)

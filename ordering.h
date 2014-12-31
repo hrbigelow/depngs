@@ -14,10 +14,10 @@ struct pair_ordering_range {
 };
 
 /* defines the ordering logic for the pair_ordering structure. */
-int less_pair_ordering(const void *pa, const void *pb);
+int cmp_pair_ordering(const void *pa, const void *pb);
 
 /* ordering of a pair_ordering_range */
-int less_pair_ordering_range(const void *pa, const void *pb);
+int cmp_pair_ordering_range(const void *pa, const void *pb);
 
 
 static const struct pair_ordering min_pair_ord = { 0, 0 };

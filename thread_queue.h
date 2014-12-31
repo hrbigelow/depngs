@@ -31,9 +31,9 @@ struct thread_queue;
    however.  */
 typedef void (thread_queue_reader_t)(void *par, struct managed_buf *bufs);
 
-/* the client-provided worker consumes the input produced from the
-   reader and outputs it into out_buf, managing out_size and
-   out_alloc.*/
+/* the client-provided worker consumes the input (one or more in_bufs)
+   produced from the reader and outputs it into one or more out_bufs,
+   managing out_size and out_alloc.*/
 typedef void (thread_queue_worker_t)(void *par, 
                                      const struct managed_buf *in_bufs,
                                      struct managed_buf *out_bufs);

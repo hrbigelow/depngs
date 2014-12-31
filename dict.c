@@ -8,6 +8,7 @@
 
 struct dict {
     const char *key;
+    size_t offset;
     unsigned long index;
 };
 
@@ -43,7 +44,7 @@ void dict_add_item(const char* key, unsigned long index)
 
     struct dict item;
     strncpy(key_buf + num_key_chars, key, keysize);
-    item.key = key_buf + num_key_chars;
+    item.offset = num_key_chars;
     num_key_chars += keysize;
 
     item.index = index;
@@ -54,6 +55,10 @@ void dict_add_item(const char* key, unsigned long index)
    searches */
 void dict_build()
 {
+    size_t i;
+    for (i = 0; i != index_nr; ++i)
+        index_buf[i].key = key_buf + index_buf[i].offset;
+
     qsort(index_buf, index_nr, sizeof(index_buf[0]), dict_less_key);
 }
 

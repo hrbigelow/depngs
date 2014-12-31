@@ -9,7 +9,7 @@
 
 #include "dict.h"
 #include "cache.h"
-#include "pileup_bsearch.h"
+#include "locus.h"
 
 
 int pug_usage()
@@ -134,13 +134,13 @@ int main_pug(int argc, char ** argv)
     }   
     fclose(locus_fh);
 
-    qsort(queries, num_queries, sizeof(queries[0]), less_pair_ordering_range);
+    qsort(queries, num_queries, sizeof(queries[0]), cmp_pair_ordering_range);
     
     /* 2. edit queries to eliminate interval overlap */
     struct pair_ordering_range *p = NULL;
     for (q = queries; q != queries + num_queries - 1; ++q)
     {
-        if (p && less_pair_ordering(&p->end, &q->beg) > 0)
+        if (p && cmp_pair_ordering(&p->end, &q->beg) > 0)
         {
             /* must be on same contig if they are overlapping and
                sorted */

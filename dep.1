@@ -686,10 +686,6 @@ auto-detect it, but this requires scanning the entire pileup file,
 which will take several minutes.
 
 .TP
-.I max_pileup_line_size
-A nuissance parameter, defaulting to 100,000.  Unless there is an
-extraordinarily deep sequencing, you need not explicity set this
-larger. There is no harm in setting it higher, but make sure that the
 .I max_mem
 option is a few orders of magnitude larger than this.
 
@@ -868,8 +864,6 @@ max_mem                   | -m [4e9]     | -m [4e9]
 .br
 fastq_type                | -F [None]    | -F [None]
 .br
-max_pileup_line_size      |              | -l [1e5]
-.br
 label                     | -l [comp]    | 
 .br
 verbose                   | -v [off]     | -v [off]
@@ -928,7 +922,4 @@ max_mem                   |             |              | -m [1e8]      | -m [1e9
 .br
 fastq_type                |             |              | -F [None]     |
 .br
-max_pileup_line_size      |             |              |               | -l [1e5]
-.br
 out_buf_size              |             |              |               | -b [8e6]
-

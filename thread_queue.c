@@ -12,23 +12,23 @@ enum buf_status {
     UNLOADING
 };
 
-/* managed output buffers.  There will be N + E of these and they will
+/* managed output buffers.  There will be T + E of these and they will
    be owned by 0 or 1 thread at any given time (but not necessarily
-   the same thread each time. */
+   the same thread each time) */
 struct output_node {
     struct output_node *next;
     struct managed_buf *buf;
-    size_t nbufs;
+    size_t n_buf;
     enum buf_status status;
 };
 
 
-/* input buffers.  There will be N of these, one for each thread, and
-   each thread will use the same one for its lifespan. */
+/* There will be one of these for each thread, and each thread will
+   use the same one for its lifespan. */
 struct thread_comp_input {
     void *worker_par; /* generic parameters to be passed to the worker */
     struct managed_buf *buf;
-    size_t nbufs;
+    size_t n_buf;
     struct output_node *out;
     struct thread_queue *tq;
 };
@@ -107,8 +107,8 @@ thread_queue_init(thread_queue_reader_t reader,
     size_t out_chunk_size = max_input_mem * 2 / 100 / num_pool + 10;
     for (p = 0; p != num_pool; ++p)
     {
-        tq->out_pool[p].buf = malloc(num_pool * sizeof(struct managed_buf));
-        for (b = 0; b != num_inputs; ++b)
+        tq->out_pool[p].buf = malloc(num_outputs * sizeof(struct managed_buf));
+        for (b = 0; b != num_outputs; ++b)
         {
             tq->out_pool[p].buf[b].alloc = out_chunk_size;
             tq->out_pool[p].buf[b].size = 0;
@@ -165,8 +165,8 @@ void thread_queue_free(struct thread_queue *tq)
         free(tq->input[t].buf);
     }
     free(tq->input);
-
-    for (t = 0; t != tq->num_threads + tq->num_extra; ++t)
+    size_t num_pool = tq->num_threads + tq->num_extra;
+    for (t = 0; t != num_pool; ++t)
     {
         for (b = 0; b != tq->num_outputs; ++b)
             free(tq->out_pool[t].buf[b].buf);
@@ -276,7 +276,6 @@ static void *worker_func(void *args)
                it takes for the main loop */
         }
         PROGRESS_MSG("Buffer search");
-
 
         PROGRESS_START();
         /* load the output buffer. */

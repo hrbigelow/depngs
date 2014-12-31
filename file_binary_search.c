@@ -12,8 +12,8 @@
 /* returns 1 if ix contains ord, 0 otherwise */
 int contains(struct file_bsearch_node *ix, struct pair_ordering *ord)
 {
-    return (less_pair_ordering(&ix->span_beg, ord) <= 0
-            && less_pair_ordering(ord, &ix->span_end) < 0);
+    return (cmp_pair_ordering(&ix->span_beg, ord) <= 0
+            && cmp_pair_ordering(ord, &ix->span_end) < 0);
 }
 
 /* parses an input line to get its ordinal structure */
@@ -154,7 +154,7 @@ find_loose_index(struct file_bsearch_node *ix, struct pair_ordering cur, FILE *f
         }
 
         /* create a new child node as necessary */
-        int cmp = less_pair_ordering(&cur, &midpoint_ord);
+        int cmp = cmp_pair_ordering(&cur, &midpoint_ord);
         if (cmp < 0 && ! ix->left)
         {
             ix->left = (struct file_bsearch_node *)malloc(sizeof(struct file_bsearch_node));
@@ -201,7 +201,7 @@ off_t off_bound_aux(const struct file_bsearch_node *ix,
         *start = ix->span_contents,
         *end = start + (ix->end_offset - ix->start_offset);
 
-    while (less_pair_ordering(&cur, &query) < cmp)
+    while (cmp_pair_ordering(&cur, &query) < cmp)
     {
         start = strchr(start, '\n') + 1;
         if (start == end)

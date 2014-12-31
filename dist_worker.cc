@@ -1,96 +1,83 @@
 #include "dist_worker.h"
 #include "pileup_tools.h"
-#include "comp_functor.h"
-#include "locus_comp.h"
+#include "comp_worker.h"
 #include "error_estimate.h"
 #include "vcf.h"
 #include "defs.h"
 
-#include <cstdio>
-#include <cstring>
-#include <cassert>
 #include <gsl/gsl_math.h>
 #include <algorithm>
 
+extern "C" {
+#include "locus.h"
+}
+
 dist_worker_input::dist_worker_input(size_t thread_num,
-                                     size_t num_samples,
-                                     size_t num_sample_pairs,
-                                     size_t num_sample_point_pairings,
+                                     size_t n_samples,
+                                     size_t n_sample_pairs,
+                                     size_t n_sample_point_pairings,
                                      double *dist_quantiles,
-                                     size_t num_dist_quantiles,
+                                     size_t n_dist_quantiles,
                                      double *comp_quantiles,
-                                     size_t num_comp_quantiles,
+                                     size_t n_comp_quantiles,
                                      float min_high_conf_dist,
-                                     size_t prelim_num_points,
+                                     size_t prelim_n_points,
                                      float prelim_quantile,
-                                     size_t final_num_points,
+                                     size_t final_n_points,
                                      int print_pileup_fields,
-                                     char *out_dist,
-                                     char *out_comp,
-                                     char *out_vcf,
-                                     char *out_indel_dist,
+                                     int do_dist,
+                                     int do_comp,
+                                     int do_indel,
+                                     int do_vcf,
                                      size_t *pair_sample1,
-                                     size_t *pair_sample2,
-                                     std::map<const char *, size_t, ltstr> *contig_order) :
+                                     size_t *pair_sample2) :
     thread_num(thread_num),
-    num_samples(num_samples), num_sample_pairs(num_sample_pairs),
-    num_sample_point_pairings(num_sample_point_pairings),
-    dist_quantiles(dist_quantiles), num_dist_quantiles(num_dist_quantiles),
-    comp_quantiles(comp_quantiles), num_comp_quantiles(num_comp_quantiles),
+    n_samples(n_samples), n_sample_pairs(n_sample_pairs),
+    n_sample_point_pairings(n_sample_point_pairings),
+    dist_quantiles(dist_quantiles), n_dist_quantiles(n_dist_quantiles),
+    comp_quantiles(comp_quantiles), n_comp_quantiles(n_comp_quantiles),
     min_high_conf_dist(min_high_conf_dist),
-    prelim_num_points(prelim_num_points),
+    prelim_n_points(prelim_n_points),
     prelim_quantile(prelim_quantile),
-    final_num_points(final_num_points),
+    final_n_points(final_n_points),
     print_pileup_fields(print_pileup_fields),
-    out_dist(out_dist), out_comp(out_comp), out_vcf(out_vcf), out_indel_dist(out_indel_dist),
-    pair_sample1(pair_sample1), pair_sample2(pair_sample2), 
-    contig_order(contig_order)
+    do_dist(do_dist), do_comp(do_comp), do_indel(do_indel), do_vcf(do_vcf),
+    pair_sample1(pair_sample1), pair_sample2(pair_sample2)
 { 
-    this->worker = new posterior_wrapper *[this->num_samples];
-    this->beg = new std::vector<char *>::iterator[this->num_samples];
-    this->end = new std::vector<char *>::iterator[this->num_samples];
-    this->less_locus.contig_order = this->contig_order;
-    this->equal_locus.contig_order = this->contig_order;
+    this->worker = new posterior_wrapper *[this->n_samples];
     this->randgen = gsl_rng_alloc(gsl_rng_taus);
     gsl_rng_set(this->randgen, 0);
 }
 
 
 dist_worker_input::dist_worker_input() :
-    worker(NULL), num_samples(0), num_sample_pairs(0),
-    num_sample_point_pairings(0),
-    dist_quantiles(NULL), num_dist_quantiles(0),
-    comp_quantiles(NULL), num_comp_quantiles(0),
+    worker(NULL), n_samples(0), n_sample_pairs(0),
+    n_sample_point_pairings(0),
+    dist_quantiles(NULL), n_dist_quantiles(0),
+    comp_quantiles(NULL), n_comp_quantiles(0),
     min_high_conf_dist(0),
-    beg(NULL), end(NULL),
-    out_dist(NULL), out_comp(NULL), out_vcf(NULL), out_indel_dist(NULL),
-    pair_sample1(NULL), pair_sample2(NULL),
-    contig_order(NULL)
+    do_dist(0), do_comp(0), do_indel(0), do_vcf(0),
+    pair_sample1(NULL), pair_sample2(NULL)
 {
 }
 
 
 dist_worker_input::~dist_worker_input()
 {
-    for (size_t s = 0; s != this->num_samples; ++s)
-    {
+    for (size_t s = 0; s != this->n_samples; ++s)
         if (this->worker[s] != NULL)
-        {
             delete this->worker[s];
-        }
-    }
+
     if (this->worker != NULL) delete this->worker;
-    if (this->beg != NULL) delete this->beg;
-    if (this->end != NULL) delete this->end;
     gsl_rng_free(this->randgen);
 }
 
 // assumes the chromosome has a number
 
 
-size_t distance_quantiles_locus_bytes(size_t num_quantiles)
+size_t distance_quantiles_locus_bytes(size_t n_quantiles)
 {
-    return 3 + 3 + 10 + 10 + (7 * num_quantiles) + (4 + num_quantiles);
+    return 3 + 3 + 10 + 10 + (7 * n_quantiles) + (4 + n_quantiles);
 }
 
 
@@ -100,24 +87,24 @@ size_t distance_quantiles_locus_bytes(size_t num_quantiles)
 // from the two sets of sample points
 void compute_dist_quantiles(const double *points1,
                             const double *points2,
-                            size_t num_dims,
-                            size_t num_sample_points,
-                            size_t num_random_pairs,
+                            size_t n_dims,
+                            size_t n_sample_points,
+                            size_t n_random_pairs,
                             gsl_rng *randgen,
                             double *dist_quantiles,
-                            size_t num_dist_quantiles,
+                            size_t n_dist_quantiles,
                             double *dist_quantile_values)
 {
     double 
-        *square_dist = new double[num_random_pairs], 
+        *square_dist = new double[n_random_pairs], 
         *sd = square_dist, 
-        *sde = sd + num_random_pairs;
+        *sde = sd + n_random_pairs;
 
     const double *p1, *p2, *p1e;
-    for (size_t p = 0; p != num_random_pairs; ++p, ++sd)
+    for (size_t p = 0; p != n_random_pairs; ++p, ++sd)
     {
-        p1 = points1 + (p % num_sample_points) * num_dims, p1e = p1 + num_dims;
-        p2 = points2 + gsl_rng_uniform_int(randgen, num_sample_points) * num_dims;
+        p1 = points1 + (p % n_sample_points) * n_dims, p1e = p1 + n_dims;
+        p2 = points2 + gsl_rng_uniform_int(randgen, n_sample_points) * n_dims;
         *sd = 0;
         while (p1 != p1e) *sd += gsl_pow_2(*p1++ - *p2++);
     }
@@ -126,9 +113,9 @@ void compute_dist_quantiles(const double *points1,
     double *cut, qval;
 
     sd = square_dist;
-    for (size_t q = 0; q != num_dist_quantiles; ++q)
+    for (size_t q = 0; q != n_dist_quantiles; ++q)
     {
-        cut = square_dist + static_cast<size_t>(std::round(dist_quantiles[q] * num_random_pairs));
+        cut = square_dist + (size_t)ceil(dist_quantiles[q] * n_random_pairs);
         std::nth_element(sd, cut, sde);
         qval = (cut == sde) ? -1.0 : sqrt(*cut);
         sd = cut;
@@ -157,7 +144,7 @@ char *print_distance_quantiles(const char *contig,
                             wi->worker[s2]->label_string,
                             contig, position);
     
-    for (size_t q = 0; q != wi->num_dist_quantiles; ++q)
+    for (size_t q = 0; q != wi->n_dist_quantiles; ++q)
        out_dist_buf += sprintf(out_dist_buf, "\t%7.4f", dist_quantile_values[q]);
 
     if (wi->print_pileup_fields)
@@ -198,7 +185,7 @@ char *print_indel_distance_quantiles(const char *contig,
                                      size_t pair_index,
                                      double *dist_quantile_values,
                                      indel_event *events,
-                                     size_t num_events,
+                                     size_t n_events,
                                      sample_details *sd,
                                      char *out_dist_buf)
 {
@@ -209,13 +196,13 @@ char *print_indel_distance_quantiles(const char *contig,
                             wi->worker[s2]->label_string,
                             contig, position);
     
-    for (size_t q = 0; q != wi->num_dist_quantiles; ++q)
+    for (size_t q = 0; q != wi->n_dist_quantiles; ++q)
     {
         out_dist_buf += sprintf(out_dist_buf, "\t%.4f", dist_quantile_values[q]);
     }
 
     // now print the indel event summary
-    indel_event *eb = events, *ee = eb + num_events;
+    indel_event *eb = events, *ee = eb + n_events;
     while (eb != ee) 
     {
         out_dist_buf += sprintf(out_dist_buf, "%c%i", (eb == events ? '\t' : ','), eb->count1);
@@ -256,26 +243,18 @@ char *print_indel_distance_quantiles(const char *contig,
 // print out distance quantiles for the next locus, for all pairs
 char *next_distance_quantiles_aux(dist_worker_input *input, 
                                   sample_details *sd,
-                                  size_t global_s,
+                                  size_t gs,
                                   const double *null_points,
                                   char *out_buf)
 {
-    if (out_buf == NULL)
-    {
-        return out_buf;
-    }
+    if (! out_buf) return out_buf;
 
-    char contig[100];
-    size_t position;
     double estimated_mean1[NUM_NUCS], estimated_mean2[NUM_NUCS];
+    double *dist_quantile_values = new double[input->n_dist_quantiles];
 
-    // const double *mode1, *mode2, *end1;
-    // double min_dist_squared = input->min_high_conf_dist * input->min_high_conf_dist;
-    double *dist_quantile_values = new double[input->num_dist_quantiles];
+    // sscanf(sd[gs].current, "%s\t%zu", contig, &position);
 
-    sscanf(*sd[global_s].current, "%s\t%zu", contig, &position);
-
-    for (size_t p = 0; p != input->num_sample_pairs; ++p)
+    for (size_t p = 0; p != input->n_sample_pairs; ++p)
     {
         size_t s1 = input->pair_sample1[p], s2 = input->pair_sample2[p];
         sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
@@ -302,74 +281,73 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
         // }
 
         // preliminary sampling
-        if (sd1->is_next && ! sd1->num_sample_points)
+        if (sd1->is_next && ! sd1->n_sample_points)
         {
             input->worker[s1]->tune(sd1, estimated_mean1);
-            input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_num_points);
-            sd1->num_sample_points = input->prelim_num_points;
+            input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_n_points);
+            sd1->n_sample_points = input->prelim_n_points;
         }
-        if (sd2->is_next && ! sd2->num_sample_points)
+        if (sd2->is_next && ! sd2->n_sample_points)
         {
             input->worker[s2]->tune(sd2, estimated_mean2);
-            input->worker[s2]->sample(sd2, estimated_mean2, input->prelim_num_points);
-            sd2->num_sample_points = input->prelim_num_points;
+            input->worker[s2]->sample(sd2, estimated_mean2, input->prelim_n_points);
+            sd2->n_sample_points = input->prelim_n_points;
         }
 
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
                                sd2->is_next ? sd2->sample_points : null_points,
                                4,
-                               input->prelim_num_points,
-                               input->prelim_num_points * 10, // ad-hoc
+                               input->prelim_n_points,
+                               input->prelim_n_points * 10, // ad-hoc
                                input->randgen,
                                &input->prelim_quantile, 1,
                                dist_quantile_values);
         
+        /* after prelim testing, still not enough difference */
         if (dist_quantile_values[0] < input->min_high_conf_dist)
-        {
-            // after prelim testing, still not enough difference
             continue;
-        }
         
-        if (sd1->num_sample_points == input->prelim_num_points)
+        if (sd1->n_sample_points == input->prelim_n_points)
         {
-            input->worker[s1]->sample(sd1, estimated_mean1, input->final_num_points);
-            sd1->num_sample_points = input->final_num_points;
+            input->worker[s1]->sample(sd1, estimated_mean1, input->final_n_points);
+            sd1->n_sample_points = input->final_n_points;
         }
-        if (sd2->num_sample_points == input->prelim_num_points)
+        if (sd2->n_sample_points == input->prelim_n_points)
         {
-            input->worker[s2]->sample(sd2, estimated_mean2, input->final_num_points);
-            sd2->num_sample_points = input->final_num_points;
+            input->worker[s2]->sample(sd2, estimated_mean2, input->final_n_points);
+            sd2->n_sample_points = input->final_n_points;
         }
 
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
                                sd2->is_next ? sd2->sample_points : null_points,
                                4,
-                               input->final_num_points,
-                               input->num_sample_point_pairings,
+                               input->final_n_points,
+                               input->n_sample_point_pairings,
                                input->randgen,
                                input->dist_quantiles,
-                               input->num_dist_quantiles,
+                               input->n_dist_quantiles,
                                dist_quantile_values);
         
         if (dist_quantile_values[0] >= input->min_high_conf_dist)
-	    {
-		out_buf = 
-		    print_distance_quantiles(contig, position, input, p, dist_quantile_values, 
-					     sd, out_buf);
-        }
+            out_buf = 
+                print_distance_quantiles(sd[gs].locus->reference, 
+                                         sd[gs].locus->position, input, 
+                                         p, dist_quantile_values, 
+                                         sd, out_buf);
     }
     delete[] dist_quantile_values;
     return out_buf;
 }
 
 
-
-// id1, e1 is the range over the first sample's insertions (or
-// deletions), id2, e2 is the range over the second sample's
-// insertions (or deletions). this function is called once for
-// insertions, once for deletions, on each locus.  initializes as many
-// indel_event's as needed.  automatically detects co-occurring
-// insertions (deletions) and singly-occuring ones.
+/* 
+id1, e1 is the range over the first sample's insertions (or
+deletions), id2, e2 is the range over the second sample's insertions
+(or deletions). this function is called once for insertions, once for
+deletions, on each locus.  initializes as many indel_event's as
+needed.  automatically detects co-occurring insertions (deletions) and
+singly-occuring ones.
+*/
 indel_event *set_indel_events_aux(CHAR_MAP::iterator id1,
                                   CHAR_MAP::iterator e1,
                                   CHAR_MAP::iterator id2,
@@ -393,12 +371,12 @@ indel_event *set_indel_events_aux(CHAR_MAP::iterator id1,
 // allocated array of the counts
 indel_event *count_indel_types(sample_details *sd1,
                             sample_details *sd2, 
-                            size_t *num_counts)
+                            size_t *n_counts)
 {
 
     if (! (sd1->is_next && sd2->is_next))
     {
-        *num_counts = 0;
+        *n_counts = 0;
         return NULL;
     }
     else
@@ -409,7 +387,7 @@ indel_event *count_indel_types(sample_details *sd1,
         //     ++i;
         // }
 
-        *num_counts = 0;
+        *n_counts = 0;
 
         size_t max_possible = 
             sd1->locus->deletions.size() + sd1->locus->insertions.size()
@@ -443,7 +421,7 @@ indel_event *count_indel_types(sample_details *sd1,
             ++e;
         }
 
-        *num_counts = e - events;
+        *n_counts = e - events;
 
         return events;
     }    
@@ -457,7 +435,7 @@ indel_event *count_indel_types(sample_details *sd1,
 // print out all next distance quantiles for indels
 char *next_indel_distance_quantiles_aux(dist_worker_input *input, 
                                         sample_details *sd,
-                                        size_t global_s,
+                                        size_t gs,
                                         char *out_buf)
 {
     /*
@@ -472,50 +450,50 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
     if (out_buf == NULL) return out_buf;
 
     char contig[100];
-    size_t position, num_events;
-    double *dist_quantile_values = new double[input->num_dist_quantiles];
+    size_t position, n_events;
+    double *dist_quantile_values = new double[input->n_dist_quantiles];
     
-    sscanf(*sd[global_s].current, "%s\t%zu", contig, &position);
+    sscanf(sd[gs].current, "%s\t%zu", contig, &position);
 
-    for (size_t p = 0; p != input->num_sample_pairs; ++p)
+    for (size_t p = 0; p != input->n_sample_pairs; ++p)
     {
         size_t s1 = input->pair_sample1[p], s2 = input->pair_sample2[p];
         sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
 
         if (! (sd1->is_next && sd2->is_next) && input->min_high_conf_dist > 0) continue;
         
-        indel_event *all_events = count_indel_types(sd1, sd2, &num_events);
+        indel_event *all_events = count_indel_types(sd1, sd2, &n_events);
 
-        if (num_events >= 2) 
+        if (n_events >= 2) 
         {
             // need at least some indels, otherwise these loci don't differ
             // there will always be at least one event, the reads themselves.  (though the count may be zero)
-            double *alpha1 = new double[num_events], *alpha2 = new double[num_events];
-            for (size_t c = 0; c != num_events; ++c) 
+            double *alpha1 = new double[n_events], *alpha2 = new double[n_events];
+            for (size_t c = 0; c != n_events; ++c) 
             {
                 alpha1[c] = all_events[c].count1 + 1;
                 alpha2[c] = all_events[c].count2 + 1;
             }
         
-            size_t bufsize = num_events * input->final_num_points;
+            size_t bufsize = n_events * input->final_n_points;
             double *points1 = new double[bufsize], *p1 = points1, *pe1 = points1 + bufsize;
             double *points2 = new double[bufsize], *p2 = points2;
 
             while (p1 != pe1) 
             {
-                gsl_ran_dirichlet(input->randgen, num_events, alpha1, p1);
-                gsl_ran_dirichlet(input->randgen, num_events, alpha2, p2);
-                p1 += num_events;
-                p2 += num_events;
+                gsl_ran_dirichlet(input->randgen, n_events, alpha1, p1);
+                gsl_ran_dirichlet(input->randgen, n_events, alpha2, p2);
+                p1 += n_events;
+                p2 += n_events;
             }
 
             // compute distance quantiles
-            compute_dist_quantiles(points1, points2, num_events, 
-                                   input->final_num_points,
-                                   input->num_sample_point_pairings,
+            compute_dist_quantiles(points1, points2, n_events, 
+                                   input->final_n_points,
+                                   input->n_sample_point_pairings,
                                    input->randgen,
                                    input->dist_quantiles,
-                                   input->num_dist_quantiles,
+                                   input->n_dist_quantiles,
                                    dist_quantile_values);
 
             // print out suitably filtered distances
@@ -524,7 +502,7 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
                 out_buf = 
                     print_indel_distance_quantiles(contig, position, input, p, 
                                                    dist_quantile_values, 
-                                                   all_events, num_events, sd, out_buf);
+                                                   all_events, n_events, sd, out_buf);
             }
 
             delete[] points1;
@@ -543,7 +521,7 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
 /*
 void print_indel_comparisons(dist_worker_input *wi,
                              sample_details *sd,
-                             size_t global_s)
+                             size_t gs)
 {
 
     std::map<unsigned, unsigned>::iterator dit1, e1, dit2, e2;
@@ -551,9 +529,9 @@ void print_indel_comparisons(dist_worker_input *wi,
 
     char contig[100];
     size_t position;
-    sscanf(*sd[global_s].current, "%s\t%zu", contig, &position);
+    sscanf(*sd[gs].current, "%s\t%zu", contig, &position);
 
-    for (size_t p = 0; p != wi->num_sample_pairs; ++p)
+    for (size_t p = 0; p != wi->n_sample_pairs; ++p)
     {
         size_t s1 = wi->pair_sample1[p], s2 = wi->pair_sample2[p];
         sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
@@ -608,45 +586,44 @@ void print_indel_comparisons(dist_worker_input *wi,
 */
 
 
-// find global_s, and init the is_next field for all samples
+// find gs, and init the is_next field for all samples
 // this is run
 size_t init_global_and_next(dist_worker_input *input, sample_details *samples)
 {
-    size_t global_s = 0;
-    for (size_t s = 0; s != input->num_samples; ++s)
+    size_t gs = 0;
+    for (size_t s = 0; s != input->n_samples; ++s)
     {
-        if (samples[s].current != input->end[s]
-            && (samples[global_s].current == input->end[global_s]
-                || input->less_locus(*samples[s].current, *samples[global_s].current)
-                ))
-        {
-            global_s = s;
-        }
+        if (samples[s].current != samples[s].end
+            && (samples[gs].current == samples[gs].end
+                || cmp_pair_ordering(&samples[s].locus_ord, 
+                                     &samples[gs].locus_ord) < 0)
+            )
+            gs = s;
     }
-    bool global_at_end = (samples[global_s].current == input->end[global_s]);
-    for (size_t s = 0; s != input->num_samples; ++s)
-    {
+    bool global_at_end = (samples[gs].current == samples[gs].end);
+    for (size_t s = 0; s != input->n_samples; ++s)
         samples[s].is_next = 
-            (samples[s].current != input->end[s]) 
+            samples[s].current != samples[s].end
             && (! global_at_end)
-            && input->equal_locus(*samples[s].current, *samples[global_s].current);
-    }
+            && cmp_pair_ordering(&samples[s].locus_ord,
+                                 &samples[gs].locus_ord) == 0;
 
-    return global_s;
+    return gs;
 }
 
 
 // initialize the locus defined by sd->current.
 // assume sd->current is a valid iterator
-void init_locus(dist_worker_input *input,
-                size_t sample_id,
-                sample_details *sd)
+void init_pileup_locus(dist_worker_input *input,
+                       size_t sample_id,
+                       sample_details *sd)
 {
     size_t s = sample_id;
     sd->locus = new PileupSummary;
-    sd->locus->load_line(*sd->current);
+    sd->locus->load_line(sd->current);
+    sd->locus_ord = init_locus(sd->current);
     sd->locus->parse(input->worker[s]->min_quality_score);
-    sd->num_sample_points = 0;
+    sd->n_sample_points = 0;
 
     input->worker[s]->model->locus_data = &sd->locus->counts;
     input->worker[s]->params->pack(&sd->locus->counts);
@@ -660,22 +637,20 @@ void refresh_locus(dist_worker_input *input,
                    size_t sample_id,
                    sample_details *sd)
 {
-    size_t s = sample_id;
-    assert(sd->current != input->end[s]);
+    assert(sd->current != sd->end);
 
     if (sd->locus != NULL)
     {
         delete sd->locus;
         sd->locus = NULL;
     }
-    if (++(sd->current) == input->end[s])
-    {
+    if ((sd->current = strchr(sd->current, '\n') + 1) == sd->end) 
         sd->locus = NULL;
-    }
+
     else
     {
-        init_locus(input, sample_id, sd);
-	sd->dist_printed = 0;
+        init_pileup_locus(input, sample_id, sd);
+        sd->dist_printed = 0;
     }
 }
 
@@ -684,16 +659,10 @@ void refresh_locus(dist_worker_input *input,
 // does not initialize is_next for new loci.  (that can only be done
 void advance_loci_aux(dist_worker_input *input,
                       sample_details *sd,
-                      char **out_comp_buf,
-                      char **out_vcf_buf)
+                      char **out_comp_buf)
 {
-
-    if (*out_vcf_buf != NULL)
-    {
-        *out_vcf_buf = print_vcf_line(sd, input, *out_vcf_buf);
-    }
-
-    for (size_t s = 0; s != input->num_samples; ++s)
+    size_t s;
+    for (s = 0; s != input->n_samples; ++s)
     {
         if (! sd[s].is_next) continue;
 
@@ -702,7 +671,7 @@ void advance_loci_aux(dist_worker_input *input,
             *out_comp_buf = input->worker[s]->print_quantiles(&sd[s], *out_comp_buf);
 
             /*
-            for (size_t p = 0; p != input->worker[s]->final_num_points; ++p)
+            for (size_t p = 0; p != input->worker[s]->final_n_points; ++p)
             {
                 // sample_id, chromosome, position, fA, fC, fG, fT
                 fprintf(stdout, "%s\t%s\t%i\t%4.3f\t%4.3f\t%4.3f\t%4.3f\n",
@@ -753,9 +722,10 @@ void advance_loci_aux(dist_worker_input *input,
    refresh all dependent data structures.
 
    In order to progressively consume the loci in the range, there is a
-   global_s, pointing to the least locus across all samples.
+   gs, pointing to the least locus across all samples.
  */
 
+#if 0
 void *dist_worker(void *args)
 {
     dist_worker_input *input = static_cast<dist_worker_input *>(args);
@@ -770,29 +740,27 @@ void *dist_worker(void *args)
     if (out_vcf_buf != NULL) out_vcf_buf[0] = '\0';
     if (out_indel_dist_buf != NULL) out_indel_dist_buf[0] = '\0';
 
-    sample_details *samples = new sample_details[input->num_samples];
-    size_t global_s = 0;
+    size_t gs = 0;
 
-    for (size_t s = 0; s != input->num_samples; ++s)
+               size_t s;
+    for (size_t s = 0; s != input->n_samples; ++s)
     {
+        samples[s] = sample_details();
         samples[s].locus = NULL;
         samples[s].current = input->beg[s];
-        samples[s].sample_points = new double[input->final_num_points * 4];
-        samples[s].num_sample_points = 0;
+        samples[s].sample_points = new double[input->final_n_points * 4];
+        samples[s].n_sample_points = 0;
     }
 
 
     // before main loop, initialize loci and samples
-    for (size_t s = 0; s != input->num_samples; ++s)
+    for (size_t s = 0; s != input->n_samples; ++s)
     {
-        if (samples[s].current == input->end[s])
-        {
-            continue;
-        }
-        init_locus(input, s, &samples[s]);
+        if (samples[s].current == samples[s].end) continue;
+        init_pileup_locus(input, s, &samples[s]);
     }
 
-    global_s = init_global_and_next(input, samples);
+    gs = init_global_and_next(input, samples);
 
     // main loop for computing pairwise distances
     // though slightly inefficient, just construct null_points here
@@ -804,36 +772,36 @@ void *dist_worker(void *args)
     input->worker[0]->params->pack(& null_locus.counts);
     sample_details null_sd;
     null_sd.locus = &null_locus;
-    null_sd.sample_points = new double[input->final_num_points * 4];
+    null_sd.sample_points = new double[input->final_n_points * 4];
     null_sd.mode_computed = true;
     
     // input->worker[0]->find_mode();
     double estimated_mean[NUM_NUCS];
     input->worker[0]->tune(&null_sd, estimated_mean);
-    input->worker[0]->sample(&null_sd, estimated_mean, input->final_num_points);
+    input->worker[0]->sample(&null_sd, estimated_mean, input->final_n_points);
 
-    while (samples[global_s].current != input->end[global_s])
+    while (samples[gs].current != input->end[gs])
     {
         // print out distance quantiles for all sample pairs at the current locus
-        out_dist_buf = next_distance_quantiles_aux(input, samples, global_s, 
+        out_dist_buf = next_distance_quantiles_aux(input, samples, gs, 
                                                    null_sd.sample_points,
                                                    out_dist_buf);
 
         out_indel_dist_buf = 
-            next_indel_distance_quantiles_aux(input, samples, global_s, out_indel_dist_buf);
+            next_indel_distance_quantiles_aux(input, samples, gs, out_indel_dist_buf);
 
         // main loop for computing individual compositions
         // this is the last stop before we move forward
         advance_loci_aux(input, samples, & out_comp_buf, & out_vcf_buf);
 
-        // print_indel_comparisons(input, samples, global_s);
+        // print_indel_comparisons(input, samples, gs);
 
-        global_s = init_global_and_next(input, samples);
+        gs = init_global_and_next(input, samples);
         
     }   
 
     delete[] null_sd.sample_points;
-    for (size_t s = 0; s != input->num_samples; ++s)
+    for (size_t s = 0; s != input->n_samples; ++s)
     {
         delete[] samples[s].sample_points;
     }
@@ -842,5 +810,165 @@ void *dist_worker(void *args)
 
     pthread_exit((void*) 0);
 }
+#endif
+
+void dist_worker(void *par,
+                 const struct managed_buf *in_bufs,
+                 struct managed_buf *out_bufs)
+{
+    struct dist_worker_input *dw = (struct dist_worker_input *)par;
+
+    unsigned i = 0;
+    struct managed_buf 
+        *dist_buf = dw->do_dist ? &out_bufs[i++] : NULL,
+        *comp_buf = dw->do_comp ? &out_bufs[i++] : NULL,
+        *indel_buf = dw->do_indel ? &out_bufs[i++] : NULL,
+        *vcf_buf = dw->do_vcf ? &out_bufs[i++] : NULL;
+
+    char
+        *dist_ptr = dist_buf ? dist_buf->buf : NULL,
+        *comp_ptr = comp_buf ? comp_buf->buf : NULL,
+        *indel_ptr = indel_buf ? indel_buf->buf : NULL,
+        *vcf_ptr = vcf_buf ? vcf_buf->buf : NULL;
+    
+    if (dist_ptr) dist_ptr[0] = '\0';
+    if (comp_ptr) comp_ptr[0] = '\0';
+    if (indel_ptr) indel_ptr[0] = '\0';
+    if (vcf_ptr) vcf_ptr[0] = '\0';
+    
+    struct sample_details *samples = (struct sample_details *)
+        malloc(dw->n_samples * sizeof(struct sample_details));
+
+    size_t gs = 0, s;
+
+    for (s = 0; s != dw->n_samples; ++s)
+    {
+        samples[s] = sample_details();
+        samples[s].locus = NULL;
+        samples[s].current = in_bufs[s].buf;
+        samples[s].end = in_bufs[s].buf + in_bufs[s].size;
+        samples[s].sample_points = 
+            (double *)malloc(dw->final_n_points * 4 * sizeof(double));
+        samples[s].n_sample_points = 0;
+    }
+
+    // before main loop, initialize loci and samples
+    for (s = 0; s != dw->n_samples; ++s)
+    {
+        if (samples[s].current == samples[s].end) continue;
+        init_pileup_locus(dw, s, &samples[s]);
+    }
+
+    gs = init_global_and_next(dw, samples);
+
+    // main loop for computing pairwise distances
+    // though slightly inefficient, just construct null_points here
+    // !!! here, use worker[0] as a proxy.  this is a design flaw
+    // owing to the fact that there are multiple workers used, all with the same
+    // basic settings
+    PileupSummary null_locus;
+    dw->worker[0]->model->locus_data = &null_locus.counts;
+    dw->worker[0]->params->pack(& null_locus.counts);
+    sample_details null_sd;
+    null_sd.locus = &null_locus;
+    null_sd.sample_points = (double *)malloc(dw->final_n_points * 4 * sizeof(double));
+    null_sd.mode_computed = true;
+    
+    // dw->worker[0]->find_mode();
+    double estimated_mean[NUM_NUCS];
+    dw->worker[0]->tune(&null_sd, estimated_mean);
+    dw->worker[0]->sample(&null_sd, estimated_mean, dw->final_n_points);
+    size_t max_line = 1000;
+
+    while (samples[gs].current != samples[gs].end)
+    {
+        /* print out distance quantiles for all sample pairs at the
+           current locus */
+        if (dist_ptr)
+        {
+            ALLOC_GROW_REMAP(dist_buf->buf, dist_ptr,
+                             dist_ptr - dist_buf->buf + max_line,
+                             dist_buf->alloc);
+            
+            dist_ptr = next_distance_quantiles_aux(dw, samples, gs, 
+                                                   null_sd.sample_points,
+                                                   dist_ptr);
+        }
+        
+        if (indel_ptr)
+        {
+            ALLOC_GROW_REMAP(indel_buf->buf, indel_ptr,
+                             indel_ptr - indel_buf->buf + max_line,
+                             indel_buf->alloc);
+
+            indel_ptr = 
+                next_indel_distance_quantiles_aux(dw, samples, gs, indel_ptr);
+        }
+
+        if (vcf_ptr)
+        {
+            ALLOC_GROW_REMAP(vcf_buf->buf, vcf_ptr,
+                             vcf_ptr - vcf_buf->buf + max_line,
+                             vcf_buf->alloc);
+
+            vcf_ptr = print_vcf_line(samples, dw, vcf_ptr);
+        }
+
+        if (comp_ptr)
+        {
+            for (s = 0; s != dw->n_samples; ++s)
+            {
+                if (! samples[s].is_next) continue;
+                if (samples[s].dist_printed)
+                {
+                    ALLOC_GROW_REMAP(comp_buf->buf, comp_ptr,
+                                     comp_ptr - comp_buf->buf + max_line,
+                                     comp_buf->alloc);
+                    comp_ptr = dw->worker[s]->print_quantiles(&samples[s], comp_ptr);
+                    /*
+                      for (size_t p = 0; p != dw->worker[s]->final_n_points; ++p)
+                      {
+                      // sample_id, chromosome, position, fA, fC, fG, fT
+                      fprintf(stdout, "%s\t%s\t%i\t%4.3f\t%4.3f\t%4.3f\t%4.3f\n",
+                      dw->worker[s]->label_string,
+                      samples[s].locus->reference,
+                      samples[s].locus->position,
+                      samples[s].sample_points[p * 4],
+                      samples[s].sample_points[p * 4 + 1],
+                      samples[s].sample_points[p * 4 + 2],
+                      samples[s].sample_points[p * 4 + 3]);
+                      }
+                    */
+                }
+                refresh_locus(dw, s, &samples[s]);
+            }
+        }
+        gs = init_global_and_next(dw, samples);
+        
+    }   
+
+    free(null_sd.sample_points);
+    for (s = 0; s != dw->n_samples; ++s)
+        free(samples[s].sample_points);
+
+    free(samples);
+}
 
 
+void dist_offload(void *par,
+                  const struct managed_buf *bufs)
+{
+    struct dist_worker_offload_par *ol = (struct dist_worker_offload_par *)par;
+    unsigned i = 0;
+    if (ol->dist_fh) 
+        fwrite(bufs[i].buf, 1, bufs[i].size, ol->dist_fh), i++;
+
+    if (ol->comp_fh)
+        fwrite(bufs[i].buf, 1, bufs[i].size, ol->comp_fh), i++;
+
+    if (ol->indel_fh)
+        fwrite(bufs[i].buf, 1, bufs[i].size, ol->indel_fh), i++;
+
+    if (ol->vcf_fh) 
+        fwrite(bufs[i].buf, 1, bufs[i].size, ol->vcf_fh), i++;
+}
