@@ -790,6 +790,7 @@ void dist_worker(void *par,
     // dw->worker[0]->find_mode();
     double estimated_mean[NUM_NUCS];
     dw->worker[0]->tune(&null_sd, estimated_mean);
+
     dw->worker[0]->sample(&null_sd, estimated_mean, dw->final_n_points);
     size_t max_line = 1000;
 
