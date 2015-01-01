@@ -363,6 +363,7 @@ int main_dist(int argc, char **argv)
         queries = (struct pair_ordering_range *)
             malloc(sizeof(struct pair_ordering_range));
         queries[0] = { ix[0].root->span_beg, ix[0].root->span_end };
+        queries[0].end.lo--; /* necessary for this pseudo-query to fit in the index root */
     }
     q = queries;
     qend = queries + n_queries;

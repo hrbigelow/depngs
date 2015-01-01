@@ -72,17 +72,6 @@ dist_worker_input::~dist_worker_input()
     gsl_rng_free(this->randgen);
 }
 
-// assumes the chromosome has a number
-
-
-size_t distance_quantiles_locus_bytes(size_t n_quantiles)
-{
-    return 3 + 3 + 10 + 10 + (7 * n_quantiles) + (4 + n_quantiles);
-}
-
-
-
-
 // compute distance quantiles by generating random pairs of points
 // from the two sets of sample points
 void compute_dist_quantiles(const double *points1,
@@ -164,13 +153,12 @@ char *print_distance_quantiles(const char *contig,
     return out_dist_buf;
 }
 
-
-// summarizes the counts of each indel in the pair of samples
-// together, occurring at a particular locus.  the indel event is
-// associated with a single base locus, even though, for example, a
-// deletion may span multiple loci.  by convention, the locus that
-// occurs just before the inserted or deleted dna is the locus
-// associated with the indel event.
+/* summarizes the counts of each indel in the pair of samples
+   together, occurring at a particular locus.  the indel event is
+   associated with a single base locus, even though, for example, a
+   deletion may span multiple loci.  by convention, the locus that
+   occurs just before the inserted or deleted dna is the locus
+   associated with the indel event.  */
 struct indel_event
 {
     unsigned count1, count2;
@@ -340,14 +328,12 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 }
 
 
-/* 
-id1, e1 is the range over the first sample's insertions (or
-deletions), id2, e2 is the range over the second sample's insertions
-(or deletions). this function is called once for insertions, once for
-deletions, on each locus.  initializes as many indel_event's as
-needed.  automatically detects co-occurring insertions (deletions) and
-singly-occuring ones.
-*/
+/*  id1, e1 is the range over the first sample's insertions (or
+    deletions), id2, e2 is the range over the second sample's
+    insertions (or deletions). this function is called once for
+    insertions, once for deletions, on each locus.  initializes as
+    many indel_event's as needed.  automatically detects co-occurring
+    insertions (deletions) and singly-occuring ones.  */
 indel_event *set_indel_events_aux(CHAR_MAP::iterator id1,
                                   CHAR_MAP::iterator e1,
                                   CHAR_MAP::iterator id2,
@@ -367,8 +353,8 @@ indel_event *set_indel_events_aux(CHAR_MAP::iterator id1,
     return e;
 }
 
-// generate a tally of counts of each type of indel and return a
-// allocated array of the counts
+/* generate a tally of counts of each type of indel and return a
+   allocated array of the counts */
 indel_event *count_indel_types(sample_details *sd1,
                             sample_details *sd2, 
                             size_t *n_counts)
@@ -426,10 +412,6 @@ indel_event *count_indel_types(sample_details *sd1,
         return events;
     }    
 }
-
-
-
-
 
 
 // print out all next distance quantiles for indels
@@ -518,74 +500,6 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
 }
 
 
-/*
-void print_indel_comparisons(dist_worker_input *wi,
-                             sample_details *sd,
-                             size_t gs)
-{
-
-    std::map<unsigned, unsigned>::iterator dit1, e1, dit2, e2;
-    CHAR_MAP::iterator iit;
-
-    char contig[100];
-    size_t position;
-    sscanf(*sd[gs].current, "%s\t%zu", contig, &position);
-
-    for (size_t p = 0; p != wi->n_sample_pairs; ++p)
-    {
-        size_t s1 = wi->pair_sample1[p], s2 = wi->pair_sample2[p];
-        sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
-
-        unsigned max1 = (! sd1->is_next) || sd1->locus->deletions.empty() 
-            ? 0 : (*sd1->locus->deletions.rbegin()).first;
-
-        unsigned max2 = (! sd2->is_next) || sd2->locus->deletions.empty()
-            ? 0 : (*sd2->locus->deletions.rbegin()).first;
-
-        unsigned max = max1 > max2 ? max1 : max2;
-
-        if (max != 0)
-        {
-        
-            printf("%s\t%s\t%s\t%Zu\t%Zu\t%Zu",
-                   wi->worker[s1]->label_string,
-                   wi->worker[s2]->label_string,
-                   contig,
-                   position,
-                   sd1->locus->read_depth,
-                   sd2->locus->read_depth);
-
-
-
-            dit1 = sd1->locus->deletions.begin(), e1 = sd1->locus->deletions.end();
-            dit2 = sd2->locus->deletions.begin(), e2 = sd2->locus->deletions.end();
-
-            unsigned *cnt1 = new unsigned[max * 10], *cnt2 = new unsigned[max * 10];
-
-            unsigned del = 0;
-            while (del <= max)
-            {
-                cnt1[del] = (dit1 != e1 && (*dit1).first == del ? (*dit1++).second : 0);
-                cnt2[del] = (dit2 != e2 && (*dit2).first == del ? (*dit2++).second : 0);
-                ++del;
-            }
-
-            for (size_t d = 0; d != del; ++d)
-                printf("%c%u", (d == 0 ? '\t' : ','), cnt1[d]);
-
-            for (size_t d = 0; d != del; ++d)
-                printf("%c%u", (d == 0 ? '\t' : ','), cnt2[d]);
-
-            printf("\n");
-
-            delete[] cnt1;
-            delete[] cnt2;
-        }
-    }
-}
-*/
-
-
 // find gs, and init the is_next field for all samples
 // this is run
 size_t init_global_and_next(dist_worker_input *input, sample_details *samples)
@@ -655,78 +569,20 @@ void refresh_locus(dist_worker_input *input,
 }
 
 
-// refresh any loci that are marked as 'next'
-// does not initialize is_next for new loci.  (that can only be done
-void advance_loci_aux(dist_worker_input *input,
-                      sample_details *sd,
-                      char **out_comp_buf)
-{
-    size_t s;
-    for (s = 0; s != input->n_samples; ++s)
-    {
-        if (! sd[s].is_next) continue;
+/* receives a certain number of in_bufs and a certain number of
+   out_bufs.  par (cast to struct dist_worker_input) tells dist_worker
+   how many input and output buffers to expect, and how to use them.
+   
+   there is one struct sample_details for each input.  it's current
+   field points to the current line being processed. 'gs' is a single
+   index indicating the sample with the lowest 'current' among all of
+   them.  it is this position that must be fully processed before any
+   samples may advance.
 
-        if (*out_comp_buf != NULL && sd[s].dist_printed)
-        {
-            *out_comp_buf = input->worker[s]->print_quantiles(&sd[s], *out_comp_buf);
-
-            /*
-            for (size_t p = 0; p != input->worker[s]->final_n_points; ++p)
-            {
-                // sample_id, chromosome, position, fA, fC, fG, fT
-                fprintf(stdout, "%s\t%s\t%i\t%4.3f\t%4.3f\t%4.3f\t%4.3f\n",
-                        input->worker[s]->label_string,
-                        sd[s].locus->reference,
-                        sd[s].locus->position,
-                        sd[s].sample_points[p * 4],
-                        sd[s].sample_points[p * 4 + 1],
-                        sd[s].sample_points[p * 4 + 2],
-                        sd[s].sample_points[p * 4 + 3]);
-            }
-            */
-
-        }
-
-        refresh_locus(input, s, &sd[s]);
-    }
-
-}
-
-
-
-
-/* 
-   input defines one range of loci for the worker to work on, across
-   all samples and all pairings.  the 'worker' field of the input is a
-   posterior_wrapper that holds its model parameters.
-
-   [beg[s], end[s]) defines the workload.  it is assumed that, for any
-   locus in each of these S ranges, and for any pairing of samples
-   {s1, s2}, the union of loci in [beg[s1], end[s1]) and [beg[s2],
-   end[s2]) define the set of locus pairs.  Any loci present in just
-   one of the two samples will be filled in with the null locus for
-   the other sample.
-
-   cur[s] point to the current locus in [beg[s], end[s]) that is
-   parsed and sampled.  All loci before cur[s] have already been
-   processed.  The cur[s] loci are not necessarily the same locus, but
-   the minimum among them defines the conceptual 'next' locus to
-   generate distance comparisons for.
-
-   In the event that [beg[s], end[s]) is an empty range for one or
-   more 's', the null locus will be substituted for that sample.
-
-   Once all pairwise distances have been generated for the 'next'
-   locus, prints out compositions for all samples having data for this
-   'next' locus.  Then, for that subset of samples, move cur[s], and
-   refresh all dependent data structures.
-
-   In order to progressively consume the loci in the range, there is a
-   gs, pointing to the least locus across all samples.
+   any sample missing the locus defined by sample[gs].current has
+   null_sd substituted for it.
  */
-
-void dist_worker(void *par,
-                 const struct managed_buf *in_bufs,
+void dist_worker(void *par, const struct managed_buf *in_bufs,
                  struct managed_buf *out_bufs)
 {
     struct dist_worker_input *dw = (struct dist_worker_input *)par;
@@ -790,6 +646,7 @@ void dist_worker(void *par,
     // dw->worker[0]->find_mode();
     double estimated_mean[NUM_NUCS];
     dw->worker[0]->tune(&null_sd, estimated_mean);
+    assert(null_sd.samp_method != FAILED);
 
     dw->worker[0]->sample(&null_sd, estimated_mean, dw->final_n_points);
     size_t max_line = 1000;
@@ -833,24 +690,12 @@ void dist_worker(void *par,
                                      comp_ptr - comp_buf->buf + max_line,
                                      comp_buf->alloc);
                     comp_ptr = dw->worker[s]->print_quantiles(&samples[s], comp_ptr);
-                    /*
-                      for (size_t p = 0; p != dw->worker[s]->final_n_points; ++p)
-                      {
-                      // sample_id, chromosome, position, fA, fC, fG, fT
-                      fprintf(stdout, "%s\t%s\t%i\t%4.3f\t%4.3f\t%4.3f\t%4.3f\n",
-                      dw->worker[s]->label_string,
-                      samples[s].locus->reference,
-                      samples[s].locus->position,
-                      samples[s].sample_points[p * 4],
-                      samples[s].sample_points[p * 4 + 1],
-                      samples[s].sample_points[p * 4 + 2],
-                      samples[s].sample_points[p * 4 + 3]);
-                      }
-                    */
                 }
-                refresh_locus(dw, s, &samples[s]);
             }
         }
+        for (s = 0; s != dw->n_samples; ++s)
+            if (samples[s].is_next) refresh_locus(dw, s, &samples[s]);
+
         gs = init_global_and_next(dw, samples);
     }   
 
@@ -885,3 +730,72 @@ void dist_offload(void *par,
     if (ol->vcf_fh) 
         fwrite(bufs[i].buf, 1, bufs[i].size, ol->vcf_fh), i++;
 }
+
+
+
+/*
+void print_indel_comparisons(dist_worker_input *wi,
+                             sample_details *sd,
+                             size_t gs)
+{
+
+    std::map<unsigned, unsigned>::iterator dit1, e1, dit2, e2;
+    CHAR_MAP::iterator iit;
+
+    char contig[100];
+    size_t position;
+    sscanf(*sd[gs].current, "%s\t%zu", contig, &position);
+
+    for (size_t p = 0; p != wi->n_sample_pairs; ++p)
+    {
+        size_t s1 = wi->pair_sample1[p], s2 = wi->pair_sample2[p];
+        sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
+
+        unsigned max1 = (! sd1->is_next) || sd1->locus->deletions.empty() 
+            ? 0 : (*sd1->locus->deletions.rbegin()).first;
+
+        unsigned max2 = (! sd2->is_next) || sd2->locus->deletions.empty()
+            ? 0 : (*sd2->locus->deletions.rbegin()).first;
+
+        unsigned max = max1 > max2 ? max1 : max2;
+
+        if (max != 0)
+        {
+        
+            printf("%s\t%s\t%s\t%Zu\t%Zu\t%Zu",
+                   wi->worker[s1]->label_string,
+                   wi->worker[s2]->label_string,
+                   contig,
+                   position,
+                   sd1->locus->read_depth,
+                   sd2->locus->read_depth);
+
+
+
+            dit1 = sd1->locus->deletions.begin(), e1 = sd1->locus->deletions.end();
+            dit2 = sd2->locus->deletions.begin(), e2 = sd2->locus->deletions.end();
+
+            unsigned *cnt1 = new unsigned[max * 10], *cnt2 = new unsigned[max * 10];
+
+            unsigned del = 0;
+            while (del <= max)
+            {
+                cnt1[del] = (dit1 != e1 && (*dit1).first == del ? (*dit1++).second : 0);
+                cnt2[del] = (dit2 != e2 && (*dit2).first == del ? (*dit2++).second : 0);
+                ++del;
+            }
+
+            for (size_t d = 0; d != del; ++d)
+                printf("%c%u", (d == 0 ? '\t' : ','), cnt1[d]);
+
+            for (size_t d = 0; d != del; ++d)
+                printf("%c%u", (d == 0 ? '\t' : ','), cnt2[d]);
+
+            printf("\n");
+
+            delete[] cnt1;
+            delete[] cnt2;
+        }
+    }
+}
+*/

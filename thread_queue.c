@@ -196,7 +196,9 @@ void mutex_change_status(struct thread_queue *tq, struct output_node *out, enum 
     ((((end_time).tv_sec * 1000000000 + (end_time).tv_nsec) -           \
       ((beg_time).tv_sec * 1000000000 + (beg_time).tv_nsec)) / 1000000)
 
-
+#ifdef _THREAD_QUEUE_DEBUG
+#define PROGRESS_DECL() struct timespec beg_time, end_time
+#define PROGRESS_START() clock_gettime(CLOCK_REALTIME, &beg_time)
 #define PROGRESS_MSG(msg)                                   \
     do {                                                    \
         clock_gettime(CLOCK_REALTIME, &end_time);           \
@@ -206,9 +208,12 @@ void mutex_change_status(struct thread_queue *tq, struct output_node *out, enum 
                 (msg));                                     \
         fflush(stderr);                                     \
     } while (0)
+#else
+#define PROGRESS_DECL()
+#define PROGRESS_START()
+#define PROGRESS_MSG(msg)
+#endif
 
-#define PROGRESS_START() clock_gettime(CLOCK_REALTIME, &beg_time)
-    
 
 /* this function is run by the thread */
 static void *worker_func(void *args)
@@ -217,22 +222,23 @@ static void *worker_func(void *args)
     struct thread_queue *tq = in->tq;
     size_t p, num_pool = tq->num_threads + tq->num_extra;
 
-    struct timespec beg_time, end_time;
+    PROGRESS_DECL();
 
     while (1)
     {
         int rc;
         /* read chunk into input buffer.  this step can be done
            independent of any locking of the out-buffer pool. */
+        PROGRESS_START();
         rc = pthread_mutex_lock(&tq->read_mtx);
         CHECK_THREAD(rc);
+        PROGRESS_MSG("Wait for read lock");
 
         PROGRESS_START();
         tq->reader(tq->reader_par, in->buf);
-        PROGRESS_MSG("Read input");
-
         rc = pthread_mutex_unlock(&tq->read_mtx);
         CHECK_THREAD(rc);
+        PROGRESS_MSG("Read input");
 
         /* no need to free any resources here */
         size_t sz = 0, b;
@@ -245,8 +251,8 @@ static void *worker_func(void *args)
         if (sz == 0)
             pthread_exit(NULL);
 
-        /* search for EMPTY output buffer, append, and set status
-           to LOADING */
+        /* search for EMPTY output buf, append, set status to
+           LOADING */
         PROGRESS_START();
         while (1)
         {
@@ -277,21 +283,21 @@ static void *worker_func(void *args)
         }
         PROGRESS_MSG("Buffer search");
 
-        PROGRESS_START();
         /* load the output buffer. */
+        PROGRESS_START();
         tq->worker(in->worker_par, in->buf, in->out->buf);
-
         PROGRESS_MSG("Work");
 
+        PROGRESS_START();
         mutex_change_status(tq, in->out, FULL);
         in->out = NULL;
+        PROGRESS_MSG("Changed status to FULL");
         
+        PROGRESS_START();
         while (tq->out_head && tq->out_head->status == FULL)
         {
-            PROGRESS_START();
             mutex_change_status(tq, tq->out_head, UNLOADING);
             tq->offload(tq->offload_par, tq->out_head->buf);
-            PROGRESS_MSG("Unload");
 
             rc = pthread_mutex_lock(&tq->pool_mtx);
             CHECK_THREAD(rc);
@@ -305,5 +311,6 @@ static void *worker_func(void *args)
             rc = pthread_mutex_unlock(&tq->pool_mtx);
             CHECK_THREAD(rc);
         }
+        PROGRESS_MSG("Unload");
     }
 }
