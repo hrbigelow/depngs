@@ -96,7 +96,11 @@ find_loose_index(struct file_bsearch_node *ix, struct pair_ordering cur, FILE *f
     /* expansion phase */
     while (! contains(ix, &cur))
     {
-        if (! ix->parent) return NULL;
+        if (! ix->parent) 
+        {
+            fprintf(stderr, "Error at %s: index does not contain query\n", __func__);
+            exit(1);
+        }
         ix = ix->parent;
     }
     /* contraction phase.  assume ix contains cur. */

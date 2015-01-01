@@ -725,93 +725,6 @@ void advance_loci_aux(dist_worker_input *input,
    gs, pointing to the least locus across all samples.
  */
 
-#if 0
-void *dist_worker(void *args)
-{
-    dist_worker_input *input = static_cast<dist_worker_input *>(args);
-
-    char *out_dist_buf = input->out_dist;
-    char *out_comp_buf = input->out_comp;
-    char *out_vcf_buf = input->out_vcf;
-    char *out_indel_dist_buf = input->out_indel_dist;
-
-    if (out_dist_buf != NULL) out_dist_buf[0] = '\0';
-    if (out_comp_buf != NULL) out_comp_buf[0] = '\0';
-    if (out_vcf_buf != NULL) out_vcf_buf[0] = '\0';
-    if (out_indel_dist_buf != NULL) out_indel_dist_buf[0] = '\0';
-
-    size_t gs = 0;
-
-               size_t s;
-    for (size_t s = 0; s != input->n_samples; ++s)
-    {
-        samples[s] = sample_details();
-        samples[s].locus = NULL;
-        samples[s].current = input->beg[s];
-        samples[s].sample_points = new double[input->final_n_points * 4];
-        samples[s].n_sample_points = 0;
-    }
-
-
-    // before main loop, initialize loci and samples
-    for (size_t s = 0; s != input->n_samples; ++s)
-    {
-        if (samples[s].current == samples[s].end) continue;
-        init_pileup_locus(input, s, &samples[s]);
-    }
-
-    gs = init_global_and_next(input, samples);
-
-    // main loop for computing pairwise distances
-    // though slightly inefficient, just construct null_points here
-    // !!! here, use worker[0] as a proxy.  this is a design flaw
-    // owing to the fact that there are multiple workers used, all with the same
-    // basic settings
-    PileupSummary null_locus;
-    input->worker[0]->model->locus_data = &null_locus.counts;
-    input->worker[0]->params->pack(& null_locus.counts);
-    sample_details null_sd;
-    null_sd.locus = &null_locus;
-    null_sd.sample_points = new double[input->final_n_points * 4];
-    null_sd.mode_computed = true;
-    
-    // input->worker[0]->find_mode();
-    double estimated_mean[NUM_NUCS];
-    input->worker[0]->tune(&null_sd, estimated_mean);
-    input->worker[0]->sample(&null_sd, estimated_mean, input->final_n_points);
-
-    while (samples[gs].current != input->end[gs])
-    {
-        // print out distance quantiles for all sample pairs at the current locus
-        out_dist_buf = next_distance_quantiles_aux(input, samples, gs, 
-                                                   null_sd.sample_points,
-                                                   out_dist_buf);
-
-        out_indel_dist_buf = 
-            next_indel_distance_quantiles_aux(input, samples, gs, out_indel_dist_buf);
-
-        // main loop for computing individual compositions
-        // this is the last stop before we move forward
-        advance_loci_aux(input, samples, & out_comp_buf, & out_vcf_buf);
-
-        // print_indel_comparisons(input, samples, gs);
-
-        gs = init_global_and_next(input, samples);
-        
-    }   
-
-    delete[] null_sd.sample_points;
-    for (size_t s = 0; s != input->n_samples; ++s)
-    {
-        delete[] samples[s].sample_points;
-    }
-
-    delete[] samples;
-
-    pthread_exit((void*) 0);
-}
-#endif
-
 void dist_worker(void *par,
                  const struct managed_buf *in_bufs,
                  struct managed_buf *out_bufs)
@@ -882,19 +795,15 @@ void dist_worker(void *par,
 
     while (samples[gs].current != samples[gs].end)
     {
-        /* print out distance quantiles for all sample pairs at the
-           current locus */
         if (dist_ptr)
         {
             ALLOC_GROW_REMAP(dist_buf->buf, dist_ptr,
-                             dist_ptr - dist_buf->buf + max_line,
-                             dist_buf->alloc);
+                             dist_ptr - dist_buf->buf + max_line, dist_buf->alloc);
             
-            dist_ptr = next_distance_quantiles_aux(dw, samples, gs, 
-                                                   null_sd.sample_points,
-                                                   dist_ptr);
+            dist_ptr = 
+                next_distance_quantiles_aux(dw, samples, gs, 
+                                            null_sd.sample_points, dist_ptr);
         }
-        
         if (indel_ptr)
         {
             ALLOC_GROW_REMAP(indel_buf->buf, indel_ptr,
@@ -904,7 +813,6 @@ void dist_worker(void *par,
             indel_ptr = 
                 next_indel_distance_quantiles_aux(dw, samples, gs, indel_ptr);
         }
-
         if (vcf_ptr)
         {
             ALLOC_GROW_REMAP(vcf_buf->buf, vcf_ptr,
@@ -913,7 +821,6 @@ void dist_worker(void *par,
 
             vcf_ptr = print_vcf_line(samples, dw, vcf_ptr);
         }
-
         if (comp_ptr)
         {
             for (s = 0; s != dw->n_samples; ++s)
@@ -944,9 +851,14 @@ void dist_worker(void *par,
             }
         }
         gs = init_global_and_next(dw, samples);
-        
     }   
 
+    /* update output buffers */
+    if (dist_buf) dist_buf->size = dist_ptr - dist_buf->buf;
+    if (comp_buf) comp_buf->size = comp_ptr - comp_buf->buf;
+    if (indel_buf) indel_buf->size = indel_ptr - indel_buf->buf;
+    if (vcf_buf) vcf_buf->size = vcf_ptr - vcf_buf->buf;
+    
     free(null_sd.sample_points);
     for (s = 0; s != dw->n_samples; ++s)
         free(samples[s].sample_points);
