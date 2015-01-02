@@ -250,21 +250,23 @@ size_t range_to_size(struct file_bsearch_index *ix,
 }
 
 
-/* return an estimated highegst upper bound logical position that uses
+/* return an estimated highest upper bound logical position that uses
    <= size bytes */
 struct pair_ordering size_to_range(struct file_bsearch_index *ix,
                                    struct pair_ordering beg,
                                    size_t size)
 {
-    off_t off_end = off_lower_bound(ix, beg) + (off_t)size;
-    if (off_end > ix->root->end_offset)
+    off_t 
+        off_cur = off_lower_bound(ix, beg) + (off_t)size;
+
+    if (off_cur > ix->root->end_offset)
         return max_pair_ord;
 
-    fseeko(ix->fh, off_end, SEEK_SET);
-    off_t off = 100; /* reasonable initial estimate for a line length */
+    fseeko(ix->fh, off_cur, SEEK_SET);
+    off_t off = MIN(1000, size); /* reasonable initial estimate for a line length */
     char *buf = malloc(off + 1), *newline = NULL;
     
-    while (! newline)
+    while (! newline && off != size)
     {
         buf = realloc(buf, off + 1);
         fseeko(ix->fh, -off, SEEK_CUR);
@@ -272,8 +274,9 @@ struct pair_ordering size_to_range(struct file_bsearch_index *ix,
         newline = memrchr(buf, '\n', off);
         if (newline) newline = memrchr(buf, '\n', newline - buf);
         off *= 2;
+        off = MIN(off, size);
     }
-    struct pair_ordering end = get_line_ord(newline + 1);
+    struct pair_ordering end = newline ? get_line_ord(newline + 1) : beg;
     free(buf);
     return end;
 }
@@ -289,7 +292,9 @@ size_t read_range(struct file_bsearch_index *ix,
     off_t off_beg = off_lower_bound(ix, beg);
     off_t off_end = off_lower_bound(ix, end);
     fseeko(ix->fh, off_beg, SEEK_SET);
-    return fread(buf, 1, off_end - off_beg, ix->fh);
+    size_t n_read = fread(buf, 1, off_end - off_beg, ix->fh);
+    assert(n_read == off_end - off_beg);
+    return n_read;
 }
 
 

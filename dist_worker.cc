@@ -650,7 +650,6 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
 
     dw->worker[0]->sample(&null_sd, estimated_mean, dw->final_n_points);
     size_t max_line = 1000;
-
     while (samples[gs].current != samples[gs].end)
     {
         if (dist_ptr)

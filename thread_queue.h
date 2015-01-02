@@ -55,10 +55,10 @@ thread_queue_init(thread_queue_reader_t reader,
                   void *worker_par,
                   thread_queue_offload_t offload,
                   void *offload_par,
-                  size_t num_threads,
-                  size_t num_extra_in_pool,
-                  size_t num_inputs,
-                  size_t num_outputs,
+                  size_t n_threads,
+                  size_t n_extra_in_pool,
+                  size_t n_inputs,
+                  size_t n_outputs,
                   size_t max_input_mem);
 
 

@@ -89,7 +89,10 @@ void PileupSummary::load_line(const char *read_ptr)
     
     if (scanned_fields != 4)
     {
-        fprintf(stderr, "PileupSummary::load_line: Warning: badly formatted line\n");
+        char *line = strndup(read_ptr, strchr(read_ptr, '\n') - read_ptr);
+        fprintf(stderr, "PileupSummary::load_line: Warning: badly formatted line:\n%s\n",
+                line);
+        free(line);
         assert(false);
         exit(10);
     }

@@ -35,7 +35,7 @@ void range_line_reader(void *par, struct managed_buf *bufs)
         write_end[i] = bufs[i].buf + bufs[i].alloc;
     }
     ptrdiff_t space_left = write_end[0] - write_ptr[0], space_tmp;
-    struct pair_ordering tmp_pos, trunc_pos;
+    struct pair_ordering tmp_pos, trunc_pos = max_pair_ord;
 
     /* must re-set on each call */
     rr->new_query = 1;
