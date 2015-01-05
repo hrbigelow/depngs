@@ -201,6 +201,8 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
     }
     nd->span_contents = strndup(mem_scan_buf + (nd->start_offset - read_off),
                                 nd->end_offset - nd->start_offset);
+    assert(nd->end_offset - nd->start_offset < 10000);
+    ix->cur_node = nd;
 }
 
 inline
