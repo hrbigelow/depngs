@@ -80,30 +80,38 @@ struct file_bsearch_index file_bsearch_make_index(FILE *fh)
     root->left = root->right = root->parent = NULL;
     root->span_contents = NULL;
 
-    struct file_bsearch_index ix = { fh, root, root };
+    struct file_bsearch_index ix = { 
+        .fh = fh, 
+        .root = root, 
+        .cur_node = root, 
+        .n_nodes = 1, 
+    };
+
     return ix;
 }
 
 
-/* find a loose-fitting index that contains cur, starting at ix, using
-   only binary search.  Does not guarantee to find the tightest
-   possible index because the bisection is done based on file offsets,
-   not loci positions. returns NULL if the root doesn't even contain
-   cur */
-struct file_bsearch_node *
-find_loose_index(struct file_bsearch_node *ix, struct pair_ordering cur, FILE *fh)
+/* find a loose-fitting index that contains cur, starting at
+   ix->cur_node, using only binary search.  Does not guarantee to find
+   the tightest possible index because the bisection is done based on
+   file offsets, not loci positions. updates ix->cur_node to point to
+   this new node. updates */
+void
+find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *fh)
 {
     /* expansion phase */
-    while (! contains(ix, &cur))
+    struct file_bsearch_node *nd = ix->cur_node;
+    while (! contains(nd, &cur))
     {
-        if (! ix->parent) 
+        if (! nd->parent) 
         {
             fprintf(stderr, "Error at %s: index does not contain query\n", __func__);
             exit(1);
         }
-        ix = ix->parent;
+        nd = nd->parent;
     }
-    /* contraction phase.  assume ix contains cur. */
+
+    /* contraction phase.  assume nd contains cur. */
     struct pair_ordering midpoint_ord;
     off_t midpoint_off, read_off = -1;
     size_t span;
@@ -113,21 +121,21 @@ find_loose_index(struct file_bsearch_node *ix, struct pair_ordering cur, FILE *f
     {
         /* find the midpoint */
         if (read_off == -1
-            && (span = ix->end_offset - ix->start_offset) <= mem_scan_threshold)
+            && (span = nd->end_offset - nd->start_offset) <= mem_scan_threshold)
         {
-            read_off = ix->start_offset;
-            fseeko(fh, ix->start_offset, SEEK_SET);
+            read_off = nd->start_offset;
+            fseeko(fh, nd->start_offset, SEEK_SET);
             fread(mem_scan_buf, 1, span, fh);
         }
-        if (ix->left == NULL && ix->right == NULL)
+        if (nd->left == NULL && nd->right == NULL)
         {
-            midpoint_off = (ix->end_offset + ix->start_offset) / 2;
+            midpoint_off = (nd->end_offset + nd->start_offset) / 2;
             if (read_off != -1)
             {
                 /* initialize midpoint_off, midpoint_ord from memory */
                 line_start = strchr(mem_scan_buf + (midpoint_off - read_off), '\n') + 1;
                 midpoint_off = read_off + (line_start - mem_scan_buf);
-                if (midpoint_off == ix->end_offset)
+                if (midpoint_off == nd->end_offset)
                     break;
                 
                 midpoint_ord = get_line_ord(line_start);
@@ -140,7 +148,7 @@ find_loose_index(struct file_bsearch_node *ix, struct pair_ordering cur, FILE *f
                 assert(nchars_read != -1);
                 
                 midpoint_off += nchars_read;
-                if (midpoint_off == ix->end_offset)
+                if (midpoint_off == nd->end_offset)
                     break;
                 
                 nchars_read = getline(&line_buf, &line_len, fh);
@@ -153,46 +161,46 @@ find_loose_index(struct file_bsearch_node *ix, struct pair_ordering cur, FILE *f
         }
         else
         {
-            midpoint_ord = ix->left ? ix->left->span_end : ix->right->span_beg;
-            midpoint_off = ix->left ? ix->left->end_offset : ix->right->start_offset;
+            midpoint_ord = nd->left ? nd->left->span_end : nd->right->span_beg;
+            midpoint_off = nd->left ? nd->left->end_offset : nd->right->start_offset;
         }
 
         /* create a new child node as necessary */
         int cmp = cmp_pair_ordering(&cur, &midpoint_ord);
-        if (cmp < 0 && ! ix->left)
+        if (cmp < 0 && ! nd->left)
         {
-            ix->left = (struct file_bsearch_node *)malloc(sizeof(struct file_bsearch_node));
-            struct file_bsearch_node *p = ix->left;
-            p->span_beg = ix->span_beg;
+            nd->left = (struct file_bsearch_node *)malloc(sizeof(struct file_bsearch_node));
+            ix->n_nodes++;
+            struct file_bsearch_node *p = nd->left;
+            p->span_beg = nd->span_beg;
             p->span_end = midpoint_ord;
-            p->start_offset = ix->start_offset;
+            p->start_offset = nd->start_offset;
             p->end_offset = midpoint_off;
-            p->parent = ix;
+            p->parent = nd;
             p->left = p->right = NULL;
             p->span_contents = NULL;
             assert(p->start_offset < p->end_offset);
         }            
-        if (cmp >= 0 && ! ix->right)
+        if (cmp >= 0 && ! nd->right)
         {
-            ix->right = (struct file_bsearch_node *)malloc(sizeof(struct file_bsearch_node));
-            struct file_bsearch_node *p = ix->right;
+            nd->right = (struct file_bsearch_node *)malloc(sizeof(struct file_bsearch_node));
+            ix->n_nodes++;
+            struct file_bsearch_node *p = nd->right;
             p->span_beg = midpoint_ord;
-            p->span_end = ix->span_end;
+            p->span_end = nd->span_end;
             p->start_offset = midpoint_off;
-            p->end_offset = ix->end_offset;
-            p->parent = ix;
+            p->end_offset = nd->end_offset;
+            p->parent = nd;
             p->left = p->right = NULL;
             p->span_contents = NULL;
             assert(p->start_offset < p->end_offset);
         }
 
         /* traverse to appropriate child node */
-        ix = cmp < 0 ? ix->left : ix->right;
+        nd = cmp < 0 ? nd->left : nd->right;
     }
-    ix->span_contents = strndup(mem_scan_buf + (ix->start_offset - read_off),
-                                ix->end_offset - ix->start_offset);
-    return ix;
-
+    nd->span_contents = strndup(mem_scan_buf + (nd->start_offset - read_off),
+                                nd->end_offset - nd->start_offset);
 }
 
 inline
@@ -226,7 +234,7 @@ off_t off_bound_aux(const struct file_bsearch_node *ix,
 off_t off_lower_bound(struct file_bsearch_index *ix,
                       struct pair_ordering query)
 {
-    ix->cur_node = find_loose_index(ix->cur_node, query, ix->fh);
+    find_loose_index(ix, query, ix->fh);
     return off_bound_aux(ix->cur_node, query, 0);
 }
 
@@ -235,7 +243,7 @@ off_t off_lower_bound(struct file_bsearch_index *ix,
 off_t off_upper_bound(struct file_bsearch_index *ix,
                       struct pair_ordering query)
 {
-    ix->cur_node = find_loose_index(ix->cur_node, query, ix->fh);
+    find_loose_index(ix, query, ix->fh);
     return off_bound_aux(ix->cur_node, query, 1);
 }
 
@@ -300,17 +308,53 @@ size_t read_range(struct file_bsearch_index *ix,
 
 
 /* free the index tree */
-void file_bsearch_node_free(struct file_bsearch_node *root)
+size_t file_bsearch_node_free(struct file_bsearch_node *root)
 {
-    if (root->left) file_bsearch_node_free(root->left);
-    if (root->right) file_bsearch_node_free(root->right);
+    size_t c = 0;
+    if (root->left) c += file_bsearch_node_free(root->left);
+    if (root->right) c += file_bsearch_node_free(root->right);
     if (root->span_contents) 
         free(root->span_contents);
     free(root);
+    c++;
+    return c;
 }
 
 
 void file_bsearch_index_free(struct file_bsearch_index ix)
 {
-    file_bsearch_node_free(ix.root);
+    (void)file_bsearch_node_free(ix.root);
 }
+
+/* free all nodes that are contained in [beg, end)*/
+size_t file_bsearch_node_range_free(struct file_bsearch_node *node,
+                                    struct pair_ordering beg,
+                                    struct pair_ordering end)
+{
+    struct pair_ordering mid;
+    int cmp_beg, cmp_end;
+    size_t n_freed = 0;
+
+    if (! node) return 0;
+    if ((cmp_beg = cmp_pair_ordering(&beg, &node->span_beg)) <= 0
+        && (cmp_end = cmp_pair_ordering(&end, &node->span_end)) <= 0)
+    {
+        struct file_bsearch_node *parent = node;
+        n_freed = file_bsearch_node_free(node);
+        if (parent && parent->left == node) parent->left = NULL;
+        if (parent && parent->right == node) parent->right = NULL;
+        return n_freed;
+    }
+    mid = node->left ? node->left->span_end 
+        : node->right ? node->right->span_beg
+        : beg;
+    
+    if (cmp_pair_ordering(&beg, &mid) < 0)
+        n_freed += file_bsearch_node_range_free(node->left, beg, end);
+
+    if (cmp_pair_ordering(&mid, &end) < 0)
+        n_freed += file_bsearch_node_range_free(node->right, beg, end);
+
+    return n_freed;
+}
+

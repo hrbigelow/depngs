@@ -37,10 +37,11 @@ struct file_bsearch_node {
 };
 
 /* represents the index tree 'as a whole', together with the
-   associated structure(s) needed to use it */
+   associated structure(s) needed to use it. */
 struct file_bsearch_index {
     FILE *fh;
     struct file_bsearch_node *root, *cur_node;
+    size_t n_nodes;
 };
 
 typedef struct pair_ordering (*get_line_ord_t)(const char *line);
@@ -80,9 +81,13 @@ size_t read_range(struct file_bsearch_index *ix,
                   struct pair_ordering end,
                   char *buf);
 
-
-/* free the index tree */
+/* free a portion of the index tree that covers [beg, end) range. */
 void file_bsearch_index_free(struct file_bsearch_index ix);
+
+/* free all nodes that are contained in [beg, end)*/
+size_t file_bsearch_node_range_free(struct file_bsearch_node *node,
+                                    struct pair_ordering beg,
+                                    struct pair_ordering end);
 
 
 #endif /* _FILE_BINARY_SEARCH_H */

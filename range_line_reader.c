@@ -95,6 +95,12 @@ void range_line_reader(void *par, struct managed_buf *bufs)
     for (i = 0; i != n_ix; ++i)
         bufs[i].size = write_ptr[i] - bufs[i].buf;
 
+    /* free resources */
+    /* for (i = 0; i != n_ix; ++i) */
+    /*     (void)file_bsearch_node_range_free(rr->ix[i].root,  */
+    /*                                        min_pair_ord, */
+    /*                                        rr->q == rr->qend ? max_pair_ord : rr->q->beg); */
+
     free(span);
     free(write_ptr);
     free(write_end);
