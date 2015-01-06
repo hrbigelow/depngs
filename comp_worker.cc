@@ -47,8 +47,7 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
     cdfs_output_fh(cdfs_output_fh),
     file_writing_mutex(file_writing_mutex)
 {
-    this->label_string = new char[strlen(label_string) + 1];
-    strcpy(this->label_string, label_string);
+    this->label_string = strdup(label_string);
 
     this->quantiles = new double[this->n_quantiles];
     std::copy(quantiles, quantiles + n_quantiles, this->quantiles);
@@ -74,13 +73,10 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
 
 posterior_wrapper::~posterior_wrapper()
 {
-    delete this->label_string;
+    free(this->label_string);
     delete this->quantiles;
-
     delete this->sampler;
     delete this->slice_sampler;
-    // delete this->posterior;
-    // delete this->prior;
     delete this->model;
     delete this->params;
 }

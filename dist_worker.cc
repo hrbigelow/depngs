@@ -12,6 +12,8 @@ extern "C" {
 #include "locus.h"
 }
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 dist_worker_input::dist_worker_input(size_t thread_num,
                                      size_t n_samples,
                                      size_t n_sample_pairs,
@@ -82,9 +84,9 @@ dist_worker_input::~dist_worker_input()
 // from the two sets of sample points
 void compute_dist_quantiles(const double *points1,
                             const double *points2,
-                            double *square_dist_buf,
                             size_t n_dims,
                             size_t n_sample_points,
+                            double *square_dist_buf,
                             size_t n_random_pairs,
                             gsl_rng *randgen,
                             double *dist_quantiles,
@@ -288,10 +290,11 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
                                sd2->is_next ? sd2->sample_points : null_points,
-                               input->square_dist_buf,
                                4,
                                input->prelim_n_points,
-                               input->prelim_n_points * 10, // ad-hoc
+                               input->square_dist_buf,
+                               MIN(input->n_sample_point_pairings,
+                                   input->prelim_n_points * 10), // ad-hoc
                                input->randgen,
                                &input->prelim_quantile, 1,
                                input->dist_quantile_values);
@@ -313,9 +316,9 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
                                sd2->is_next ? sd2->sample_points : null_points,
-                               input->square_dist_buf,
                                4,
                                input->final_n_points,
+                               input->square_dist_buf,
                                input->n_sample_point_pairings,
                                input->randgen,
                                input->dist_quantiles,
@@ -361,8 +364,8 @@ indel_event *set_indel_events_aux(CHAR_MAP::iterator id1,
 /* generate a tally of counts of each type of indel and return a
    allocated array of the counts */
 indel_event *count_indel_types(sample_details *sd1,
-                            sample_details *sd2, 
-                            size_t *n_counts)
+                               sample_details *sd2, 
+                               size_t *n_counts)
 {
 
     if (! (sd1->is_next && sd2->is_next))
@@ -474,10 +477,11 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
             }
 
             // compute distance quantiles
-            compute_dist_quantiles(points1, points2, 
-                                   input->square_dist_buf,
+            compute_dist_quantiles(points1,
+                                   points2, 
                                    n_events, 
                                    input->final_n_points,
+                                   input->square_dist_buf,
                                    input->n_sample_point_pairings,
                                    input->randgen,
                                    input->dist_quantiles,
