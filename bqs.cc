@@ -187,7 +187,7 @@ int main_bqs(int argc, char ** argv)
                 "%c\t%Zu\t%c\t%Zu\n",
                 basecall,
                 quality,
-                (strand == Nucleotide::PLUS_STRAND) ? '+' : '-',
+                (strand == NUC_PLUS_STRAND) ? '+' : '-',
                 counts[i]);
     }
     close_if_present(bqs_output_fh);

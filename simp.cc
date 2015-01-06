@@ -140,13 +140,13 @@ int main_simp(int argc, char ** argv)
 
             //founder_bases[read_index] = Nucleotide::bases_upper[fbase_index];
             called_bases[read_index] = 
-                strand == Nucleotide::PLUS_STRAND ? toupper(basecall) : tolower(basecall);
+                strand == NUC_PLUS_STRAND ? toupper(basecall) : tolower(basecall);
 
             measured_quality[read_index] = quality;
 
             if (toupper(called_bases[read_index]) == fake_reference_base)
             {
-                called_bases_printed[read_index] = strand == Nucleotide::PLUS_STRAND ? '.' : ',';
+                called_bases_printed[read_index] = strand == NUC_PLUS_STRAND ? '.' : ',';
             }
             else
             {

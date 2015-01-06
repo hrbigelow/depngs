@@ -46,14 +46,6 @@ namespace Nucleotide
         };
     const char *bases_upper = "ACGTN";
     const char *strands = "+-";
-    const size_t PLUS_STRAND = 0;
-    const size_t MINUS_STRAND = 1;
-
-    // const size_t highest_quality = 94;
-    // const size_t num_s = 2;
-    // const size_t num_qs = num_s * (highest_quality + 1);
-    // const size_t num_bqs = 4 * num_qs;
-    
     size_t encode(char basecall, size_t quality, size_t strand_index)
     {
         size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
@@ -69,7 +61,7 @@ namespace Nucleotide
     {
         *basecall = Nucleotide::bases_upper[code / NUC_NUM_QS];
         *quality = (code % NUC_NUM_QS) / NUC_NUM_S; 
-        *strand = (code % NUC_NUM_S) == 0 ? PLUS_STRAND : MINUS_STRAND;
+        *strand = (code % NUC_NUM_S) == 0 ? NUC_PLUS_STRAND : NUC_MINUS_STRAND;
     }
 
 
@@ -116,8 +108,8 @@ void NucleotideStats::initialize(char const* rdb_file)
             continue;
 
         index_code = Nucleotide::encode(basecall, quality, 
-                                             (strand == '+' ? Nucleotide::PLUS_STRAND
-                                              : Nucleotide::MINUS_STRAND));
+                                             (strand == '+' ? NUC_PLUS_STRAND
+                                              : NUC_MINUS_STRAND));
 
         for (size_t b = 0; b != 4; ++b)
             this->complete_jpd[b][index_code] = counts[b];

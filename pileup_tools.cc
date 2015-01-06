@@ -40,9 +40,6 @@ PileupSummary::PileupSummary(void)
 {
     bases.buf = bases_upper.buf = bases_raw.buf = quality_codes.buf = NULL;
     bases.alloc = bases_upper.alloc = bases_raw.alloc = quality_codes.alloc = 0;
-    counts.raw_counts = NULL;
-    counts.stats_index = NULL;
-    counts.fbqs_cpd = NULL;
     counts.num_data = 0;
     memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
     // memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
@@ -57,9 +54,6 @@ PileupSummary::~PileupSummary()
     if (bases_upper.alloc) { free(bases_upper.buf); bases_upper.alloc = 0; }
     if (bases_raw.alloc) { free(bases_raw.buf); bases_raw.alloc = 0; }
     if (quality_codes.alloc) { free(quality_codes.buf); quality_codes.alloc = 0; }
-    if (counts.raw_counts) { delete[] counts.raw_counts; this->counts.raw_counts = NULL; }
-    if (counts.stats_index) { delete[] this->counts.stats_index; this->counts.stats_index = NULL; }
-    if (counts.fbqs_cpd) { delete[] this->counts.fbqs_cpd; this->counts.fbqs_cpd = NULL; }
 
     CHAR_MAP::iterator it;
     for (it = this->insertions.begin(); it != this->insertions.end(); ++it)
@@ -126,6 +120,13 @@ void PileupSummary::load_line(const char *read_ptr)
     char pileup_ccode;
     int indel_size, pileup_value, current_read = 0;
     //int deletion_read = 0;
+
+    memset(this->base_counts, 0, sizeof(this->base_counts));
+    this->sum_of_counts = 0;
+
+    this->counts.num_data = 0;
+    this->insertions.clear();
+    this->deletions.clear();
 
     while(*read_ptr != '\0' && *read_ptr != '\n')
     {
@@ -263,15 +264,13 @@ size_t PileupSummary::quality(size_t read_num) const
 // initialize this->counts.raw_counts and this->counts.stats_index
 void PileupSummary::parse(size_t min_quality_score)
 {
-    
     // populate raw_counts_flat with a sparse set of counts
     unsigned long raw_counts_flat[NUC_NUM_BQS];
-    unsigned long rc_tmp[NUC_NUM_BQS];
-    size_t rc_ind_tmp[NUC_NUM_BQS];
     this->read_depth_high_qual = 0;
 
     std::fill(raw_counts_flat, raw_counts_flat + NUC_NUM_BQS, 0);
     size_t rd = this->read_depth_match, nd = 0;
+    size_t fi;
 
     for (size_t r = 0; r < rd; ++r)
     {
@@ -285,40 +284,21 @@ void PileupSummary::parse(size_t min_quality_score)
         if (basecall_index >= 4) continue;
         if (quality < min_quality_score) continue;
 
-        size_t strand = isupper(basecall) ? Nucleotide::PLUS_STRAND : Nucleotide::MINUS_STRAND;
-        size_t flat_index = Nucleotide::encode(basecall, quality, strand);
-        raw_counts_flat[flat_index]++;
+        size_t strand = isupper(basecall) ? NUC_PLUS_STRAND : NUC_MINUS_STRAND;
+        fi = Nucleotide::encode(basecall, quality, strand);
+        raw_counts_flat[fi]++;
     }
-    for (size_t flat_index = 0; flat_index != NUC_NUM_BQS; ++flat_index)
+    for (fi = 0; fi != NUC_NUM_BQS; ++fi)
     {
-        if (raw_counts_flat[flat_index] != 0)
+        if (raw_counts_flat[fi] != 0)
         {
-
-            this->read_depth_high_qual += raw_counts_flat[flat_index];
-            rc_tmp[nd] = raw_counts_flat[flat_index];
-            rc_ind_tmp[nd] = flat_index;
+            this->read_depth_high_qual += raw_counts_flat[fi];
+            this->counts.raw_counts[nd] = raw_counts_flat[fi];
+            this->counts.stats_index[nd] = fi;
             ++nd;
         }
     }
-
     this->counts.num_data = nd;
-    if (this->counts.raw_counts != NULL)
-        delete[] this->counts.raw_counts;
-
-    this->counts.raw_counts = new unsigned long[nd];
-
-    if (this->counts.stats_index != NULL)
-        delete[] this->counts.stats_index;
-
-    this->counts.stats_index = new size_t[nd];
-
-    if (this->counts.fbqs_cpd != NULL)
-        delete[] this->counts.fbqs_cpd;
-
-    this->counts.fbqs_cpd = new double[nd * 4];
-
-    std::copy(rc_tmp, rc_tmp + nd, this->counts.raw_counts);
-    std::copy(rc_ind_tmp, rc_ind_tmp + nd, this->counts.stats_index);
 }
 
 

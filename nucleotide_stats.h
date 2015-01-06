@@ -9,6 +9,8 @@
 #define NUC_NUM_QS (2 * (NUC_HIGHEST_QUALITY + 1))
 #define NUC_NUM_BQS (4 * NUC_NUM_QS)
 #define NUC_NUM_FBQS (4 * NUC_NUM_BQS)
+#define NUC_PLUS_STRAND 0
+#define NUC_MINUS_STRAND 1
 
 namespace Nucleotide 
 {
@@ -16,13 +18,6 @@ namespace Nucleotide
     extern int const base_to_index[];
     extern const char *bases_upper;
     extern const char *strands;
-    /* extern const size_t highest_quality; */
-    /* extern const size_t num_s; */
-    /* extern const size_t num_qs; */
-    /* extern const size_t num_bqs; */
-    extern const size_t PLUS_STRAND;
-    extern const size_t MINUS_STRAND;
-
     extern size_t encode(char basecall, size_t quality, size_t strand);
     extern void decode(size_t code, char *basecall, size_t *quality, size_t *strand);
 
@@ -35,16 +30,16 @@ struct packed_counts
 {
     /* raw_counts[n] = number of occurrences of a particular (b,q,s)
        tuple at this locus */
-    unsigned long *raw_counts;
+    unsigned long raw_counts[NUC_NUM_BQS];
 
     /* stats_index[n] = code.  use Nucleotide::decode(code, &b, &q,
        &s). use this together with raw_counts[n] to find the number of
        occurrences of (b,q,s) tuples. */
-    size_t *stats_index; 
+    size_t stats_index[NUC_NUM_BQS];
 
     /* fbqs_cpd[nf] gives P(b,q,s|f).  nf / 4 corresponds to n.  nf %
        4 corresponds to founder base (A,C,G,T). */
-    double *fbqs_cpd;
+    double fbqs_cpd[NUC_NUM_FBQS];
 
     /* number of elements in 'raw_counts' and 'stats_index'.  fbqs_cpd
        has 4 * raw_counts elements. */

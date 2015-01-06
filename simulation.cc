@@ -95,22 +95,16 @@ void sample_locus_from_stats(gsl_rng * rand_gen,
                              size_t depth,
                              packed_counts * sample)
 {
-
-    size_t D = NUC_NUM_BQS;
-    sample->num_data = D;
-    sample->raw_counts = new unsigned long[D];
-    sample->stats_index = new size_t[D];
-    sample->fbqs_cpd = new double[D];
+    sample->num_data = NUC_NUM_BQS;
 
     //since we don't know ahead of time how many different instances of
     //data we will sample, there is no opportunity for compressing them
     //so, initialize stats index to be 1-to-1 with raw index
-    for (size_t ri = 0; ri != D; ++ri)
-    {
+    size_t ri, d;
+    for (ri = 0; ri != NUC_NUM_BQS; ++ri)
         sample->stats_index[ri] = ri;
-    }
 
-    for (size_t d = 0; d != depth; ++d)
+    for (d = 0; d != depth; ++d)
     {
         size_t fbase_index =
             SampleDiscreteDistribution(rand_gen, locus_base_comp, 1.0);
