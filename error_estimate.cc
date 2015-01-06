@@ -136,8 +136,7 @@ double ErrorEstimate::log_likelihood(const double *x) const
         int e;
         int cti = static_cast<int>(*ct);
         double q = (cpd[0] * x[0]) + (cpd[1] * x[1]) + (cpd[2] * x[2]) + (cpd[3] * x[3]);
-        double m = frexp(q, &e);
-        if (cti > 50 || cti_floor < min_exp)
+        if (cti >= 50 || cti_floor < min_exp)
         {
             // as it turns out, taking log2 takes ~25 ns, but doing gsl_pow_int
             // takes 60 to 150 ns for powers above about 50
@@ -147,6 +146,7 @@ double ErrorEstimate::log_likelihood(const double *x) const
         else
         {
             // this will have an exponent
+            double m = frexp(q, &e);
             double em = gsl_pow_int(m, cti);
             s += (e * cti);
             p *= em;

@@ -256,24 +256,6 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
         if (input->min_high_conf_dist > 0 && ! (sd1->is_next && sd2->is_next))
             continue;
         
-        // modefinding will not work anymore...
-
-        // if (sd1->is_next && ! sd1->mode_computed) (input->worker[s1]->find_mode(), sd1->mode_computed = true);
-        // if (sd2->is_next && ! sd2->mode_computed) (input->worker[s2]->find_mode(), sd2->mode_computed = true);
-
-        // mode1 = sd1->is_next ? input->worker[s1]->mode_point : NULL_MODE, end1 = mode1 + 4;
-        // mode2 = sd2->is_next ? input->worker[s2]->mode_point : NULL_MODE;
-
-        // float mode_square_dist = 0;
-        // while (mode1 != end1)
-        //     mode_square_dist += gsl_pow_2(*mode1++ - *mode2++);
-
-        // if (mode_square_dist < min_dist_squared)
-        // {
-        //     // modes don't differ enough
-        //     continue;
-        // }
-
         // preliminary sampling
         if (sd1->is_next && ! sd1->n_sample_points)
         {

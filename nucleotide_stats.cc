@@ -91,9 +91,10 @@ void NucleotideStats::initialize(char const* rdb_file)
 
     while (! feof(rdb_fh))
     {
-        fscanf(rdb_fh, "%c_%i_%c\t%lf\t%lf\t%lf\t%lf\n", &basecall, &quality, &strand, 
-               counts, counts+1, counts+2, counts+3);
-
+        (void)fscanf(rdb_fh, "%c_%i_%c\t%lf\t%lf\t%lf\t%lf\n", 
+                     &basecall, &quality, &strand, 
+                     counts, counts+1, counts+2, counts+3);
+        
         for (size_t bi = 0; bi != 4; ++bi)
             if (counts[bi] < 0)
             {

@@ -89,7 +89,7 @@ int main_pug(int argc, char ** argv)
     unsigned index;
     while (! feof(contig_order_fh))
     {
-        fscanf(contig_order_fh, "%s\t%u\n", contig, &index);
+        (void)fscanf(contig_order_fh, "%s\t%u\n", contig, &index);
         dict_add_item(contig, index);
     }
     fclose(contig_order_fh);
@@ -180,7 +180,7 @@ int main_pug(int argc, char ** argv)
                 ? q->end
                 : size_to_range(&ix, cur_beg, max_chunk_size);
             size_t nbytes_read = read_range(&ix, cur_beg, cur_end, chunk_buffer);
-            write(1, chunk_buffer, nbytes_read);
+            (void)write(1, chunk_buffer, nbytes_read);
             bytes_to_write -= nbytes_read;
             cur_beg = cur_end;
         }

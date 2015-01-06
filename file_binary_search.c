@@ -125,7 +125,7 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
         {
             read_off = nd->start_offset;
             fseeko(fh, nd->start_offset, SEEK_SET);
-            fread(mem_scan_buf, 1, span, fh);
+            (void)fread(mem_scan_buf, 1, span, fh);
         }
         if (nd->left == NULL && nd->right == NULL)
         {
