@@ -329,9 +329,9 @@ void file_bsearch_index_free(struct file_bsearch_index ix)
 }
 
 /* free all nodes that are contained in [beg, end)*/
-size_t file_bsearch_node_range_free(struct file_bsearch_node *node,
-                                    struct pair_ordering beg,
-                                    struct pair_ordering end)
+size_t node_range_free(struct file_bsearch_node *node,
+                       struct pair_ordering beg,
+                       struct pair_ordering end)
 {
     struct pair_ordering mid;
     int cmp_beg, cmp_end;
@@ -339,9 +339,9 @@ size_t file_bsearch_node_range_free(struct file_bsearch_node *node,
 
     if (! node) return 0;
     if ((cmp_beg = cmp_pair_ordering(&beg, &node->span_beg)) <= 0
-        && (cmp_end = cmp_pair_ordering(&end, &node->span_end)) <= 0)
+        && (cmp_end = cmp_pair_ordering(&node->span_end, &end)) <= 0)
     {
-        struct file_bsearch_node *parent = node;
+        struct file_bsearch_node *parent = node->parent;
         n_freed = file_bsearch_node_free(node);
         if (parent && parent->left == node) parent->left = NULL;
         if (parent && parent->right == node) parent->right = NULL;
@@ -352,11 +352,20 @@ size_t file_bsearch_node_range_free(struct file_bsearch_node *node,
         : beg;
     
     if (cmp_pair_ordering(&beg, &mid) < 0)
-        n_freed += file_bsearch_node_range_free(node->left, beg, end);
+        n_freed += node_range_free(node->left, beg, end);
 
     if (cmp_pair_ordering(&mid, &end) < 0)
-        n_freed += file_bsearch_node_range_free(node->right, beg, end);
+        n_freed += node_range_free(node->right, beg, end);
 
     return n_freed;
 }
 
+
+/* frees all nodes in [beg, end) range.  sets cur_node to root. */
+size_t file_bsearch_range_free(struct file_bsearch_index *ix,
+                               struct pair_ordering beg,
+                               struct pair_ordering end)
+{
+    ix->cur_node = ix->root;
+    return node_range_free(ix->root, beg, end);
+}

@@ -10,11 +10,7 @@
 
 NucleotideStats::NucleotideStats()
 {
-    size_t D = Nucleotide::num_bqs;
-
-    this->jpd_buffer = new double[D * 4];
-    this->cpd_buffer = new double[D * 4];
-
+    size_t D = NUC_NUM_BQS;
     for (size_t b = 0; b != 4; ++b)
     {
         this->complete_jpd[b] = this->jpd_buffer + (b * D);
@@ -25,9 +21,6 @@ NucleotideStats::NucleotideStats()
 
 NucleotideStats::~NucleotideStats()
 {
-    delete this->jpd_buffer;
-    delete this->cpd_buffer;
-    // delete[] this->index_mapping;
 }
 
 namespace Nucleotide
@@ -56,27 +49,27 @@ namespace Nucleotide
     const size_t PLUS_STRAND = 0;
     const size_t MINUS_STRAND = 1;
 
-    const size_t highest_quality = 94;
-    const size_t num_s = 2;
-    const size_t num_qs = num_s * (highest_quality + 1);
-    const size_t num_bqs = 4 * num_qs;
+    // const size_t highest_quality = 94;
+    // const size_t num_s = 2;
+    // const size_t num_qs = num_s * (highest_quality + 1);
+    // const size_t num_bqs = 4 * num_qs;
     
     size_t encode(char basecall, size_t quality, size_t strand_index)
     {
         size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
-        assert(quality <= highest_quality);
+        assert(quality <= NUC_HIGHEST_QUALITY);
 
         return 
-            (basecall_index * num_qs) 
-            + (quality * num_s) 
+            (basecall_index * NUC_NUM_QS) 
+            + (quality * NUC_NUM_S) 
             + strand_index;
     }
 
     void decode(size_t code, char * basecall, size_t *quality, size_t *strand)
     {
-        *basecall = Nucleotide::bases_upper[code / num_qs];
-        *quality = (code % num_qs) / num_s; 
-        *strand = (code % num_s) == 0 ? PLUS_STRAND : MINUS_STRAND;
+        *basecall = Nucleotide::bases_upper[code / NUC_NUM_QS];
+        *quality = (code % NUC_NUM_QS) / NUC_NUM_S; 
+        *strand = (code % NUC_NUM_S) == 0 ? PLUS_STRAND : MINUS_STRAND;
     }
 
 
@@ -96,19 +89,12 @@ void NucleotideStats::initialize(char const* rdb_file)
                 rdb_file);
         exit(5);
     }
+    std::fill(this->jpd_buffer, this->jpd_buffer + NUC_NUM_FBQS, 0.0);
 
-    size_t D = Nucleotide::num_bqs;
-    std::fill(this->jpd_buffer, this->jpd_buffer + (4 * D), 0.0);
+    double counts[4], counts_sum;
 
-    // JPD_DATA counts_map;
-    // char name[100];
-    double counts[4];
-    double counts_sum;
-
-
-    char basecall;
+    char basecall, strand;
     int quality;
-    char strand;
     size_t index_code;
 
     while (! feof(rdb_fh))
@@ -138,18 +124,17 @@ void NucleotideStats::initialize(char const* rdb_file)
     }
     fclose(rdb_fh);
 
-
-    normalize(this->jpd_buffer, 4 * D, this->jpd_buffer);
+    normalize(this->jpd_buffer, NUC_NUM_FBQS, this->jpd_buffer);
     
     for (size_t b = 0; b != 4; ++b)
     {
         this->founder_base_marginal[b] =
             std::accumulate(this->complete_jpd[b],
-                            this->complete_jpd[b] + D, 0.0);
+                            this->complete_jpd[b] + NUC_NUM_BQS, 0.0);
     }
     
     for (size_t b = 0; b != 4; ++b)
-        for (size_t di = 0; di != D; ++di)
+        for (size_t di = 0; di != NUC_NUM_BQS; ++di)
             this->founder_base_likelihood[b][di] =
                 this->complete_jpd[b][di]
                 / this->founder_base_marginal[b];

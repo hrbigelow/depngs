@@ -4,6 +4,8 @@
 #include <vector>
 #include <fstream>
 
+#include "pileup_tools.h"
+
 extern "C" {
 #include "thread_queue.h"
 #include "ordering.h"
@@ -27,7 +29,7 @@ enum sampling_method
 /* */
 struct sample_details
 {
-    PileupSummary *locus;
+    PileupSummary locus;
     bool is_next;
     unsigned char dist_printed;
     double *sample_points;
@@ -37,7 +39,6 @@ struct sample_details
     size_t autocor_offset;
     char *current, *end;
     pair_ordering locus_ord;
-    sample_details(void);
 };
 
 

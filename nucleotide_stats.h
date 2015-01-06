@@ -4,16 +4,22 @@
 #include <map>
 #include <string>
 
+#define NUC_HIGHEST_QUALITY 94
+#define NUC_NUM_S 2
+#define NUC_NUM_QS (2 * (NUC_HIGHEST_QUALITY + 1))
+#define NUC_NUM_BQS (4 * NUC_NUM_QS)
+#define NUC_NUM_FBQS (4 * NUC_NUM_BQS)
+
 namespace Nucleotide 
 {
     //transforms ACGT and acgt to 0123, everything else to 4
     extern int const base_to_index[];
     extern const char *bases_upper;
     extern const char *strands;
-    extern const size_t highest_quality;
-    extern const size_t num_s;
-    extern const size_t num_qs;
-    extern const size_t num_bqs;
+    /* extern const size_t highest_quality; */
+    /* extern const size_t num_s; */
+    /* extern const size_t num_qs; */
+    /* extern const size_t num_bqs; */
     extern const size_t PLUS_STRAND;
     extern const size_t MINUS_STRAND;
 
@@ -55,10 +61,10 @@ class NucleotideStats {
 
  public:
     // P(founder_base, basecall, quality, strand).  Order is F,B,Q,S
-    double *jpd_buffer;
+    double jpd_buffer[NUC_NUM_FBQS];
 
     // P(basecall, quality, strand | founder_base).  Order is F,B,Q,S
-    double *cpd_buffer;
+    double cpd_buffer[NUC_NUM_FBQS];
 
     double founder_base_marginal[4];
     double *complete_jpd[4];

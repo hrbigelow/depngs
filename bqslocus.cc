@@ -90,65 +90,41 @@ int main_bqslocus(int argc, char ** argv)
         return bqslocus_usage();
     }
 
-    char * pileup_input_file = argv[1];
-    char * sample_string = argv[2];
-    char * base_qual_strand_file = argv[3];
-    char * base_strand_file = argv[4];
-    char * strand_file = argv[5];
+    char *pileup_input_file = argv[1];
+    char *sample_string = argv[2];
+    char *base_qual_strand_file = argv[3];
+    char *base_strand_file = argv[4];
+    char *strand_file = argv[5];
 
-    FILE * pileup_input_fh = fopen(pileup_input_file, "r");
+    FILE *pileup_input_fh = fopen(pileup_input_file, "r");
     if (pileup_input_fh == NULL)
     {
         fprintf(stderr, "Couldn't open pileup input file %s\n", pileup_input_file);
         exit(1);
     }
 
-    FILE * base_qual_strand_fh;
+    FILE *base_qual_strand_fh;
     if (strcmp(base_qual_strand_file, "/dev/null") == 0)
-    {
         base_qual_strand_fh = NULL;
-    }
-    else
-    {
-        base_qual_strand_fh = fopen(base_qual_strand_file, "w");
-        if (base_qual_strand_fh == NULL)
-        {
-            fprintf(stderr, "Couldn't open base_qual_strand_file %s\n",
-                    base_qual_strand_file);
-        }
-    }
 
-    FILE * base_strand_fh;
+    else if ((base_qual_strand_fh = fopen(base_qual_strand_file, "w")) == NULL)
+        fprintf(stderr, "Couldn't open base_qual_strand_file %s\n",
+                base_qual_strand_file);
+    
+    FILE *base_strand_fh;
     if (strcmp(base_strand_file, "/dev/null") == 0)
-    {
         base_strand_fh = NULL;
-    }
-    else
-    {
-        base_strand_fh = fopen(base_strand_file, "w");
-        if (base_strand_fh == NULL)
-        {
-            fprintf(stderr, "Couldn't open base_strand_file %s\n",
-                    base_strand_file);
-        }
-    }
 
+    else if ((base_strand_fh = fopen(base_strand_file, "w")) == NULL)
+        fprintf(stderr, "Couldn't open base_strand_file %s\n",
+                base_strand_file);
+    
 
-    FILE * strand_fh;
-    if (strcmp(strand_file, "/dev/null") == 0)
-    {
-        strand_fh = NULL;
-    }
-    else
-    {
-        strand_fh = fopen(strand_file, "w");
-        if (strand_fh == NULL)
-        {
-            fprintf(stderr, "Couldn't open strand_file %s\n",
-                    strand_file);
-        }
-    }
+    FILE *strand_fh;
+    if (strcmp(strand_file, "/dev/null") == 0) strand_fh = NULL;
 
+    else if ((strand_fh = fopen(strand_file, "w")) == NULL)
+        fprintf(stderr, "Couldn't open strand_file %s\n", strand_file);
     
     const int min_quality_score = 0;
 
@@ -170,9 +146,7 @@ int main_bqslocus(int argc, char ** argv)
     char * last_fragment;
     char * read_pointer = chunk_buffer_in;
 
-    size_t * bqs_counts = new size_t[Nucleotide::num_bqs];
-    size_t * bs_counts = new size_t[8];
-    size_t * s_counts = new size_t[2];
+    size_t bqs_counts[NUC_NUM_BQS], bs_counts[8], s_counts[2];
 
     while (! feof(pileup_input_fh))
     {
@@ -205,7 +179,7 @@ int main_bqslocus(int argc, char ** argv)
 
             if (base_qual_strand_fh != NULL)
             {
-                std::fill(bqs_counts, bqs_counts + Nucleotide::num_bqs, 0);
+                std::fill(bqs_counts, bqs_counts + NUC_NUM_BQS, 0);
                 for (size_t c = 0; c != locus.counts.num_data; ++c)
                 {
                     bqs_counts[locus.counts.stats_index[c]] += locus.counts.raw_counts[c];
@@ -367,23 +341,9 @@ int main_bqslocus(int argc, char ** argv)
         read_pointer = chunk_buffer_in + nbytes_unused;
         
     }
-    
-    delete bqs_counts;
-    delete bs_counts;
-    delete s_counts;
-    
-    if (base_qual_strand_fh != NULL)
-    {
-        fclose(base_qual_strand_fh);
-    }
-    if (base_strand_fh != NULL)
-    {
-        fclose(base_strand_fh);
-    }
-    if (strand_fh != NULL)
-    {
-        fclose(strand_fh);
-    }
+    if (base_qual_strand_fh != NULL) fclose(base_qual_strand_fh);
+    if (base_strand_fh != NULL) fclose(base_strand_fh);
+    if (strand_fh != NULL) fclose(strand_fh);
 
     return 0;
 

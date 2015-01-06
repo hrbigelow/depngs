@@ -21,13 +21,13 @@
 // side-effects: populate the appropriate line buffer with the output
 
 
-sample_details::sample_details(void) :
-    locus(NULL), is_next(false), sample_points(NULL),
-    n_sample_points(0), samp_method(FAILED),
-    mode_computed(false),
-    autocor_offset(1000),
-    current(NULL)
-{}
+// // sample_details::sample_details(void) :
+//     locus(), is_next(false), sample_points(NULL),
+//     n_sample_points(0), samp_method(FAILED),
+//     mode_computed(false),
+//     autocor_offset(1000),
+//     current(NULL)
+// {}
 
 
 posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
@@ -265,13 +265,13 @@ size_t posterior_wrapper::tune_ss(PileupSummary *locus,
 void posterior_wrapper::tune(sample_details *sd, double *estimated_mean)
 {
     // try MH first.
-    sd->autocor_offset = this->tune_mh(sd->locus, sd->sample_points, estimated_mean);
+    sd->autocor_offset = this->tune_mh(&sd->locus, sd->sample_points, estimated_mean);
 
     if (sd->autocor_offset <= this->s.target_autocor_offset)
         sd->samp_method = METROPOLIS_HASTINGS;
     else
     {
-        sd->autocor_offset = this->tune_ss(sd->locus, sd->sample_points, estimated_mean);
+        sd->autocor_offset = this->tune_ss(&sd->locus, sd->sample_points, estimated_mean);
         sd->samp_method = (sd->autocor_offset <= this->s.target_autocor_offset)
             ? SLICE_SAMPLING
             : FAILED;
@@ -397,11 +397,11 @@ char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
             "%s\t%c\t%s\t%i\t%c\t%Zu\t%Zu",
             this->label_string, 
             (char)sd->samp_method, 
-            sd->locus->reference, 
-            sd->locus->position, 
-            sd->locus->reference_base, 
-            sd->locus->read_depth, 
-            sd->locus->read_depth_high_qual
+            sd->locus.reference, 
+            sd->locus.position, 
+            sd->locus.reference_base, 
+            sd->locus.read_depth, 
+            sd->locus.read_depth_high_qual
             );
 
     const char *dimension_labels[] = { "A", "C", "G", "T" };
@@ -496,11 +496,13 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
                                            float min_test_quantile_value)
 {
 
-    PileupSummary locus;
-    locus.load_line(pileup_line);
-    locus.parse(this->min_quality_score);
-    this->model->locus_data = &locus.counts;
-    this->params->pack(&locus.counts);
+    sample_details sd;
+    sd.locus = PileupSummary();
+    sd.locus.load_line(pileup_line);
+    sd.locus.parse(this->min_quality_score);
+    sd.sample_points = sample_points_buf;
+    this->model->locus_data = &sd.locus.counts;
+    this->params->pack(&sd.locus.counts);
     // we don't do mode-finding anymore
     // this->find_mode();
 
@@ -512,7 +514,7 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     // first-pass test.  if reference-base component of mode point is
     // too close to 1, then the test quantile value will be as well.
     char nucs[] = "ACGTacgt", *query;
-    int ref_ind = (query = strchr(nucs, locus.reference_base)) ? (query - nucs) % 4 : -1;
+    int ref_ind = (query = strchr(nucs, sd.locus.reference_base)) ? (query - nucs) % 4 : -1;
 
 #ifndef _SKIP_FIRST_PASS_TEST_
     // if (ref_ind >= 0 && 
@@ -520,9 +522,6 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     //     return out_buffer; 
 #endif
 
-    sample_details sd;
-    sd.locus = &locus;
-    sd.sample_points = sample_points_buf;
 
     double initial_point[NUM_NUCS];
     // opportunity here to not re-sample points if the tuning has okay autocorrelation.

@@ -85,9 +85,9 @@ size_t read_range(struct file_bsearch_index *ix,
 void file_bsearch_index_free(struct file_bsearch_index ix);
 
 /* free all nodes that are contained in [beg, end)*/
-size_t file_bsearch_node_range_free(struct file_bsearch_node *node,
-                                    struct pair_ordering beg,
-                                    struct pair_ordering end);
+size_t file_bsearch_range_free(struct file_bsearch_index *ix,
+                               struct pair_ordering beg,
+                               struct pair_ordering end);
 
 
 #endif /* _FILE_BINARY_SEARCH_H */

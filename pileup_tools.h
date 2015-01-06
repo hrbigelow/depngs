@@ -7,6 +7,7 @@
 
 #include "tools.h"
 #include "nucleotide_stats.h"
+#include "cache.h"
 
 /* A class for representing a single line of pileup information
  */
@@ -33,28 +34,27 @@ public:
 
     PileupSummary();
     ~PileupSummary();
-
+    PileupSummary& operator=(const PileupSummary &);
     void load_line(char const* line);
 
     char reference[100], reference_base;
     int position;
 
-    // all reads that span this locus, including reads
-    // containing gaps, and low-quality bases
+    /* all reads that span this locus, including reads containing
+       gaps, and low-quality bases */
     size_t read_depth; 
 
     /* the subset of 'read_depth' reads that contain a matching (CIGAR
        'M') base at this locus. */
     size_t read_depth_match;
 
-    /* the subset of 'read_depth_match' reads that have
-       above-threshold quality score  */
+    /* the subset of 'read_depth_match' reads that have above
+       threshold quality score */
     size_t read_depth_high_qual; 
 
     int base_counts[num_base_symbols]; //ACGTNacgtn
-    /* int base_qual_sums[num_base_symbols]; //qualities for corresponding counts */
     int sum_of_counts;
-    char *bases, *bases_upper, *bases_raw, *quality_codes;
+    struct managed_buf bases, bases_upper, bases_raw, quality_codes;
 
     packed_counts counts;
     CHAR_MAP insertions, deletions;

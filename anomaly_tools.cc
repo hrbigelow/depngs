@@ -72,7 +72,7 @@ double williams_moment_match_ratio(NucleotideStats const& stats,
     
     double sum_pi = 0.0;
     double sum_pi_reciprocal = 0.0;
-    for (size_t i = 0; i != Nucleotide::num_bqs; ++i)
+    for (size_t i = 0; i != NUC_NUM_BQS; ++i)
     {
         double const* mp = evaluation_point;
             
@@ -311,7 +311,7 @@ double relative_entropy_anomaly(double const* cpd_fbqs_global,
 
     //compute P_global(b,q,s)
     double const* g = cpd_fbqs_global;
-    double const* g_end = g + Nucleotide::num_bqs * 4;
+    double const* g_end = g + NUC_NUM_BQS * 4;
     size_t d = 0;
     for (; g != g_end; g += 4, ++d)
     {

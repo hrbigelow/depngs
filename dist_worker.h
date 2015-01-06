@@ -23,10 +23,10 @@ struct dist_worker_input
     size_t n_sample_pairs;
     size_t n_sample_point_pairings; 
 
-    double *dist_quantiles;
+    double *dist_quantiles, *dist_quantile_values;
     size_t n_dist_quantiles;
 
-    double *comp_quantiles;
+    double *comp_quantiles, *comp_quantile_values;
     size_t n_comp_quantiles;
 
     float min_high_conf_dist; // minimum mutational distance at high confidence to report change
@@ -35,14 +35,10 @@ struct dist_worker_input
     size_t final_n_points;
 
     gsl_rng *randgen;
+    double *square_dist_buf; /* holds squares of distances for distance calculation */
     int print_pileup_fields; // if 0, do not print extra pileup fields
 
-    /* std::vector<char *>::iterator *beg */
-    /* std::vector<char *>::iterator *end; */
     bool *is_next; // set of flags, one for each sample, defining whether the genomic position of the
-
-    /* indices of the output buffers.  if -1, do not perform this
-       function */
     int do_dist, do_comp, do_indel, do_vcf;
 
     /* defines the parsed set of sample pairs to compare */

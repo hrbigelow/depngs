@@ -118,16 +118,10 @@ char * print_vcf_line(sample_details * samples,
     {
         if (samples[s].is_next)
         {
-            locus = samples[s].locus;
+            locus = &samples[s].locus;
             break;
         }
     }
-    if (locus == NULL)
-    {
-        fprintf(stderr, "Error: print_vcf_line: no sample has the is_next flag set\n");
-        exit(10);
-    }
-
     outbuf += sprintf(outbuf, 
                       "%s\t%i\t.\t%c",
                       locus->reference,

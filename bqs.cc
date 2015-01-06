@@ -107,7 +107,7 @@ int main_bqs(int argc, char ** argv)
     size_t max_pileup_line_size = 1000000; // !!! fix this
     size_t bytes_read;
     size_t bytes_wanted = chunk_size - max_pileup_line_size;
-    size_t * counts = new size_t[Nucleotide::num_bqs];
+    size_t counts[NUC_NUM_BQS];
     size_t ** counts_t = new size_t *[num_threads];
     fastq_tally_input ** worker_input = new fastq_tally_input *[num_threads];
     pthread_t * threads = new pthread_t[num_threads];
@@ -116,8 +116,8 @@ int main_bqs(int argc, char ** argv)
 
     for (size_t t = 0; t != num_threads; ++t)
     {
-        counts_t[t] = new size_t[Nucleotide::num_bqs];
-        std::fill(counts_t[t], counts_t[t] + Nucleotide::num_bqs, 0);
+        counts_t[t] = new size_t[NUC_NUM_BQS];
+        std::fill(counts_t[t], counts_t[t] + NUC_NUM_BQS, 0);
         worker_input[t] = new fastq_tally_input(t, lines.begin(), lines.end(), counts_t[t],
                                                 min_quality_score);
     }
@@ -164,10 +164,10 @@ int main_bqs(int argc, char ** argv)
     delete chunk_buffer_in;
     delete threads;
 
-    std::fill(counts, counts + Nucleotide::num_bqs, 0);
+    std::fill(counts, counts + NUC_NUM_BQS, 0);
     for (size_t t = 0; t != num_threads; ++t)
     {
-        for (size_t bqs = 0; bqs != Nucleotide::num_bqs; ++bqs)
+        for (size_t bqs = 0; bqs != NUC_NUM_BQS; ++bqs)
         {
             counts[bqs] += worker_input[t]->counts[bqs];
         }
@@ -177,11 +177,10 @@ int main_bqs(int argc, char ** argv)
     delete counts_t;
     delete worker_input;
 
-
     char basecall;
-    size_t quality;
-    size_t strand;
-    for (size_t i = 0; i != Nucleotide::num_bqs; ++i)
+    size_t quality, strand;
+
+    for (size_t i = 0; i != NUC_NUM_BQS; ++i)
     {
         Nucleotide::decode(i, &basecall, &quality, &strand);
         fprintf(bqs_output_fh,
@@ -191,11 +190,7 @@ int main_bqs(int argc, char ** argv)
                 (strand == Nucleotide::PLUS_STRAND) ? '+' : '-',
                 counts[i]);
     }
-
-    delete counts;
-
     close_if_present(bqs_output_fh);
-
     return 0;
 }
 

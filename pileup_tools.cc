@@ -6,8 +6,7 @@
 #include <cassert>
 #include <set>
 
-
-char const PileupSummary::nucleotides[] = "ACGTN.acgtn,";
+// char const PileupSummary::nucleotides[] = "ACGTN.acgtn,";
 
 //maps every character to itself except the letters 'ACGTN.acgtn,'
 //are mapped to 'N' (78)
@@ -37,28 +36,33 @@ FastqType PileupSummary::fastq_type;
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
-PileupSummary::PileupSummary(void) : 
-    bases(NULL), bases_upper(NULL), bases_raw(NULL), quality_codes(NULL)
-    {
-        counts.raw_counts = NULL;
-        counts.stats_index = NULL;
-        counts.fbqs_cpd = NULL;
-        counts.num_data = 0;
-        memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
-        // memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
-        sum_of_counts = 0;
-    }
+PileupSummary::PileupSummary(void)
+{
+    bases.buf = bases_upper.buf = bases_raw.buf = quality_codes.buf = NULL;
+    bases.alloc = bases_upper.alloc = bases_raw.alloc = quality_codes.alloc = 0;
+    counts.raw_counts = NULL;
+    counts.stats_index = NULL;
+    counts.fbqs_cpd = NULL;
+    counts.num_data = 0;
+    memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
+    // memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
+    sum_of_counts = 0;
+    insertions = CHAR_MAP();
+    deletions = CHAR_MAP();
+}
+
+PileupSummary& PileupSummary::operator=(const PileupSummary &p) = default;
 
 
 PileupSummary::~PileupSummary()
 {
-    if (bases) { delete[] bases; bases = NULL; }
-    if (bases_upper) { delete[] bases_upper; bases_upper = NULL; }
-    if (bases_raw) { delete[] bases_raw; bases_raw = NULL; }
-    if (quality_codes) { delete[] quality_codes; quality_codes = NULL; }
-    if (this->counts.raw_counts) { delete[] this->counts.raw_counts; this->counts.raw_counts = NULL; }
-    if (this->counts.stats_index) { delete[] this->counts.stats_index; this->counts.stats_index = NULL; }
-    if (this->counts.fbqs_cpd) { delete[] this->counts.fbqs_cpd; this->counts.fbqs_cpd = NULL; }
+    if (bases.alloc) { free(bases.buf); bases.alloc = 0; }
+    if (bases_upper.alloc) { free(bases_upper.buf); bases_upper.alloc = 0; }
+    if (bases_raw.alloc) { free(bases_raw.buf); bases_raw.alloc = 0; }
+    if (quality_codes.alloc) { free(quality_codes.buf); quality_codes.alloc = 0; }
+    if (counts.raw_counts) { delete[] counts.raw_counts; this->counts.raw_counts = NULL; }
+    if (counts.stats_index) { delete[] this->counts.stats_index; this->counts.stats_index = NULL; }
+    if (counts.fbqs_cpd) { delete[] this->counts.fbqs_cpd; this->counts.fbqs_cpd = NULL; }
 
     CHAR_MAP::iterator it;
     for (it = this->insertions.begin(); it != this->insertions.end(); ++it)
@@ -80,7 +84,8 @@ void PileupSummary::load_line(const char *read_ptr)
     int read_pos, qual_pos;
 
     int scanned_fields =
-        sscanf(read_ptr, "%s\t%i\t%c\t%zi\t%n%*[^\t]\t%n", 
+        sscanf(read_ptr, 
+               "%s\t%i\t%c\t%zi\t%n%*[^\t]\t%n", 
                this->reference, 
                &this->position, 
                &this->reference_base, 
@@ -99,30 +104,30 @@ void PileupSummary::load_line(const char *read_ptr)
 
     read_ptr += read_pos;
 
-    if (this->quality_codes != NULL) delete[] this->quality_codes;
-    this->quality_codes = new char[span_depth + 1];
+    this->quality_codes.size = span_depth + 1;
+    ALLOC_GROW_TYPED(this->quality_codes.buf, this->quality_codes.size,
+                     this->quality_codes.alloc);
 
-    if (this->bases != NULL) delete[] this->bases;
-    this->bases = new char[span_depth + 1];
+    this->bases.size = span_depth + 1;
+    ALLOC_GROW_TYPED(this->bases.buf, this->bases.size,
+                     this->bases.alloc);
 
-    if (this->bases_upper != NULL) delete[] this->bases_upper;
-    this->bases_upper = new char[span_depth + 1];
+    this->bases_upper.size = span_depth + 1;
+    ALLOC_GROW_TYPED(this->bases_upper.buf, this->bases_upper.size,
+                     this->bases_upper.alloc);
 
-    if (this->bases_raw) delete[] this->bases_raw;
-    
     int rawlen = qual_pos - read_pos - 1;
-    this->bases_raw = new char[rawlen + 1]; // includes the extra space
-    strncpy(this->bases_raw, read_ptr, rawlen);
-    this->bases_raw[rawlen] = '\0';
+    this->bases_raw.size = rawlen + 1;
+    ALLOC_GROW_TYPED(this->bases_raw.buf, this->bases_raw.size,
+                     this->bases_raw.alloc);
+    strncpy(this->bases_raw.buf, read_ptr, rawlen);
+    this->bases_raw.buf[rawlen] = '\0';
 
     const int max_indel_size = 1000;
     char indel_sequence[max_indel_size + 1];
 
     char pileup_ccode;
-    int indel_size;
-    int indel_bin;
-    int pileup_value;
-    int current_read = 0;
+    int indel_size, pileup_value, current_read = 0;
     //int deletion_read = 0;
 
     while(*read_ptr != '\0' && *read_ptr != '\n')
@@ -137,7 +142,8 @@ void PileupSummary::load_line(const char *read_ptr)
         indel_size = 0;
         pileup_value = Nucleotide::base_to_index[pileup_code];
             
-        if (pileup_redux == 'N' || pileup_redux == '+' || pileup_redux == '-')
+        if (strchr("N+-", pileup_redux))
+        // if (pileup_redux == 'N' || pileup_redux == '+' || pileup_redux == '-')
         {
             //actual sequence
 
@@ -150,29 +156,13 @@ void PileupSummary::load_line(const char *read_ptr)
                 case ',': real_base = tolower(this->reference_base); break;
                 default : real_base = pileup_ccode; break;
                 }
-                /* 
-                if (pileup_ccode == '.')
-                {
-                    real_base = toupper(this->reference_base);
-                }
-                else if (pileup_ccode == ',')
-                {
-                    real_base = tolower(this->reference_base);
-                }
-                else
-                {
-                    real_base = pileup_ccode;
-                }
-                */
 
                 pileup_value = Nucleotide::base_to_index[static_cast<int>(real_base)];
 
                 this->base_counts[pileup_value]++;
                 this->sum_of_counts++;
-                indel_bin = 0;
-
-                this->bases_upper[current_read] = toupper(real_base);
-                this->bases[current_read] = real_base;
+                this->bases_upper.buf[current_read] = toupper(real_base);
+                this->bases.buf[current_read] = real_base;
 
                 ++current_read;
             }
@@ -207,30 +197,27 @@ void PileupSummary::load_line(const char *read_ptr)
             ++read_ptr;
         }
         else if (pileup_redux == '$')
-        {
-            //the end of a read.  ignored
-        }
+            ; /* the end of a read.  ignored */
+
+
+        /* see: http://samtools.sourceforge.net/samtools.shtml
+           "Similarly, a pattern ‘-[0-9]+[ACGTNacgtn]+’ represents a
+           deletion from the reference. The deleted bases will be
+           presented as ‘*’ in the following lines."
+        */
         else if (pileup_redux == '*')
-        {
-            /*
-              see: http://samtools.sourceforge.net/samtools.shtml
-              "Similarly, a pattern ‘-[0-9]+[ACGTNacgtn]+’ represents
-              a deletion from the reference. The deleted bases will be
-              presented as ‘*’ in the following lines."
-             */
-            this->bases[current_read++] = '*';
-        }
-        else if (pileup_redux == '\t' ||
-                 pileup_redux == ' ')
+            this->bases.buf[current_read++] = '*';
+
+        else if (pileup_redux == '\t' || pileup_redux == ' ')
         {
             //end of read_string, get the qual string
             sscanf(read_ptr, " %n", & read_pos); //eat white space
             read_ptr += read_pos;
 
-            memcpy(this->quality_codes, read_ptr, span_depth);
+            memcpy(this->quality_codes.buf, read_ptr, span_depth);
             read_ptr += span_depth;
 
-            this->quality_codes[span_depth] = '\0';
+            this->quality_codes.buf[span_depth] = '\0';
 
         }
         else 
@@ -247,30 +234,30 @@ void PileupSummary::load_line(const char *read_ptr)
     size_t num_seen_gaps = 0;
     for (size_t r = 0; r != span_depth; ++r)
     {
-        if (this->bases[r] == '*')
+        if (this->bases.buf[r] == '*')
         {
             ++num_seen_gaps;
             continue;
         }
         size_t write_pos = r - num_seen_gaps;
-        this->bases[write_pos] = this->bases[r];
-        this->bases_upper[write_pos] = this->bases_upper[r];
-        this->quality_codes[write_pos] = this->quality_codes[r];
-        // assert(this->quality_codes[r] != '~');
+        this->bases.buf[write_pos] = this->bases.buf[r];
+        this->bases_upper.buf[write_pos] = this->bases_upper.buf[r];
+        this->quality_codes.buf[write_pos] = this->quality_codes.buf[r];
+        // assert(this->quality_codes.buf[r] != '~');
     }
 
     this->read_depth = span_depth;
     this->read_depth_match = span_depth - num_seen_gaps;
-    this->bases[this->read_depth_match] = '\0';
-    this->bases_upper[this->read_depth_match] = '\0';
-    this->quality_codes[this->read_depth_match] = '\0';
+    this->bases.buf[this->read_depth_match] = '\0';
+    this->bases_upper.buf[this->read_depth_match] = '\0';
+    this->quality_codes.buf[this->read_depth_match] = '\0';
 
 }
 
 
 size_t PileupSummary::quality(size_t read_num) const
 {
-    return QualityCodeToQuality(this->quality_codes[read_num],
+    return QualityCodeToQuality(this->quality_codes.buf[read_num],
                                 PileupSummary::quality_code_offset);
 }
 
@@ -281,34 +268,31 @@ void PileupSummary::parse(size_t min_quality_score)
 {
     
     // populate raw_counts_flat with a sparse set of counts
-    unsigned long *raw_counts_flat = new unsigned long[Nucleotide::num_bqs];
-    unsigned long *rc_tmp = new unsigned long[Nucleotide::num_bqs];
-    size_t *rc_ind_tmp = new size_t[Nucleotide::num_bqs];
+    unsigned long raw_counts_flat[NUC_NUM_BQS];
+    unsigned long rc_tmp[NUC_NUM_BQS];
+    size_t rc_ind_tmp[NUC_NUM_BQS];
     this->read_depth_high_qual = 0;
 
-    std::fill(raw_counts_flat, raw_counts_flat + Nucleotide::num_bqs, 0);
+    std::fill(raw_counts_flat, raw_counts_flat + NUC_NUM_BQS, 0);
     size_t rd = this->read_depth_match, nd = 0;
 
     for (size_t r = 0; r < rd; ++r)
     {
             
         size_t quality = this->quality(r);
-        char basecall = this->bases[r];
+        char basecall = this->bases.buf[r];
         size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
-        if (basecall_index >= 4)
-        {
-            //since 'N' is common in pileup, but meaningless, we ignore it silently
-            continue;
-        }
-        if (quality < min_quality_score)
-        {
-            continue;
-        }
+
+        /* since 'N' is common in pileup, but meaningless, ignore
+           silently */
+        if (basecall_index >= 4) continue;
+        if (quality < min_quality_score) continue;
+
         size_t strand = isupper(basecall) ? Nucleotide::PLUS_STRAND : Nucleotide::MINUS_STRAND;
         size_t flat_index = Nucleotide::encode(basecall, quality, strand);
         raw_counts_flat[flat_index]++;
     }
-    for (size_t flat_index = 0; flat_index != Nucleotide::num_bqs; ++flat_index)
+    for (size_t flat_index = 0; flat_index != NUC_NUM_BQS; ++flat_index)
     {
         if (raw_counts_flat[flat_index] != 0)
         {
@@ -338,10 +322,6 @@ void PileupSummary::parse(size_t min_quality_score)
 
     std::copy(rc_tmp, rc_tmp + nd, this->counts.raw_counts);
     std::copy(rc_ind_tmp, rc_ind_tmp + nd, this->counts.stats_index);
-
-    delete[] raw_counts_flat;
-    delete[] rc_tmp;
-    delete[] rc_ind_tmp;
 }
 
 
@@ -374,7 +354,7 @@ void * fastq_type_worker(void * args)
         locus.load_line(*it);
         for (size_t rd = 0; rd != locus.read_depth_match; ++rd)
         {
-            (*input->seen_codes_flags)[static_cast<size_t>(locus.quality_codes[rd])] = 1;
+            (*input->seen_codes_flags)[static_cast<size_t>(locus.quality_codes.buf[rd])] = 1;
         }
     }
     pthread_exit((void*) 0);
@@ -409,8 +389,8 @@ int fastq_offset(const char *pileup_file,
         locus.load_line(*it);
         for (size_t rd = 0; rd != locus.read_depth_match; ++rd)
         {
-            max = locus.quality_codes[rd] > max ? locus.quality_codes[rd] : max;
-            min = locus.quality_codes[rd] < min ? locus.quality_codes[rd] : min;
+            max = locus.quality_codes.buf[rd] > max ? locus.quality_codes.buf[rd] : max;
+            min = locus.quality_codes.buf[rd] < min ? locus.quality_codes.buf[rd] : min;
         }
     }
     fclose(pileup_input_fh);

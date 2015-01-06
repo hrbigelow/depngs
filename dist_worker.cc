@@ -46,6 +46,9 @@ dist_worker_input::dist_worker_input(size_t thread_num,
 { 
     this->worker = new posterior_wrapper *[this->n_samples];
     this->randgen = gsl_rng_alloc(gsl_rng_taus);
+    this->square_dist_buf = new double[this->n_sample_point_pairings];
+    this->dist_quantile_values = new double[this->n_dist_quantiles];
+    this->comp_quantile_values = new double[this->n_comp_quantiles];
     gsl_rng_set(this->randgen, 0);
 }
 
@@ -70,12 +73,16 @@ dist_worker_input::~dist_worker_input()
 
     if (this->worker != NULL) delete this->worker;
     gsl_rng_free(this->randgen);
+    delete this->square_dist_buf;
+    delete this->dist_quantile_values;
+    delete this->comp_quantile_values;
 }
 
 // compute distance quantiles by generating random pairs of points
 // from the two sets of sample points
 void compute_dist_quantiles(const double *points1,
                             const double *points2,
+                            double *square_dist_buf,
                             size_t n_dims,
                             size_t n_sample_points,
                             size_t n_random_pairs,
@@ -85,8 +92,7 @@ void compute_dist_quantiles(const double *points1,
                             double *dist_quantile_values)
 {
     double 
-        *square_dist = new double[n_random_pairs], 
-        *sd = square_dist, 
+        *sd = square_dist_buf, 
         *sde = sd + n_random_pairs;
 
     const double *p1, *p2, *p1e;
@@ -101,16 +107,15 @@ void compute_dist_quantiles(const double *points1,
     // find the quantiles
     double *cut, qval;
 
-    sd = square_dist;
+    sd = square_dist_buf;
     for (size_t q = 0; q != n_dist_quantiles; ++q)
     {
-        cut = square_dist + (size_t)ceil(dist_quantiles[q] * n_random_pairs);
+        cut = square_dist_buf + (size_t)ceil(dist_quantiles[q] * n_random_pairs);
         std::nth_element(sd, cut, sde);
         qval = (cut == sde) ? -1.0 : sqrt(*cut);
         sd = cut;
         dist_quantile_values[q] = qval;
     }
-    delete[] square_dist;
 }
 
 
@@ -138,12 +143,12 @@ char *print_distance_quantiles(const char *contig,
 
     if (wi->print_pileup_fields)
         out_dist_buf += sprintf(out_dist_buf, "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
-                                sd[s1].locus->read_depth,
-                                sd[s1].locus->bases_raw,
-                                sd[s1].locus->quality_codes,
-                                sd[s2].locus->read_depth,
-                                sd[s2].locus->bases_raw,
-                                sd[s2].locus->quality_codes);
+                                sd[s1].locus.read_depth,
+                                sd[s1].locus.bases_raw.buf,
+                                sd[s1].locus.quality_codes.buf,
+                                sd[s2].locus.read_depth,
+                                sd[s2].locus.bases_raw.buf,
+                                sd[s2].locus.quality_codes.buf);
 
     sd[s1].dist_printed = 1;
     sd[s2].dist_printed = 1;
@@ -214,12 +219,12 @@ char *print_indel_distance_quantiles(const char *contig,
 
     if (sd)
         out_dist_buf += sprintf(out_dist_buf, "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
-                                sd[s1].locus->read_depth,
-                                sd[s1].locus->bases_raw,
-                                sd[s1].locus->quality_codes,
-                                sd[s2].locus->read_depth,
-                                sd[s2].locus->bases_raw,
-                                sd[s2].locus->quality_codes);
+                                sd[s1].locus.read_depth,
+                                sd[s1].locus.bases_raw.buf,
+                                sd[s1].locus.quality_codes.buf,
+                                sd[s2].locus.read_depth,
+                                sd[s2].locus.bases_raw.buf,
+                                sd[s2].locus.quality_codes.buf);
 
     out_dist_buf += sprintf(out_dist_buf, "\n");
 
@@ -238,7 +243,6 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
     if (! out_buf) return out_buf;
 
     double estimated_mean1[NUM_NUCS], estimated_mean2[NUM_NUCS];
-    double *dist_quantile_values = new double[input->n_dist_quantiles];
 
     // sscanf(sd[gs].current, "%s\t%zu", contig, &position);
 
@@ -284,15 +288,16 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
                                sd2->is_next ? sd2->sample_points : null_points,
+                               input->square_dist_buf,
                                4,
                                input->prelim_n_points,
                                input->prelim_n_points * 10, // ad-hoc
                                input->randgen,
                                &input->prelim_quantile, 1,
-                               dist_quantile_values);
+                               input->dist_quantile_values);
         
         /* after prelim testing, still not enough difference */
-        if (dist_quantile_values[0] < input->min_high_conf_dist)
+        if (input->dist_quantile_values[0] < input->min_high_conf_dist)
             continue;
         
         if (sd1->n_sample_points == input->prelim_n_points)
@@ -308,22 +313,22 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
                                sd2->is_next ? sd2->sample_points : null_points,
+                               input->square_dist_buf,
                                4,
                                input->final_n_points,
                                input->n_sample_point_pairings,
                                input->randgen,
                                input->dist_quantiles,
                                input->n_dist_quantiles,
-                               dist_quantile_values);
+                               input->dist_quantile_values);
         
-        if (dist_quantile_values[0] >= input->min_high_conf_dist)
+        if (input->dist_quantile_values[0] >= input->min_high_conf_dist)
             out_buf = 
-                print_distance_quantiles(sd[gs].locus->reference, 
-                                         sd[gs].locus->position, input, 
-                                         p, dist_quantile_values, 
+                print_distance_quantiles(sd[gs].locus.reference, 
+                                         sd[gs].locus.position, input, 
+                                         p, input->dist_quantile_values, 
                                          sd, out_buf);
     }
-    delete[] dist_quantile_values;
     return out_buf;
 }
 
@@ -367,7 +372,7 @@ indel_event *count_indel_types(sample_details *sd1,
     }
     else
     {
-        // if (sd1->locus->position == 761957)
+        // if (sd1->locus.position == 761957)
         // {
         //     int i = 0;
         //     ++i;
@@ -376,20 +381,20 @@ indel_event *count_indel_types(sample_details *sd1,
         *n_counts = 0;
 
         size_t max_possible = 
-            sd1->locus->deletions.size() + sd1->locus->insertions.size()
-            + sd2->locus->deletions.size() + sd2->locus->insertions.size()
+            sd1->locus.deletions.size() + sd1->locus.insertions.size()
+            + sd2->locus.deletions.size() + sd2->locus.insertions.size()
             + 1;
         
         indel_event *events = new indel_event[max_possible], *e = events, *ee = events;
 
         CHAR_MAP::iterator id1, id2, e1, e2;
 
-        id1 = sd1->locus->deletions.begin(), e1 = sd1->locus->deletions.end();
-        id2 = sd2->locus->deletions.begin(), e2 = sd2->locus->deletions.end();
+        id1 = sd1->locus.deletions.begin(), e1 = sd1->locus.deletions.end();
+        id2 = sd2->locus.deletions.begin(), e2 = sd2->locus.deletions.end();
         e = set_indel_events_aux(id1, e1, id2, e2, false, e);
         
-        id1 = sd1->locus->insertions.begin(), e1 = sd1->locus->insertions.end();
-        id2 = sd2->locus->insertions.begin(), e2 = sd2->locus->insertions.end();
+        id1 = sd1->locus.insertions.begin(), e1 = sd1->locus.insertions.end();
+        id2 = sd2->locus.insertions.begin(), e2 = sd2->locus.insertions.end();
         e = set_indel_events_aux(id1, e1, id2, e2, true, e);
 
         // count numbers of indels
@@ -400,8 +405,8 @@ indel_event *count_indel_types(sample_details *sd1,
         // remaining reads that do not have any indels.  only count
         // this as an event if it occurs in at least one of the two
         // pairs.
-        if ((e->count1 = sd1->locus->read_depth - nindel1) +
-            (e->count2 = sd2->locus->read_depth - nindel2) > 0)
+        if ((e->count1 = sd1->locus.read_depth - nindel1) +
+            (e->count2 = sd2->locus.read_depth - nindel2) > 0)
         {
             e->seq = NULL;
             ++e;
@@ -433,7 +438,6 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
 
     char contig[100];
     size_t position, n_events;
-    double *dist_quantile_values = new double[input->n_dist_quantiles];
     
     sscanf(sd[gs].current, "%s\t%zu", contig, &position);
 
@@ -470,20 +474,22 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
             }
 
             // compute distance quantiles
-            compute_dist_quantiles(points1, points2, n_events, 
+            compute_dist_quantiles(points1, points2, 
+                                   input->square_dist_buf,
+                                   n_events, 
                                    input->final_n_points,
                                    input->n_sample_point_pairings,
                                    input->randgen,
                                    input->dist_quantiles,
                                    input->n_dist_quantiles,
-                                   dist_quantile_values);
+                                   input->dist_quantile_values);
 
             // print out suitably filtered distances
-            if (dist_quantile_values[0] >= input->min_high_conf_dist)
+            if (input->dist_quantile_values[0] >= input->min_high_conf_dist)
             {
                 out_buf = 
                     print_indel_distance_quantiles(contig, position, input, p, 
-                                                   dist_quantile_values, 
+                                                   input->dist_quantile_values, 
                                                    all_events, n_events, sd, out_buf);
             }
 
@@ -494,7 +500,6 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
         }
         delete[] all_events;
     }
-    delete[] dist_quantile_values;
     return out_buf;
 
 }
@@ -533,14 +538,13 @@ void init_pileup_locus(dist_worker_input *input,
                        sample_details *sd)
 {
     size_t s = sample_id;
-    sd->locus = new PileupSummary;
-    sd->locus->load_line(sd->current);
+    sd->locus.load_line(sd->current);
     sd->locus_ord = init_locus(sd->current);
-    sd->locus->parse(input->worker[s]->min_quality_score);
+    sd->locus.parse(input->worker[s]->min_quality_score);
     sd->n_sample_points = 0;
 
-    input->worker[s]->model->locus_data = &sd->locus->counts;
-    input->worker[s]->params->pack(&sd->locus->counts);
+    input->worker[s]->model->locus_data = &sd->locus.counts;
+    input->worker[s]->params->pack(&sd->locus.counts);
 }
 
 
@@ -552,14 +556,8 @@ void refresh_locus(dist_worker_input *input,
                    sample_details *sd)
 {
     assert(sd->current != sd->end);
-
-    if (sd->locus != NULL)
-    {
-        delete sd->locus;
-        sd->locus = NULL;
-    }
     if ((sd->current = strchr(sd->current, '\n') + 1) == sd->end) 
-        sd->locus = NULL;
+        sd->is_next = false;
 
     else
     {
@@ -605,20 +603,27 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     if (indel_ptr) indel_ptr[0] = '\0';
     if (vcf_ptr) vcf_ptr[0] = '\0';
     
-    struct sample_details *samples = (struct sample_details *)
-        malloc(dw->n_samples * sizeof(struct sample_details));
+    // struct sample_details *samples = (struct sample_details *)
+    //     malloc(dw->n_samples * sizeof(struct sample_details));
+    struct sample_details *samples = new struct sample_details[dw->n_samples];
 
     size_t gs = 0, s;
 
     for (s = 0; s != dw->n_samples; ++s)
     {
-        samples[s] = sample_details();
-        samples[s].locus = NULL;
-        samples[s].current = in_bufs[s].buf;
-        samples[s].end = in_bufs[s].buf + in_bufs[s].size;
-        samples[s].sample_points = 
-            (double *)malloc(dw->final_n_points * 4 * sizeof(double));
-        samples[s].n_sample_points = 0;
+        samples[s] = {
+            PileupSummary(),
+            false,
+            0,
+            (double *)malloc(dw->final_n_points * 4 * sizeof(double)),
+            0,
+            FAILED,
+            false,
+            0,
+            in_bufs[s].buf,
+            in_bufs[s].buf + in_bufs[s].size,
+            min_pair_ord
+        };
     }
 
     // before main loop, initialize loci and samples
@@ -635,13 +640,12 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     // !!! here, use worker[0] as a proxy.  this is a design flaw
     // owing to the fact that there are multiple workers used, all with the same
     // basic settings
-    PileupSummary null_locus;
-    dw->worker[0]->model->locus_data = &null_locus.counts;
-    dw->worker[0]->params->pack(& null_locus.counts);
     sample_details null_sd;
-    null_sd.locus = &null_locus;
+    null_sd.locus = PileupSummary();
     null_sd.sample_points = (double *)malloc(dw->final_n_points * 4 * sizeof(double));
     null_sd.mode_computed = true;
+    dw->worker[0]->model->locus_data = &null_sd.locus.counts;
+    dw->worker[0]->params->pack(& null_sd.locus.counts);
     
     // dw->worker[0]->find_mode();
     double estimated_mean[NUM_NUCS];
@@ -708,7 +712,8 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     for (s = 0; s != dw->n_samples; ++s)
         free(samples[s].sample_points);
 
-    free(samples);
+    // free(samples);
+    delete[] samples;
 }
 
 
@@ -750,11 +755,11 @@ void print_indel_comparisons(dist_worker_input *wi,
         size_t s1 = wi->pair_sample1[p], s2 = wi->pair_sample2[p];
         sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
 
-        unsigned max1 = (! sd1->is_next) || sd1->locus->deletions.empty() 
-            ? 0 : (*sd1->locus->deletions.rbegin()).first;
+        unsigned max1 = (! sd1->is_next) || sd1->locus.deletions.empty() 
+            ? 0 : (*sd1->locus.deletions.rbegin()).first;
 
-        unsigned max2 = (! sd2->is_next) || sd2->locus->deletions.empty()
-            ? 0 : (*sd2->locus->deletions.rbegin()).first;
+        unsigned max2 = (! sd2->is_next) || sd2->locus.deletions.empty()
+            ? 0 : (*sd2->locus.deletions.rbegin()).first;
 
         unsigned max = max1 > max2 ? max1 : max2;
 
@@ -766,13 +771,13 @@ void print_indel_comparisons(dist_worker_input *wi,
                    wi->worker[s2]->label_string,
                    contig,
                    position,
-                   sd1->locus->read_depth,
-                   sd2->locus->read_depth);
+                   sd1->locus.read_depth,
+                   sd2->locus.read_depth);
 
 
 
-            dit1 = sd1->locus->deletions.begin(), e1 = sd1->locus->deletions.end();
-            dit2 = sd2->locus->deletions.begin(), e2 = sd2->locus->deletions.end();
+            dit1 = sd1->locus.deletions.begin(), e1 = sd1->locus.deletions.end();
+            dit2 = sd2->locus.deletions.begin(), e2 = sd2->locus.deletions.end();
 
             unsigned *cnt1 = new unsigned[max * 10], *cnt2 = new unsigned[max * 10];
 
