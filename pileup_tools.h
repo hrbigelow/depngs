@@ -34,7 +34,7 @@ public:
 
     PileupSummary();
     ~PileupSummary();
-    PileupSummary& operator=(const PileupSummary &);
+
     void load_line(char const* line);
 
     char reference[100], reference_base;

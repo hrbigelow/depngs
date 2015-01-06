@@ -51,9 +51,6 @@ PileupSummary::PileupSummary(void)
     deletions = CHAR_MAP();
 }
 
-PileupSummary& PileupSummary::operator=(const PileupSummary &p) = default;
-
-
 PileupSummary::~PileupSummary()
 {
     if (bases.alloc) { free(bases.buf); bases.alloc = 0; }
