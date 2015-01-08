@@ -1,4 +1,8 @@
+#ifndef _TIMER_H
+#define _TIMER_H
+
 #include <time.h>
+#include <stdio.h>
 
 #define ELAPSED_MS \
     ((((end_time).tv_sec * 1000000000 + (end_time).tv_nsec) -           \
@@ -20,3 +24,5 @@
 #define PROGRESS_START()
 #define PROGRESS_MSG(msg)
 #endif
+
+#endif /* _TIMER_H */
