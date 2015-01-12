@@ -1,4 +1,4 @@
-#include "likelihood.h"
+#include "metropolis_sampling.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -12,13 +12,13 @@
     terms for the posterior. The sample points generated are written
     to sample_points, in the range from start_point to
     n_points_wanted.  Collect every 'nth' point */
-void gen_samples(unsigned short start_point, unsigned short n_points_wanted,
-                 const struct cpd_count *term, size_t n_term,
-                 double *proposal_alpha,
-                 double *prior_alpha,
-                 double *logu, /* logs of uniformly distributed values in [0, 1] */
-                 size_t nth, /* collect every nth point */
-                 double *sample_points)
+void metropolis_sampling(unsigned short start_point, unsigned short n_points_wanted,
+                         const struct cpd_count *term, size_t n_term,
+                         double *proposal_alpha,
+                         double *prior_alpha,
+                         double *logu, /* logs of U[0, 1] values */
+                         size_t nth, /* collect every nth point */
+                         double *sample_points)
 {
     enum YepStatus status = yepLibrary_Init();
     assert(status == YepStatusOk);
