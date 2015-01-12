@@ -136,6 +136,9 @@ double Metropolis::step(mh_metric **z_tau, mh_metric **z_nxt)
     double proposal_value = exp(ratio_log);
 
     mh_metric *tmp;
+
+    /* accepting means swapping the values of tau and nxt.  rejecting
+       means leaving them the same.  if they are left the same, then */
     if (proposal_value > gsl_rng_uniform(this->randgen))
     {
         tmp = *z_tau;

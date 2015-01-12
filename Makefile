@@ -13,11 +13,13 @@ CC = g++
 INSTALL = /usr/bin/install -c
 INSTALLDATA = /usr/bin/install -c -m 644
 OBJDIR = obj
-CPPFLAGS = -I. -I..
+YEPLIBDIR = /home/hrbigelow/src/yeppp-1.0.0/library/binaries/x64-linux-sysv-default/
+YEPHEADERS = /home/hrbigelow/src/yeppp-1.0.0/library/headers
+CPPFLAGS = -I. -I.. -I$(YEPHEADERS)
 OPT = -O0
 PROF = 
 CXXFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu++0x
-CFLAGS = -ggdb3 $(OPT) -Wall
+CFLAGS = -ggdb3 $(OPT) -Wall -std=gnu99
 LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt
 
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
@@ -45,6 +47,14 @@ dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o comp_worker.o			\
 
 test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)
 	$(C) $(CFLAGS) -o $@ $^ -lgsl -lgslcblas -lrt -lm
+
+test_likelihood : $(addprefix $(OBJDIR)/, test_likelihood.o likelihood.o)
+	$(C) $(CFLAGS) -o $@ $^ -lgsl -lgslcblas -lm
+
+testopt : $(addprefix $(OBJDIR)/, pow_int.o testopt.o)
+	$(C) $(CFLAGS) -L$(YEPLIBDIR) -o $@ $^ -lgsl -lgslcblas -lm -lyeppp
+
+
 
 quantile_test : quantile_test.o sampling.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)

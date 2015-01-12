@@ -133,8 +133,7 @@ double ErrorEstimate::log_likelihood(const double *x) const
     int min_exp = DBL_MIN_EXP;
     for (cpd = cpd_beg, ct = ct_beg; cpd != cpd_end; cpd += 4, ++ct)
     {
-        int e;
-        int cti = static_cast<int>(*ct);
+        int e, cti = (int)*ct;
         double q = (cpd[0] * x[0]) + (cpd[1] * x[1]) + (cpd[2] * x[2]) + (cpd[3] * x[3]);
         if (cti >= 50 || cti_floor < min_exp)
         {

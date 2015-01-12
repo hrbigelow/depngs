@@ -109,6 +109,7 @@ int run_comp(size_t max_mem,
         queries = (struct pair_ordering_range *)
             malloc(sizeof(struct pair_ordering_range));
         queries[0] = { ix.root->span_beg, ix.root->span_end };
+        queries[0].end.lo--; /* necessary for this pseudo-query to fit in the index root */
     }
     q = queries;
     qend = queries + n_queries;

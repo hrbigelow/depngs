@@ -501,6 +501,16 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     this->params->pack(&sd.locus.counts);
     // we don't do mode-finding anymore
     // this->find_mode();
+    unsigned i;
+    double *cpd = sd.locus.counts.fbqs_cpd;
+    unsigned long *ct = sd.locus.counts.raw_counts;
+    for (i = 0; i != sd.locus.counts.num_data; ++i)
+    {
+        fprintf(stderr, "{ %g, %g, %g, %g, %lu },\n",
+                cpd[0], cpd[1], cpd[2], cpd[3], ct[0]);
+        cpd += 4;
+        ct++;
+    }
 
     double 
         test_quantile_value,
