@@ -266,23 +266,23 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
             if (sdpair[i]->is_next && ! sdpair[i]->n_sample_points)
             {
                 cumul_aoff[i] = 
-                    tune_proposal(sdpair[i]->locus.counts.stats, 
-                                  sdpair[i]->locus.counts.num_data,
+                    tune_proposal(&sdpair[i]->locus.counts, 
                                   input->pset, proposal_alpha[i], estimated_mean[i], 
                                   sdpair[i]->sample_points);
                 
                 metropolis_sampling(0, input->prelim_n_points, 
-                                    sdpair[i]->locus.counts.stats, sdpair[i]->locus.counts.num_data,
-                                    logu, proposal_alpha[i], cumul_aoff[i], sdpair[i]->sample_points);
+                                    &sdpair[i]->locus.counts,
+                                    input->pset->logu, proposal_alpha[i], cumul_aoff[i], 
+                                    sdpair[i]->sample_points);
                 
                 // input->worker[s1]->tune(sd1, estimated_mean1);
                 // input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_n_points);
-                sd[i]->n_sample_points = input->prelim_n_points;
+                sdpair[i]->n_sample_points = input->prelim_n_points;
             }
         }
             
-        compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
-                               sd2->is_next ? sd2->sample_points : null_points,
+        compute_dist_quantiles(sdpair[0]->is_next ? sdpair[0]->sample_points : null_points,
+                               sdpair[1]->is_next ? sdpair[1]->sample_points : null_points,
                                4,
                                input->prelim_n_points, input->square_dist_buf,
                                MIN(input->n_sample_point_pairings,
@@ -299,16 +299,17 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
             if (sdpair[i]->n_sample_points == input->prelim_n_points)
             {
                 metropolis_sampling(sdpair[i]->n_sample_points, input->final_n_points, 
-                                    sdpair[i]->locus.counts.stats, sdpair[i]->locus.counts.num_data,
-                                    logu, proposal_alpha[i], cumul_aoff[i], sdpair[i]->sample_points);
+                                    &sdpair[i]->locus.counts,
+                                    input->pset->logu, proposal_alpha[i], cumul_aoff[i], 
+                                    sdpair[i]->sample_points);
                 
                 // input->worker[s1]->sample(sdpair[i], estimated_mean1, input->final_n_points);
                 sdpair[i]->n_sample_points = input->final_n_points;
             }
         }
 
-        compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
-                               sd2->is_next ? sd2->sample_points : null_points,
+        compute_dist_quantiles(sdpair[0]->is_next ? sdpair[0]->sample_points : null_points,
+                               sdpair[1]->is_next ? sdpair[1]->sample_points : null_points,
                                4,
                                input->final_n_points,
                                input->square_dist_buf,
@@ -537,11 +538,11 @@ void init_pileup_locus(dist_worker_input *input,
     size_t s = sample_id;
     sd->locus.load_line(sd->current);
     sd->locus_ord = init_locus(sd->current);
-    sd->locus.parse(input->worker[s]->min_quality_score);
+    sd->locus.parse(input->pset->min_quality_score);
     sd->n_sample_points = 0;
 
     input->worker[s]->model->locus_data = &sd->locus.counts;
-    input->worker[s]->params->pack(&sd->locus.counts);
+    nucleotide_stats_pack(input->worker[s]->params, &sd->locus.counts);
 }
 
 
@@ -642,7 +643,7 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     null_sd.sample_points = (double *)malloc(dw->final_n_points * 4 * sizeof(double));
     null_sd.mode_computed = true;
     dw->worker[0]->model->locus_data = &null_sd.locus.counts;
-    dw->worker[0]->params->pack(& null_sd.locus.counts);
+    nucleotide_stats_pack(dw->worker[0]->params, &null_sd.locus.counts);
     
     // dw->worker[0]->find_mode();
     double estimated_mean[NUM_NUCS];

@@ -47,11 +47,11 @@ inline void bounded_alphas_from_mean(double *mean, double alpha0,
 
 
 /* */
-void tune_proposal(struct packed_counts *cts,
-                   struct posterior_settings *set,
-                   double *proposal_alpha,
-                   double *estimated_mean,
-                   double *points_buf)
+size_t tune_proposal(struct packed_counts *cts,
+                     const struct posterior_settings *set,
+                     double *proposal_alpha,
+                     double *estimated_mean,
+                     double *points_buf)
 {
     double alpha0 = alphas_from_counts(cts, set->prior_alpha, proposal_alpha);
 

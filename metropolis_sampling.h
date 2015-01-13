@@ -3,12 +3,11 @@
 
 #include "nucleotide_stats.h"
 
-void tune_proposal(struct packed_counts *cts,
-                   struct posterior_settings *set,
-                   const double *prior_alpha,
-                   double *proposal_alpha,
-                   double *estimated_mean,
-                   double *points_buf);
+size_t tune_proposal(struct packed_counts *cts,
+                     const struct posterior_settings *set,
+                     double *proposal_alpha,
+                     double *estimated_mean,
+                     double *points_buf);
 
 void metropolis_sampling(unsigned short start_point, unsigned short n_points_wanted,
                          const struct packed_counts *cts,

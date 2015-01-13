@@ -55,31 +55,26 @@ struct posterior_settings
     size_t initial_autocor_offset;
     size_t target_autocor_offset;
     size_t initial_sampling_range; // defaults to 62 * 3
+    double *logu; /* log(U) for a set of values U sampled from Uniform(0, 1) */
+    double min_quality_score;
 };
 
 /* One of these is instantiated for each combination of a thread and a
    sample.  Holds thread x sample - specific data. */
 struct posterior_wrapper
 {
-    double initial_point[4];
-    double mode_point[4];
-    bool on_zero_boundary[4];
     FILE *cdfs_output_fh;
     char *label_string;
-    NucleotideStats *params;
+    struct nucleotide_stats *params;
     ErrorEstimate *model;
-    Metropolis *sampler;
-    SliceSampling *slice_sampler;
+    /* Metropolis *sampler; */
+    /* SliceSampling *slice_sampler; */
 
     posterior_wrapper(const char *jpd_data_params_file,
-                      double *prior_alphas,
-                      size_t min_quality_score,
                       double *quantiles,
                       size_t n_quantiles,
                       const char *label_string,
                       FILE *cdfs_output_fh,
-                      pthread_mutex_t *file_writing_mutex,
-                      posterior_settings s,
                       bool verbose);
 
     ~posterior_wrapper();

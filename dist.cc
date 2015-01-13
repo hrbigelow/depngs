@@ -75,9 +75,15 @@ int main_dist(int argc, char **argv)
     size_t n_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
+    float prior_alpha = 0.1;
+
     struct posterior_settings pset = {
+        { prior_alpha, 
+          prior_alpha,
+          prior_alpha,
+          prior_alpha
+        },      // prior alphas
         1e-5,   // gradient_tolerance
-        3000,   // max_modefinding_iterations
         10,     // max_tuning_iterations
         1000,   // tuning_n_points
         1000,   // final_n_points
@@ -85,8 +91,9 @@ int main_dist(int argc, char **argv)
         0.2,    // autocor_max_value
         30,     // initial_autocor_offset
         6,      // target_autocor_offset
-        true,   // is_log_integrand
-        62 * 3  // initial_sampling_range
+        62 * 3,  // initial_sampling_range
+        NULL,   // logu points
+        5       // min_quality_score
     };
 
 
@@ -96,9 +103,6 @@ int main_dist(int argc, char **argv)
 
     int print_pileup_fields = 0;
 
-    float prior_alpha = 0.1;
-
-    size_t min_quality_score = 5;
 
     const char *dist_quantiles_file = NULL;
     const char *comp_quantiles_file = NULL;
@@ -140,7 +144,7 @@ int main_dist(int argc, char **argv)
         case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'z': pset.gradient_tolerance = atof(optarg); break;
         case 'p': prior_alpha = atof(optarg); break;
-        case 'q': min_quality_score = (size_t)atoi(optarg); break;
+        case 'q': pset.min_quality_score = (size_t)atoi(optarg); break;
         case 'F': fastq_type = optarg; break;
         case 'v': verbose = true; break;
         case 'D': dist_quantiles_file = optarg; break;
@@ -241,9 +245,8 @@ int main_dist(int argc, char **argv)
     else
         comp_quantiles = ParseNumbersFile(comp_quantiles_file, & n_comp_quantiles);
 
-    double prior_alphas[NUM_NUCS];
     for (size_t i = 0; i != NUM_NUCS; ++i)
-        prior_alphas[i] = prior_alpha;
+        pset.prior_alpha[i] = prior_alpha;
 
     // parse pairings file
     size_t n_pairings, *pair_sample1, *pair_sample2;
@@ -332,12 +335,9 @@ int main_dist(int argc, char **argv)
         {
             worker_inputs[t]->worker[s] = 
                 new posterior_wrapper(jpd_input_file[s],
-                                      prior_alphas,
-                                      min_quality_score,
                                       comp_quantiles,
                                       n_comp_quantiles,
                                       sample_label[s],
-                                      NULL,
                                       NULL,
                                       verbose);
         }
