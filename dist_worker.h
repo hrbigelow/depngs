@@ -14,10 +14,15 @@ struct posterior_wrapper;
 
 class PileupSummary;
 
-
+/* there will be one of these instantiated for each thread.  Each of
+   these holds the parameters needed by the thread that can be shared
+   across different samples.  Since each thread computes a chunk of
+   input across all samples, there is sample-specific parameters as
+   well, held in posterior_wrapper. */
 struct dist_worker_input
 {
     posterior_wrapper **worker; // generally encapsulates everything needed to compute outputs
+    const struct posterior_settings *pset;
     size_t thread_num;
     size_t n_samples;
     size_t n_sample_pairs;
@@ -44,10 +49,8 @@ struct dist_worker_input
     /* defines the parsed set of sample pairs to compare */
     size_t *pair_sample1, *pair_sample2; 
 
-    less_locus_position less_locus;
-    equal_locus_position equal_locus;
-
-    dist_worker_input(size_t thread_num,
+    dist_worker_input(const struct posterior_settings *pset, 
+                      size_t thread_num,
                       size_t n_samples,
                       size_t n_sample_pairs,
                       size_t n_sample_point_pairings,

@@ -7,30 +7,94 @@
 #define BATCH 16;
 #define NDIM 4;
 
+
+inline double alphas_from_counts(struct packed_counts *cts, 
+                                 double *prior_alpha, double *est_alpha)
+{
+    char base;
+    size_t d, qual, strand;
+    double alpha0 = 0;
+    memcpy(est_alpha, prior_alpha, sizeof(double) * NDIM);
+    for (d = 0; d != cts->num_data; ++d)
+    {
+        Nucleotide::decode(cts->stats_index[d], &base, &qual, &strand);
+        alpha0 += cts->raw_counts[d];
+        est_alpha[Nucleotide::base_to_index[(int)base]] += cts->raw_counts[d];
+    }
+    return alpha0;
+}
+
+
+inline void bounded_alphas_from_mean(double *mean, double alpha0, 
+                                     double *bound, double *alphas)
+{
+    unsigned d;
+    double qual_alpha0 = 0, new_alpha0 = 0, sum, adjust;
+    for (d = 0; d != NDIM; ++d)
+    {
+        alphas[d] = mean[d] * alpha0;
+        if (alphas[d] < bound[d]) alphas[d] = bound[d];
+        else qual_alpha0 += alphas[d];
+        new_alpha0 += alphas[d];
+    }
+
+    adjust = 1.0 + (alpha0 - new_alpha0) / qual_alpha0;
+    for (d = 0; d != NDIM; ++d)
+        if (alphas[d] != bound[d]) alphas[d] *= adjust;
+    sum = alphas[0] + alphas[1] + alphas[2] + alphas[3];
+}
+
+
+
+/* */
+void tune_proposal(struct packed_counts *cts,
+                   struct posterior_settings *set,
+                   double *proposal_alpha,
+                   double *estimated_mean,
+                   double *points_buf)
+{
+    double alpha0 = alphas_from_counts(cts, set->prior_alpha, proposal_alpha);
+
+    size_t i, j, cumul_aoff, cur_aoff;
+    for (i = 0; i != set->max_tuning_iterations; ++i)
+    {
+        cumul_aoff = current_aoff = 1;
+        for (j = 0; j != 3; ++j)
+        {
+            metropolis_sampling(0, set->tuning_n_points, cts->stats, cts->num_data,
+                                proposal_alpha, logu, cumul_aoff, points_buf);
+            
+            current_aoff =
+                best_autocorrelation_offset(sample_points_buf, NDIM,
+                                            set->tuning_n_points,
+                                            set->autocor_max_offset, 
+                                            set->autocor_max_value);
+            
+            if (current_aoff == 1) break;
+            cumul_aoff *= current_aoff;
+        }
+        if (cumul_aoff <= set->target_autocor_offset) break;
+        
+        multivariate_mean(points_buf, NDIM, set->tuning_n_points, estimated_mean);
+        bounded_alphas_from_mean(estimated_mean, alpha0, prior_alpha, proposal_alpha);
+    }
+    return cumul_aoff;
+}
+
+
 /* Generate sample points according to Metropolis criterion, using the
     alphas for a dirichlet proposal distribution, and the polynomial
     terms for the posterior. The sample points generated are written
     to sample_points, in the range from start_point to
     n_points_wanted.  Collect every 'nth' point */
 void metropolis_sampling(unsigned short start_point, unsigned short n_points_wanted,
-                         const struct cpd_count *term, size_t n_term,
+                         const struct packed_counts *cts,
+                         const double *logu, /* logs of U[0, 1] values */
                          double *proposal_alpha,
-                         double *prior_alpha,
-                         double *logu, /* logs of U[0, 1] values */
                          size_t nth, /* collect every nth point */
                          double *sample_points)
 {
-    enum YepStatus status = yepLibrary_Init();
-    assert(status == YepStatusOk);
-
-    double alpha_residual[] = { 
-        proposal_alpha[0] - prior_alpha[0] + 1, 
-        proposal_alpha[1] - prior_alpha[1] + 1,
-        proposal_alpha[2] - prior_alpha[2] + 1,
-        proposal_alpha[3] - prior_alpha[3] + 1 
-    };
-    
-    const struct cpd_count *trm_end = trm + n_trm;
+    const struct cpd_count *trm_end = cts->stats + cts->num_data;
 
     double points[BATCH * NDIM], dotp[BATCH], ldotp[BATCH];
     double llh[BATCH], rll[BATCH], ivp[BATCH];
@@ -44,8 +108,8 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
         pt = points;
         for (i = 0; i != BATCH; ++i)
         {
-            gsl_ran_dirichlet(alpha_residual, NDIM, pt);
-            rll[i] = gsl_ran_dirichlet_lnpdf(alpha_residual, NDIM, pt);
+            gsl_ran_dirichlet(proposal_alpha, NDIM, pt);
+            rll[i] = gsl_ran_dirichlet_lnpdf(proposal_alpha, NDIM, pt);
             pt += NDIM;
         }        
         /* 3. Generate a batch log likelihoods */

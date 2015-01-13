@@ -4,6 +4,7 @@
 #include "error_estimate.h"
 #include "vcf.h"
 #include "defs.h"
+#include "metropolis_sampling.h"
 
 #include <gsl/gsl_math.h>
 #include <algorithm>
@@ -14,7 +15,8 @@ extern "C" {
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
-dist_worker_input::dist_worker_input(size_t thread_num,
+dist_worker_input::dist_worker_input(const struct posterior_settings *pset,
+                                     size_t thread_num,
                                      size_t n_samples,
                                      size_t n_sample_pairs,
                                      size_t n_sample_point_pairings,
@@ -33,6 +35,7 @@ dist_worker_input::dist_worker_input(size_t thread_num,
                                      int do_vcf,
                                      size_t *pair_sample1,
                                      size_t *pair_sample2) :
+pset(pset),
     thread_num(thread_num),
     n_samples(n_samples), n_sample_pairs(n_sample_pairs),
     n_sample_point_pairings(n_sample_point_pairings),
@@ -244,56 +247,64 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 {
     if (! out_buf) return out_buf;
 
-    double estimated_mean1[NUM_NUCS], estimated_mean2[NUM_NUCS];
+    double estimated_mean[2][NUM_NUCS], proposal_alpha[2][NUM_NUCS];
+    sample_details *sdpair[2];
+    size_t cumul_aoff[2];
+    size_t p, i;
 
-    // sscanf(sd[gs].current, "%s\t%zu", contig, &position);
-
-    for (size_t p = 0; p != input->n_sample_pairs; ++p)
+    for (p = 0; p != input->n_sample_pairs; ++p)
     {
-        size_t s1 = input->pair_sample1[p], s2 = input->pair_sample2[p];
-        sample_details *sd1 = &sd[s1], *sd2 = &sd[s2];
+        sdpair[0] = &sd[input->pair_sample1[p]];
+        sdpair[1] = &sd[input->pair_sample2[p]];
 
-        if (input->min_high_conf_dist > 0 && ! (sd1->is_next && sd2->is_next))
+        if (input->min_high_conf_dist > 0 && ! (sdpair[0]->is_next && sdpair[1]->is_next))
             continue;
         
-        // preliminary sampling
-        if (sd1->is_next && ! sd1->n_sample_points)
+        /* preliminary sampling */
+        for (i = 0; i != 2; ++i)
         {
-            input->worker[s1]->tune(sd1, estimated_mean1);
-            input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_n_points);
-            sd1->n_sample_points = input->prelim_n_points;
+            if (sdpair[i]->is_next && ! sdpair[i]->n_sample_points)
+            {
+                cumul_aoff[i] = 
+                    tune_proposal(sdpair[i]->locus.counts.stats, 
+                                  sdpair[i]->locus.counts.num_data,
+                                  input->pset, proposal_alpha[i], estimated_mean[i], 
+                                  sdpair[i]->sample_points);
+                
+                metropolis_sampling(0, input->prelim_n_points, 
+                                    sdpair[i]->locus.counts.stats, sdpair[i]->locus.counts.num_data,
+                                    logu, proposal_alpha[i], cumul_aoff[i], sdpair[i]->sample_points);
+                
+                // input->worker[s1]->tune(sd1, estimated_mean1);
+                // input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_n_points);
+                sd[i]->n_sample_points = input->prelim_n_points;
+            }
         }
-        if (sd2->is_next && ! sd2->n_sample_points)
-        {
-            input->worker[s2]->tune(sd2, estimated_mean2);
-            input->worker[s2]->sample(sd2, estimated_mean2, input->prelim_n_points);
-            sd2->n_sample_points = input->prelim_n_points;
-        }
-
+            
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,
                                sd2->is_next ? sd2->sample_points : null_points,
                                4,
-                               input->prelim_n_points,
-                               input->square_dist_buf,
+                               input->prelim_n_points, input->square_dist_buf,
                                MIN(input->n_sample_point_pairings,
                                    input->prelim_n_points * 10), // ad-hoc
                                input->randgen,
-                               &input->prelim_quantile, 1,
-                               input->dist_quantile_values);
+                               &input->prelim_quantile, 1, input->dist_quantile_values);
         
         /* after prelim testing, still not enough difference */
         if (input->dist_quantile_values[0] < input->min_high_conf_dist)
             continue;
         
-        if (sd1->n_sample_points == input->prelim_n_points)
+        for (i = 0; i != 2; ++i)
         {
-            input->worker[s1]->sample(sd1, estimated_mean1, input->final_n_points);
-            sd1->n_sample_points = input->final_n_points;
-        }
-        if (sd2->n_sample_points == input->prelim_n_points)
-        {
-            input->worker[s2]->sample(sd2, estimated_mean2, input->final_n_points);
-            sd2->n_sample_points = input->final_n_points;
+            if (sdpair[i]->n_sample_points == input->prelim_n_points)
+            {
+                metropolis_sampling(sdpair[i]->n_sample_points, input->final_n_points, 
+                                    sdpair[i]->locus.counts.stats, sdpair[i]->locus.counts.num_data,
+                                    logu, proposal_alpha[i], cumul_aoff[i], sdpair[i]->sample_points);
+                
+                // input->worker[s1]->sample(sdpair[i], estimated_mean1, input->final_n_points);
+                sdpair[i]->n_sample_points = input->final_n_points;
+            }
         }
 
         compute_dist_quantiles(sd1->is_next ? sd1->sample_points : null_points,

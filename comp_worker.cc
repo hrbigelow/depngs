@@ -38,7 +38,6 @@ posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
                                      const char *label_string,
                                      FILE *cdfs_output_fh,
                                      pthread_mutex_t *file_writing_mutex,
-                                     struct posterior_settings s,
                                      bool verbose) :
     s(s),
     verbose(verbose),

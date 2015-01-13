@@ -4,6 +4,7 @@
 #include "defs.h"
 #include "dist_worker.h"
 #include "pileup_tools.h"
+#include "yepLibrary.h"
 
 extern "C" {
 #include "dict.h"
@@ -311,7 +312,8 @@ int main_dist(int argc, char **argv)
     for (t = 0; t != n_threads; ++t)
     {
         worker_inputs[t] = 
-            new dist_worker_input(t, n_samples, n_pairings, n_sample_point_pairs,
+            new dist_worker_input(&pset, 
+                                  t, n_samples, n_pairings, n_sample_point_pairs,
                                   dist_quantiles, n_dist_quantiles,
                                   comp_quantiles, n_comp_quantiles,
                                   min_dist_to_report,
@@ -337,7 +339,6 @@ int main_dist(int argc, char **argv)
                                       sample_label[s],
                                       NULL,
                                       NULL,
-                                      pset,
                                       verbose);
         }
     }
@@ -408,6 +409,9 @@ int main_dist(int argc, char **argv)
         fprintf(vcf_fh, "\n");
         fflush(vcf_fh);
     }
+
+    enum YepStatus status = yepLibrary_Init();
+    assert(status == YepStatusOk);
 
     thread_queue_run(tqueue);
     thread_queue_free(tqueue);
