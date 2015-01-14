@@ -11,6 +11,7 @@
 //maps every character to itself except the letters 'ACGTN.acgtn,'
 //are mapped to 'N' (78)
 
+/*
 char PileupSummary::code_to_redux[] = {
  '\x0', '\x1', '\x2', '\x3', '\x4', '\x5', '\x6', '\x7', '\x8', '\x9', '\xA', '\xB', '\xC', '\xD', '\xE', '\xF',
 '\x10','\x11','\x12','\x13','\x14','\x15','\x16','\x17','\x18','\x19','\x1A','\x1B','\x1C','\x1D','\x1E','\x1F',
@@ -29,6 +30,19 @@ char PileupSummary::code_to_redux[] = {
 '\xE0','\xE1','\xE2','\xE3','\xE4','\xE5','\xE6','\xE7','\xE8','\xE9','\xEA','\xEB','\xEC','\xED','\xEE','\xEF',
 '\xF0','\xF1','\xF2','\xF3','\xF4','\xF5','\xF6','\xF7','\xF8','\xF9','\xFA','\xFB','\xFC','\xFD','\xFE','\xFF'
 };
+*/
+
+/* maps every character to itself except the letters 'ACGTN.acgtn,' */
+inline char pileup_code_to_redux(char code)
+{
+    switch(code)
+    {
+    case 'A': case 'C': case 'G': case 'T': case 'N': case '.':
+    case 'a': case 'c': case 'g': case 't': case 'n': case ',':
+        return 'N'; break;
+    default: return code; break;
+    }
+}
 
 int PileupSummary::quality_code_offset;
 
@@ -41,7 +55,7 @@ PileupSummary::PileupSummary(void)
     bases.buf = bases_upper.buf = bases_raw.buf = quality_codes.buf = NULL;
     bases.alloc = bases_upper.alloc = bases_raw.alloc = quality_codes.alloc = 0;
     counts.num_data = 0;
-    memset(base_counts, 0, sizeof(base_counts[0]) * num_base_symbols);
+    memset(base_counts, 0, sizeof(base_counts[0]) * NUM_BASE_SYMBOLS);
     // memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
     sum_of_counts = 0;
     insertions = CHAR_MAP();
@@ -135,10 +149,10 @@ void PileupSummary::load_line(const char *read_ptr)
 
         //reduce the pileup code
         int pileup_code = pileup_ccode;
-        char pileup_redux = PileupSummary::code_to_redux[pileup_code];
+        char pileup_redux = pileup_code_to_redux(pileup_ccode);
 
         indel_size = 0;
-        pileup_value = Nucleotide::base_to_index[pileup_code];
+        pileup_value = base_to_index(pileup_code);
             
         if (strchr("N+-", pileup_redux))
         // if (pileup_redux == 'N' || pileup_redux == '+' || pileup_redux == '-')
@@ -155,7 +169,7 @@ void PileupSummary::load_line(const char *read_ptr)
                 default : real_base = pileup_ccode; break;
                 }
 
-                pileup_value = Nucleotide::base_to_index[static_cast<int>(real_base)];
+                pileup_value = base_to_index(real_base);
 
                 this->base_counts[pileup_value]++;
                 this->sum_of_counts++;
@@ -277,7 +291,7 @@ void PileupSummary::parse(size_t min_quality_score)
             
         size_t quality = this->quality(r);
         char basecall = this->bases.buf[r];
-        size_t basecall_index = Nucleotide::base_to_index[static_cast<size_t>(basecall)];
+        size_t basecall_index = base_to_index(basecall);
 
         /* since 'N' is common in pileup, but meaningless, ignore
            silently */
@@ -285,7 +299,7 @@ void PileupSummary::parse(size_t min_quality_score)
         if (quality < min_quality_score) continue;
 
         size_t strand = isupper(basecall) ? NUC_PLUS_STRAND : NUC_MINUS_STRAND;
-        fi = Nucleotide::encode(basecall, quality, strand);
+        fi = encode_nucleotide(basecall, quality, strand);
         raw_counts_flat[fi]++;
     }
     for (fi = 0; fi != NUC_NUM_BQS; ++fi)
@@ -293,7 +307,7 @@ void PileupSummary::parse(size_t min_quality_score)
         if (raw_counts_flat[fi] != 0)
         {
             this->read_depth_high_qual += raw_counts_flat[fi];
-            this->counts.raw_counts[nd] = raw_counts_flat[fi];
+            this->counts.stats[nd].ct = raw_counts_flat[fi];
             this->counts.stats_index[nd] = fi;
             ++nd;
         }

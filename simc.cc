@@ -26,9 +26,7 @@ int simc_usage()
 int main_simc(int argc, char ** argv)
 {
     if (argc < 3)
-    {
         return simc_usage();
-    }
 
     size_t sequence_depth = 100;
     char c;
@@ -42,20 +40,14 @@ int main_simc(int argc, char ** argv)
         }
     }
     if (argc - optind < 2)
-    {
         return simc_usage();
-    }
 
     char * basecomp_prior_file = argv[optind];
     size_t number_lines = static_cast<size_t>(atof(argv[optind + 1]));
 
     //read the whole file
-
-    
-    double * basecomp;
-    double * basecomp_dist;
-
-    double * numbers_buffer = 
+    double *basecomp, *basecomp_dist;
+    double *numbers_buffer = 
         parse_basecomp_prior_file(basecomp_prior_file,
                                   &basecomp, &basecomp_dist);
 

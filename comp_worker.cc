@@ -16,20 +16,9 @@
 #include "error_estimate.h"
 #include "defs.h"
 #include "cache.h"
+#include "locus.h"
 
-// input: the null-terminated pileup line
-// side-effects: populate the appropriate line buffer with the output
-
-
-// // sample_details::sample_details(void) :
-//     locus(), is_next(false), sample_points(NULL),
-//     n_sample_points(0), samp_method(FAILED),
-//     mode_computed(false),
-//     autocor_offset(1000),
-//     current(NULL)
-// {}
-
-
+#if 0
 posterior_wrapper::posterior_wrapper(const char *jpd_data_params_file,
                                      double *prior_alphas,
                                      size_t min_quality_score,
@@ -297,49 +286,12 @@ void posterior_wrapper::sample(sample_details *sd, double *initial_point, size_t
         break;
     }
 }
-
-// generate sample points according to the parameters set in posterior_wrapper
-// alt_sample_points must be of size this->final_n_points * 4
-// write 
-/*
-void posterior_wrapper::sample(PileupSummary *locus, double *sample_points_buf, char *algorithm_used)
-{
-    size_t cumul_autocor_offset = this->tune_mh(locus, sample_points_buf);
-    // double proposal_mean, proposal_variance;
-
-    if (cumul_autocor_offset <= this->s.target_autocor_offset)
-    {
-        //metropolis hastings succeeded
-        this->sampler->sample(this->s.final_n_points, 0, cumul_autocor_offset, NULL, NULL, sample_points_buf);
-        strcpy(algorithm_used, "MH");
-    }
-    else
-    {
-        //metropolis hastings failed.  try slice sampling
-        size_t best_autocor_offset = this->tune_ss(locus, sample_points_buf);
-        
-        if (best_autocor_offset <= this->s.target_autocor_offset)
-        {
-            //slice sampling succeeded
-            this->slice_sampler->sample(this->model, 
-                                        this->mode_point,
-                                        this->s.initial_sampling_range, 
-                                        best_autocor_offset,
-                                        sample_points_buf,
-                                        this->s.final_n_points);
-            strcpy(algorithm_used, "SS");
-        }
-        else
-        {
-            strcpy(algorithm_used, "--");
-        }
-    }
-}
-*/
+#endif
 
 
 // generate a set of normalized values of the posterior at the
 // specified points
+#if 0
 void posterior_wrapper::values(double *points, size_t n_points,
                                double *values)
 {
@@ -382,56 +334,42 @@ void posterior_wrapper::values(double *points, size_t n_points,
     
     
 }
+#endif
 
 
-char *posterior_wrapper::print_quantiles(sample_details *sd, char *out_buffer)
+char *print_quantiles(const double *quantiles,
+                      size_t n_quantiles,
+                      const char *label_string,
+                      struct locus_sampling *ls, 
+                      char *out_buffer)
 {
     char line_label[2048];
 
     sprintf(line_label,
-            "%s\t%c\t%s\t%i\t%c\t%Zu\t%Zu",
-            this->label_string, 
-            (char)sd->samp_method, 
-            sd->locus.reference, 
-            sd->locus.position, 
-            sd->locus.reference_base, 
-            sd->locus.read_depth, 
-            sd->locus.read_depth_high_qual
+            "%s\t%s\t%i\t%c\t%Zu\t%Zu",
+            label_string, 
+            ls->locus.reference, 
+            ls->locus.position, 
+            ls->locus.reference_base, 
+            ls->locus.read_depth, 
+            ls->locus.read_depth_high_qual
             );
 
-    const char *dimension_labels[] = { "A", "C", "G", "T" };
-
-    out_buffer = 
-        print_marginal_quantiles(out_buffer,
-                                 sd->sample_points,
-                                 this->s.final_n_points,
-                                 line_label, 
-                                 dimension_labels, 
-                                 "+", 
-                                 this->quantiles,
-                                 this->n_quantiles);
+    out_buffer = print_marginal_quantiles(out_buffer,
+                                          ls->sample_points,
+                                          ls->n_sample_points,
+                                          line_label,
+                                          "+", 
+                                          quantiles,
+                                          n_quantiles);
     return out_buffer;
 }
 
 
-// this should correspond to print_discrete_comp
-size_t discrete_comp_locus_bytes(size_t n_discrete_values)
-{
-    return 30 + 10 + 1 + 10 + 4 + 1 + ((4 + 1 + 7) * n_discrete_values);
-}
-
-
-struct first_comp_more
-{
-    bool operator()(std::pair<double, size_t> const& a,
-                    std::pair<double, size_t> const& b)
-    {
-        return b.first < a.first;
-    }
-};
 
 // prints an abbreviated format of base composition as represented by
 // a discrete set of posterior points.
+#if 0
 char *print_discrete_comp(PileupSummary *locus,
                           const char *sample_label,
                           double *discrete_values,
@@ -479,36 +417,83 @@ char *print_discrete_comp(PileupSummary *locus,
 
     return out_buf;
 }
+#endif
 
-
-// returns next write position after writing to out_buffer
-// sample_points_buf is a scratch space for writing sample points
-// must be this->final_n_points * 4 size
-char *posterior_wrapper::process_line_comp(const char *pileup_line,
-                                           char *out_buffer,
-                                           double *sample_points_buf,
-                                           float test_quantile,
-                                           float min_test_quantile_value)
+struct sample_attributes
+make_sample_attributes(const char *jpd_file,
+                       const char *label_string,
+                       const char *pileup_file)
 {
+    struct sample_attributes s;
+    s.nuc_stats = make_nucleotide_stats();
+    nucleotide_stats_initialize(jpd_file, &s.nuc_stats);
+    if (strlen(label_string) + 1 > sizeof(s.label_string)) 
+    {
+        fprintf(stderr, "%s: error: sample label string must be "
+                "less than %Zu characters\n", __func__,
+                sizeof(s.label_string));
+        exit(1);
+    }
+    strcpy(s.label_string, label_string);
+    s.fh = fopen(pileup_file, "r");
+    if (! s.fh)
+    {
+        fprintf(stderr, "%s: error: couldn't open pileup input file %s\n",
+                __func__, pileup_file);
+        exit(1);
+    }
+    return s;
+}
 
-    sample_details sd;
-    sd.locus = PileupSummary();
-    sd.locus.load_line(pileup_line);
-    sd.locus.parse(this->min_quality_score);
-    sd.sample_points = sample_points_buf;
-    this->model->locus_data = &sd.locus.counts;
-    this->params->pack(&sd.locus.counts);
-    // we don't do mode-finding anymore
-    // this->find_mode();
-    unsigned i;
-    double *cpd = sd.locus.counts.fbqs_cpd;
-    unsigned long *ct = sd.locus.counts.raw_counts;
-    for (i = 0; i != sd.locus.counts.num_data; ++i)
+
+/* initialize the locus in 'ls' defined by sd->current */
+inline void init_pileup_locus(const struct nucleotide_stats *stats,
+                              size_t min_quality_score,
+                              locus_sampling *ls)
+{
+    ls->locus.load_line(ls->current);
+    ls->locus_ord = init_locus(ls->current);
+    ls->locus.parse(min_quality_score);
+    ls->n_sample_points = 0;
+    // input->worker[s]->model->locus_data = &ls->locus.counts;
+    nucleotide_stats_pack(stats, &ls->locus.counts);
+}
+
+
+/* advance ls->current, then initialize if there is another locus */
+void refresh_locus(const struct nucleotide_stats *stats,
+                   size_t min_quality_score,
+                   locus_sampling *ls)
+{
+    assert(ls->current != ls->end);
+    if ((ls->current = strchr(ls->current, '\n') + 1) == ls->end) 
+        ls->is_next = false;
+
+    else
+    {
+        init_pileup_locus(stats, min_quality_score, ls);
+        ls->dist_printed = 0;
+    }
+}
+
+
+/* returns next write position after writing to out_buffer
+   sample_points_buf is a scratch space for writing sample points must
+   be this->final_n_points * 4 size */
+char *process_line_comp(struct comp_worker_input *cw,
+                        struct locus_sampling *ls,
+                        char *out_buffer,
+                        float test_quantile,
+                        float min_test_quantile_value)
+{
+    const struct cpd_count
+        *pc = ls->locus.counts.stats,
+        *pce = pc + ls->locus.counts.num_data;
+    while (pc != pce)
     {
         fprintf(stderr, "{ %g, %g, %g, %g, %lu },\n",
-                cpd[0], cpd[1], cpd[2], cpd[3], ct[0]);
-        cpd += 4;
-        ct++;
+        pc->cpd[0], pc->cpd[1], pc->cpd[2], pc->cpd[3], pc->ct);
+        ++pc;
     }
 
     double 
@@ -519,7 +504,7 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     // first-pass test.  if reference-base component of mode point is
     // too close to 1, then the test quantile value will be as well.
     char nucs[] = "ACGTacgt", *query;
-    int ref_ind = (query = strchr(nucs, sd.locus.reference_base)) ? (query - nucs) % 4 : -1;
+    int ref_ind = (query = strchr(nucs, ls->locus.reference_base)) ? (query - nucs) % 4 : -1;
 
 #ifndef _SKIP_FIRST_PASS_TEST_
     // if (ref_ind >= 0 && 
@@ -527,17 +512,25 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
     //     return out_buffer; 
 #endif
 
+    /* opportunity here to not re-sample points if the tuning has okay
+       autocorrelation */
+    double estimated_mean[NUM_NUCS], proposal_alpha[NUM_NUCS];;
+    size_t cumul_aoff = 
+        tune_proposal(&ls->locus.counts,
+                      &cw->pset, proposal_alpha, estimated_mean,
+                      ls->sample_points);
 
-    double initial_point[NUM_NUCS];
-    // opportunity here to not re-sample points if the tuning has okay autocorrelation.
-    this->tune(&sd, initial_point);
-    this->sample(&sd, initial_point, this->s.final_n_points);
+    // this->tune(&ls, initial_point);
+    metropolis_sampling(0, cw->pset.final_n_points, &ls->locus.counts,
+                        cw->pset.logu, proposal_alpha, cumul_aoff,
+                        ls->sample_points);
+    // this->sample(&ls, initial_point, this->s.final_n_points);
 
     // we always print a base composition estimate for loci with
     // ref=N.  So, we only do the filtering test if ref!=N
     if (ref_ind >= 0)
-        compute_marginal_quantiles(sd.sample_points,
-                                   this->s.final_n_points,
+        compute_marginal_quantiles(ls->sample_points,
+                                   cw->pset.final_n_points,
                                    ref_ind,
                                    &ref_test_quantile,
                                    1,
@@ -553,23 +546,12 @@ char *posterior_wrapper::process_line_comp(const char *pileup_line,
 
     // if the reference base is not in "ACGTacgt", we always print the
     // locus.
-    out_buffer = this->print_quantiles(&sd, out_buffer);
-    
-    if (cdfs_output_fh != NULL)
-    {
-        pthread_mutex_lock(file_writing_mutex);
-        print_numerical_cdfs(cdfs_output_fh, 
-                             this->label_string, 
-                             sample_points_buf,
-                             this->s.final_n_points, 
-                             NUM_NUCS);
-        
-        pthread_mutex_unlock(file_writing_mutex);
-    }
-    
+    out_buffer = print_quantiles(cw->quantiles,
+                                 cw->n_quantiles,
+                                 cw->sample_atts.label_string, 
+                                 ls, out_buffer);
     return out_buffer;
 }
-
 
 
 /* iterate through the input range of lines.  nullifies the newline
@@ -580,31 +562,39 @@ void comp_worker(void *par,
                  const struct managed_buf *in_buf,
                  struct managed_buf *out_buf)
 {
-    struct comp_worker_input *param = 
+    struct comp_worker_input *cw = 
         (struct comp_worker_input *)par;
 
-    assert(out_buf->alloc > 0);
     char *write_ptr = out_buf->buf;
-
-    const char
-        *line = in_buf->buf,
-        *end = in_buf->buf + in_buf->size,
-        *next;
-
     size_t max_line = 1000;
-    while (line != end)
+    struct locus_sampling ls = {
+        PileupSummary(),
+        false,
+        0,
+        (double *)malloc(cw->pset.final_n_points * sizeof(double)),
+        0,
+        0,
+        in_buf->buf,
+        in_buf->buf + in_buf->size,
+        min_pair_ord
+    };
+    
+    init_pileup_locus(&cw->sample_atts.nuc_stats,
+                      cw->pset.min_quality_score,
+                      &ls);
+
+    while (ls.current != ls.end)
     {
-        next = strchr(line, '\n') + 1;
         ALLOC_GROW_REMAP(out_buf->buf, write_ptr, 
                          write_ptr - out_buf->buf + max_line, out_buf->alloc);
-
         write_ptr =
-            param->worker->process_line_comp(line, write_ptr,
-                                             param->sample_points_buf,
-                                             param->test_quantile,
-                                             param->min_test_quantile_value);
-        line = next;
-        
+            process_line_comp(cw, &ls, write_ptr,
+                              cw->test_quantile,
+                              cw->min_test_quantile_value);
+
+        refresh_locus(&cw->sample_atts.nuc_stats,
+                      cw->pset.min_quality_score, &ls);
     }
     out_buf->size = write_ptr - out_buf->buf;
+    free(ls.sample_points);
 }

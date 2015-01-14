@@ -2,17 +2,16 @@
 #define _PILEUP_TOOLS_H
 
 #include <map>
-#include <cstring>
-#include <string>
-
+#include <string.h>
 #include "tools.h"
 #include "nucleotide_stats.h"
+
 #include "cache.h"
+
+#define NUM_BASE_SYMBOLS 10
 
 /* A class for representing a single line of pileup information
  */
-const int num_base_symbols = 10;
-
 struct less_char_ptr
 {
     bool operator()(const char *a, const char *b)
@@ -27,7 +26,6 @@ class PileupSummary {
 
 public:
 
-    static char code_to_redux[];
     static const char nucleotides[];
     static int quality_code_offset;
     static FastqType fastq_type;
@@ -52,7 +50,7 @@ public:
        threshold quality score */
     size_t read_depth_high_qual; 
 
-    int base_counts[num_base_symbols]; //ACGTNacgtn
+    int base_counts[NUM_BASE_SYMBOLS]; //ACGTNacgtn
     int sum_of_counts;
     struct managed_buf bases, bases_upper, bases_raw, quality_codes;
 

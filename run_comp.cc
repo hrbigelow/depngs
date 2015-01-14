@@ -26,11 +26,9 @@ void result_offload(void *par, const struct managed_buf *buf)
 
 int run_comp(size_t max_mem,
              size_t n_threads,
-             size_t min_quality_score,
              const char *fastq_type,
              const char *label_string,
              const char *quantiles_file,
-             float prior_alpha,
              const char *pileup_input_file,
              const char *contig_order_file,
              const char *query_range_file,
@@ -42,7 +40,7 @@ int run_comp(size_t max_mem,
              double min_test_quantile_value,
              bool verbose)
 {
-    double * quantiles;
+    double *quantiles;
     size_t n_quantiles;
 
     if (strcmp(quantiles_file, "/dev/null") == 0)
@@ -58,15 +56,8 @@ int run_comp(size_t max_mem,
     else
         quantiles = ParseNumbersFile(quantiles_file, & n_quantiles);
 
-    double prior_alphas[NUM_NUCS];
-    for (size_t i = 0; i != NUM_NUCS; ++i)
-        prior_alphas[i] = prior_alpha;
-    
-    
-
     FILE *posterior_output_fh = open_if_present(posterior_output_file, "w");
     FILE *cdfs_output_fh = open_if_present(cdfs_output_file, "w");
-    FILE *pileup_input_fh = open_if_present(pileup_input_file, "r");
     FILE *contig_order_fh = open_if_present(contig_order_file, "r");
 
     size_t base_chunk_size = max_mem; /* user provided.  Must be >= 1e8 (100MB) */
@@ -89,13 +80,17 @@ int run_comp(size_t max_mem,
     
     dict_build();
 
+    const struct sample_attributes sample_atts = 
+        make_sample_attributes(jpd_data_params_file,
+                               label_string,
+                               pileup_input_file);
 
     /* 1. create and initialize a root index node representing the
        entire pileup file */
     size_t scan_thresh_size = 1e6;
     file_bsearch_init(init_locus, scan_thresh_size);
     
-    struct file_bsearch_index ix = file_bsearch_make_index(pileup_input_fh);
+    struct file_bsearch_index ix = file_bsearch_make_index(sample_atts.fh);
 
     struct pair_ordering_range *queries, *q, *qend;
     size_t n_queries;
@@ -133,42 +128,20 @@ int run_comp(size_t max_mem,
 
     PileupSummary::set_offset(offset);
 
-    // size_t initial_autocor_offset = 30;
-    
-    // used for slice sampling
-    // size_t num_bits_per_dim = 62;
-    // bool is_log_integrand = true;
-    // size_t initial_sampling_range = 62 * truncated_ndim;
-    // bool may_underflow = true;
-    // double prior_alpha0 = std::accumulate(prior_alphas, prior_alphas + 4, 0.0);
-    // bool use_independence_chain_mh = true;
-
     // create the reusable resources here
-    struct comp_worker_input **worker_inputs =
-        (struct comp_worker_input **)
-        malloc(n_threads * sizeof(struct comp_worker_input *));
-
-    pthread_mutex_t file_writing_mutex;
+    struct comp_worker_input *worker_inputs =
+        (struct comp_worker_input *)
+        malloc(n_threads * sizeof(struct comp_worker_input));
 
     size_t t;
     for (t = 0; t != n_threads; ++t)
     {
-        worker_inputs[t] = (struct comp_worker_input *)malloc(sizeof(struct comp_worker_input));
-        worker_inputs[t]->worker = 
-            new posterior_wrapper(jpd_data_params_file,
-                                  prior_alphas,
-                                  min_quality_score,
-                                  quantiles,
-                                  n_quantiles,
-                                  label_string,
-                                  cdfs_output_fh,
-                                  & file_writing_mutex,
-                                  *pset,
-                                  verbose);
-        worker_inputs[t]->sample_points_buf = 
-            (double *)malloc(pset->final_n_points * 4 * sizeof(double));
-        worker_inputs[t]->test_quantile = test_quantile;
-        worker_inputs[t]->min_test_quantile_value = min_test_quantile_value;
+        worker_inputs[t].sample_atts = sample_atts;
+        worker_inputs[t].pset = *pset;
+        memcpy(worker_inputs[t].quantiles, quantiles, sizeof(double) * n_quantiles);
+        worker_inputs[t].n_quantiles = n_quantiles;
+        worker_inputs[t].test_quantile = test_quantile;
+        worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
     }
     
     // the functions in the workers require this.
@@ -200,18 +173,12 @@ int run_comp(size_t max_mem,
 
     thread_queue_free(tqueue);
 
-    fclose(pileup_input_fh);
+    fclose(sample_atts.fh);
     fclose(posterior_output_fh);
     if (cdfs_output_fh != NULL)
         fclose(cdfs_output_fh);
 
     delete quantiles;
-    for (t = 0; t != n_threads; ++t)
-    {
-        free(worker_inputs[t]->sample_points_buf);
-        free(worker_inputs[t]);
-    }
-
     free(worker_inputs);
 
     return 0;

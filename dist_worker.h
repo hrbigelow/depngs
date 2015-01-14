@@ -9,71 +9,39 @@
 #include <gsl/gsl_randist.h>
 
 #include "locus_comp.h"
+#include "defs.h"
 
-struct posterior_wrapper;
-
-class PileupSummary;
+struct sample_attributes;
 
 /* there will be one of these instantiated for each thread.  Each of
    these holds the parameters needed by the thread that can be shared
    across different samples.  Since each thread computes a chunk of
-   input across all samples, there is sample-specific parameters as
-   well, held in posterior_wrapper. */
+   input across all samples, there are sample-specific parameters as
+   well, held in sample_attributes. */
 struct dist_worker_input
 {
-    posterior_wrapper **worker; // generally encapsulates everything needed to compute outputs
-    const struct posterior_settings *pset;
+    struct sample_attributes *sample_atts;
+    struct posterior_settings *pset;
     size_t thread_num;
     size_t n_samples;
     size_t n_sample_pairs;
     size_t n_sample_point_pairings; 
 
-    double *dist_quantiles, *dist_quantile_values;
-    size_t n_dist_quantiles;
-
-    double *comp_quantiles, *comp_quantile_values;
-    size_t n_comp_quantiles;
+    double dist_quantile_values[MAX_NUM_QUANTILES];
+    double comp_quantile_values[MAX_NUM_QUANTILES];
 
     float min_high_conf_dist; // minimum mutational distance at high confidence to report change
     size_t prelim_n_points;
     double prelim_quantile;
-    size_t final_n_points;
 
     gsl_rng *randgen;
     double *square_dist_buf; /* holds squares of distances for distance calculation */
     int print_pileup_fields; // if 0, do not print extra pileup fields
 
-    bool *is_next; // set of flags, one for each sample, defining whether the genomic position of the
-    int do_dist, do_comp, do_indel, do_vcf;
+    int do_dist, do_comp, do_indel;
 
     /* defines the parsed set of sample pairs to compare */
     size_t *pair_sample1, *pair_sample2; 
-
-    dist_worker_input(const struct posterior_settings *pset, 
-                      size_t thread_num,
-                      size_t n_samples,
-                      size_t n_sample_pairs,
-                      size_t n_sample_point_pairings,
-                      double *dist_quantiles,
-                      size_t n_dist_quantiles,
-                      double *comp_quantiles,
-                      size_t n_comp_quantiles,
-                      float min_high_conf_dist,
-                      size_t prelim_n_points,
-                      float prelim_quantile,
-                      size_t final_n_points,
-                      int print_pileup_fields,
-                      int do_dist,
-                      int do_comp,
-                      int do_indel,
-                      int do_vcf,
-                      size_t *pair_sample1,
-                      size_t *pair_sample2);
-
-    dist_worker_input();
-
-    ~dist_worker_input();
-
 };
 
 

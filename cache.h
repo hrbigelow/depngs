@@ -2,6 +2,7 @@
 #define _CACHE_H
 
 #include <unistd.h>
+#include <stddef.h>
 
 /* taken from git source code */
 #define alloc_nr(x) (((x)+16)*3/2)

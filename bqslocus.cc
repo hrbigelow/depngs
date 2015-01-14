@@ -3,7 +3,6 @@
 #include <numeric>
 
 #include "pileup_tools.h"
-// #include "error_estimate.h"
 #include "file_utils.h"
 
 /*
@@ -163,7 +162,6 @@ int main_bqslocus(int argc, char ** argv)
         size_t strand;
         for (pit = pileup_lines.begin(); pit != pileup_lines.end(); ++pit)
         {
-
             PileupSummary locus;
             locus.load_line((*pit));
             locus.parse(min_quality_score);

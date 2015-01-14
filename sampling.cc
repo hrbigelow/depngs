@@ -1,9 +1,11 @@
 #include "sampling.h"
-
+#include "defs.h"
+#include <string.h>
 #include <algorithm>
+#include <map>
 
-// compute marginal quantiles on a given dimension of the sample
-// points
+/* compute marginal quantiles on a given dimension of the sample
+   points */
 void compute_marginal_quantiles(double *sample_points,
                                 size_t num_points,
                                 size_t sort_dimension,
@@ -11,27 +13,24 @@ void compute_marginal_quantiles(double *sample_points,
                                 size_t num_quantiles,
                                 double *quantile_values)
 {
-    // copy appropriate dimension
-    double *dim_points = new double[num_points];
+    /* copy appropriate dimension */
+    double *dim_points = (double *)malloc(sizeof(double) * num_points);
     double *start = dim_points, *end = start + num_points;
     double *cut;
 
     double *ps = sample_points + sort_dimension;
     double *p = dim_points;
-    for ( ; p != end; ++p, ps += 4)
-    {
-        *p = *ps;
-    }
+    for ( ; p != end; ++p, ps += 4) *p = *ps;
 
-    for (size_t f = 0; f != num_quantiles; ++f)
+    size_t f;
+    for (f = 0; f != num_quantiles; ++f)
     {
         cut = dim_points + (size_t)std::round(quantiles[f] * num_points);
         std::nth_element(start, cut, end);
         quantile_values[f] = cut == end ? 0.0 : *cut;
         start = cut;
     }
-    delete dim_points;
-
+    free(dim_points);
 }
 
 // this should be in synch with print_marginal_quantiles
@@ -41,87 +40,68 @@ size_t marginal_quantiles_locus_bytes(size_t num_quantiles)
     return 5 * (71 + (10 * num_quantiles) + 11 + num_quantiles);
 }
 
+#define NDIM 4
+
 // return next write position after writing to out_buf
 char *print_marginal_quantiles(char *out_buf, 
                                double *sample_points,
                                size_t num_points,
                                const char *line_label,
-                               const char **dimension_labels,
                                const char *sums_label,
                                const double *quantiles, 
                                size_t num_quantiles)
 {
+    double quantile_sums[MAX_NUM_QUANTILES], quantile_values[MAX_NUM_QUANTILES];
+    memset(quantile_sums, 0, sizeof(quantile_sums));
 
-    size_t num_dimensions = 4;
+    double mean[] = { 0, 0, 0, 0 }, mean_sum = 0.0;
 
-    double *quantile_sums = new double[num_quantiles];
-    std::fill(quantile_sums, quantile_sums + num_quantiles, 0.0);
-
-    double *quantile_values = new double[num_quantiles];
-
-    double mean_sum = 0.0;
-
-    double *mean = new double[num_dimensions];
-    std::multimap<double, size_t, std::greater<double> > dim_to_mean;
-
-    //calculate mean
+    /* calculate mean */
     double *point = sample_points;
-    size_t p = 0;
-    std::fill(mean, mean + num_dimensions, 0.0);
-    for ( ; p != num_points; ++p, point += num_dimensions)
-        for (size_t d = 0; d != num_dimensions; ++d)
-            mean[d] += point[d];
+    size_t d, q, p = 0;
+    for ( ; p != num_points; ++p, point += NDIM)
+        for (d = 0; d != NDIM; ++d) mean[d] += point[d];
 
-    for (size_t d = 0; d != num_dimensions; ++d)
+    double num_points_inv = 1.0 / (double)num_points;
+    std::multimap<double, size_t, std::greater<double> > dim_to_mean;
+    for (d = 0; d != NDIM; ++d)
     {
-        mean[d] /= num_points;
+        mean[d] *= num_points_inv;
         dim_to_mean.insert(std::make_pair(mean[d], d));
         mean_sum += mean[d];
     }
 
-    //calculate mean rank order
-    size_t *mean_rank_order = new size_t[num_dimensions];
-    std::multimap<double, size_t, std::greater<double> >::iterator dtm_iter;
-    
-    size_t d = 0;
-    for (dtm_iter = dim_to_mean.begin(); dtm_iter != dim_to_mean.end(); 
-         ++dtm_iter)
-    {
-        mean_rank_order[(*dtm_iter).second] = d;
-        ++d;
-    }
+    /* calculate mean rank order */
+    size_t mean_rank_order[NDIM];
+    std::multimap<double, size_t, std::greater<double> >::iterator dtm;
+    for (dtm = dim_to_mean.begin(); dtm != dim_to_mean.end(); ++dtm)
+        mean_rank_order[(*dtm).second] = d++;
 
-    for (size_t d = 0; d != num_dimensions; ++d)
+    static const char dimension_labels[] = "ACGT";
+    for (d = 0; d != NDIM; ++d)
     {
-        out_buf += sprintf(out_buf, "%s\t%s\t%Zu", line_label, 
-                           dimension_labels[d], mean_rank_order[d]);
+        out_buf += 
+            sprintf(out_buf, "%s\t%c\t%Zu\t%10.8f", line_label, 
+                    dimension_labels[d], mean_rank_order[d], mean[d]);
 
         compute_marginal_quantiles(sample_points, num_points, d, 
                                    quantiles, num_quantiles, quantile_values);
-
-        out_buf += sprintf(out_buf, "\t%10.8f", mean[d]);
-
-        for (size_t q = 0; q != num_quantiles; ++q)
+        
+        for (q = 0; q != num_quantiles; ++q)
         {
             out_buf += sprintf(out_buf, "\t%10.8f", quantile_values[q]);
             quantile_sums[q] += quantile_values[q];
         }
         out_buf += sprintf(out_buf, "\n");
     }
-
-    out_buf += sprintf(out_buf, "%s\t%s\t%s", line_label, sums_label, sums_label);
-    out_buf += sprintf(out_buf, "\t%10.8f", mean_sum);
-
-    for (size_t q = 0; q != num_quantiles; ++q)
-        out_buf += sprintf(out_buf, "\t%10.8f", quantile_sums[q]);
-
-    out_buf += sprintf(out_buf, "\n");
     
-    delete mean_rank_order;
-    delete mean;
-    delete quantile_sums;
-    delete quantile_values;
-
+    out_buf += sprintf(out_buf, "%s\t%s\t%s\t%10.8f", 
+                       line_label, sums_label, sums_label, mean_sum);
+    
+    for (q = 0; q != num_quantiles; ++q)
+        out_buf += sprintf(out_buf, "\t%10.8f", quantile_sums[q]);
+    
+    out_buf += sprintf(out_buf, "\n");
     return out_buf;
 }
 

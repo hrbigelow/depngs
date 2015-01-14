@@ -44,18 +44,18 @@ struct fastq_tally_input
 
 void * fastq_tally_worker(void * args)
 {
-    fastq_tally_input * input = static_cast<fastq_tally_input *>(args);
+    fastq_tally_input *input = (fastq_tally_input *)args;
 
     PileupSummary locus;
     std::vector<char *>::iterator it;
+    size_t c;
     for (it = input->beg; it != input->end; ++it)
     {
         locus.load_line(*it);
         locus.parse(input->min_quality_score);
-        for (size_t c = 0; c != locus.counts.num_data; ++c)
-        {
-            input->counts[locus.counts.stats_index[c]] += locus.counts.raw_counts[c];
-        }
+        for (c = 0; c != locus.counts.num_data; ++c)
+            input->counts[locus.counts.stats_index[c]] 
+                += locus.counts.stats[c].ct;
     }
     pthread_exit((void*) 0);
 }
@@ -101,7 +101,6 @@ int main_bqs(int argc, char ** argv)
     
     FILE * pileup_input_fh = open_if_present(pileup_input_file, "r");
     FILE * bqs_output_fh = open_if_present(bqs_output_file, "w");
-    
     
     char * last_fragment;
     size_t max_pileup_line_size = 1000000; // !!! fix this
@@ -165,12 +164,12 @@ int main_bqs(int argc, char ** argv)
     delete threads;
 
     std::fill(counts, counts + NUC_NUM_BQS, 0);
-    for (size_t t = 0; t != num_threads; ++t)
+    size_t t, n;
+    for (t = 0; t != num_threads; ++t)
     {
-        for (size_t bqs = 0; bqs != NUC_NUM_BQS; ++bqs)
-        {
-            counts[bqs] += worker_input[t]->counts[bqs];
-        }
+        for (n = 0; n != NUC_NUM_BQS; ++n)
+            counts[n] += worker_input[t]->counts[n];
+
         delete counts_t[t];
         delete worker_input[t];
     }
@@ -180,15 +179,15 @@ int main_bqs(int argc, char ** argv)
     char basecall;
     size_t quality, strand;
 
-    for (size_t i = 0; i != NUC_NUM_BQS; ++i)
+    for (n = 0; n != NUC_NUM_BQS; ++n)
     {
-        Nucleotide::decode(i, &basecall, &quality, &strand);
+        decode_nucleotide(n, &basecall, &quality, &strand);
         fprintf(bqs_output_fh,
                 "%c\t%Zu\t%c\t%Zu\n",
                 basecall,
                 quality,
                 (strand == NUC_PLUS_STRAND) ? '+' : '-',
-                counts[i]);
+                counts[n]);
     }
     close_if_present(bqs_output_fh);
     return 0;

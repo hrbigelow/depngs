@@ -74,7 +74,7 @@ void nucleotide_stats_initialize(const char *rdb_file, struct nucleotide_stats *
 }
 
 
-static inline int base_to_index(char base)
+inline int base_to_index(char base)
 {
     switch(base)
     {

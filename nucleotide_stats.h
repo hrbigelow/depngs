@@ -11,13 +11,20 @@
 
 #include <stdlib.h>
 
+/* holds the overall statistics for one sample. */
 struct nucleotide_stats {
     double jpd_buffer[NUC_NUM_FBQS]; /* P(F,B,Q,S).  Ordered F,B,Q,S */
-    double cpd_buffer[NUC_NUM_FBQS]; /* P(F|B,Q,S). */
+    double cpd_buffer[NUC_NUM_FBQS]; /* P(B,Q,S|F). */
 
     double founder_base_marginal[4];
     double *complete_jpd[4];
     double *founder_base_likelihood[4];
+};
+
+struct cpd_count {
+    double cpd[4]; /* = P(b,q,s|f) for each f in (A,C,G,T), and a
+                      particular (b,q,s) */
+    unsigned long ct; /* the count of this (b,q,s) tuple */
 };
 
 /* this structure holds a summary of all raw base calls at a given
@@ -25,12 +32,7 @@ struct nucleotide_stats {
    quality, strand) triplets using Nucleotide::decode */
 struct packed_counts
 {
-    struct {
-        double cpd[4]; /* = P(b,q,s|f) for each f in (A,C,G,T), and a
-                          particular (b,q,s) */
-        unsigned long ct; /* the count of this (b,q,s) tuple */
-    } stats[NUC_NUM_BQS];
-
+    struct cpd_count stats[NUC_NUM_BQS];
     /* number of populated elements in stats and 'stats_index'. */
     size_t num_data; 
 
@@ -39,6 +41,7 @@ struct packed_counts
     size_t stats_index[NUC_NUM_BQS];
 };
 
+int base_to_index(char base);
 struct nucleotide_stats make_nucleotide_stats();
 void nucleotide_stats_initialize(const char *rdb_file, struct nucleotide_stats *s);
 extern size_t encode_nucleotide(char basecall, size_t quality, size_t strand);

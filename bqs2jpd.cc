@@ -38,10 +38,7 @@ int main_bqs2jpd(int argc, char ** argv)
         error_prob = QualityToErrorProb(quality);
 
         std::fill(data_prob, data_prob + 4, (error_prob / 3.0) * count);
-
-        basecall_index = 
-            Nucleotide::base_to_index[static_cast<size_t>(basecall)];
-
+        basecall_index = base_to_index(basecall);
         data_prob[basecall_index] = (1.0 - error_prob) * count;
         
         fprintf(jpd_output_fh, "%c_%Zu_%c\t%8.6g\t%8.6g\t%8.6g\t%8.6g\n",

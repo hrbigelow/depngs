@@ -2,10 +2,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include "yepMath.h"
 
-
-#define BATCH 16;
-#define NDIM 4;
+#define BATCH 16
+#define NDIM 4
 
 
 inline double alphas_from_counts(struct packed_counts *cts, 
@@ -17,9 +17,9 @@ inline double alphas_from_counts(struct packed_counts *cts,
     memcpy(est_alpha, prior_alpha, sizeof(double) * NDIM);
     for (d = 0; d != cts->num_data; ++d)
     {
-        Nucleotide::decode(cts->stats_index[d], &base, &qual, &strand);
-        alpha0 += cts->raw_counts[d];
-        est_alpha[Nucleotide::base_to_index[(int)base]] += cts->raw_counts[d];
+        decode_nucleotide(cts->stats_index[d], &base, &qual, &strand);
+        alpha0 += cts->stats[d].ct;
+        est_alpha[base_to_index(base)] += cts->stats[d].ct;
     }
     return alpha0;
 }
@@ -41,6 +41,7 @@ inline void bounded_alphas_from_mean(double *mean, double alpha0,
     adjust = 1.0 + (alpha0 - new_alpha0) / qual_alpha0;
     for (d = 0; d != NDIM; ++d)
         if (alphas[d] != bound[d]) alphas[d] *= adjust;
+
     sum = alphas[0] + alphas[1] + alphas[2] + alphas[3];
 }
 
@@ -140,3 +141,5 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
         }
     }
 }
+
+

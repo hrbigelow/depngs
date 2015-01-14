@@ -17,7 +17,6 @@ int comp_usage()
             "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
-            "-z REAL     gradient tolerance used in finding the posterior mode (gsl_multimin) [1e-5]\n"
             "-f INT      number of sample points used for final quantiles estimation [1000]\n"
             "-X FLOAT    test quantile used for -y [0.01]\n"
             "-y FLOAT    minimum test quantile value needed to output locus composition [0]\n"
@@ -56,10 +55,14 @@ int main_comp(int argc, char ** argv)
 
     size_t num_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
+    float prior_alpha = 0.1;
 
     struct posterior_settings pset = {
-        1e-5,   // gradient_tolerance
-        3000,   // max_modefinding_iterations
+        { prior_alpha, 
+          prior_alpha,
+          prior_alpha,
+          prior_alpha
+        },      // prior alphas
         10,     // max_tuning_iterations
         1000,    // tuning_n_points
         1000,    // final_n_points
@@ -67,8 +70,8 @@ int main_comp(int argc, char ** argv)
         0.2,    // autocor_max_value
         30,     // initial_autocor_offset
         6,      // target_autocor_offset
-        true,   // is_log_integrand
-        62 * 3  // initial_sampling_range
+        NULL,   // logu points
+        5       // min_quality_score
     };
 
     double test_quantile = 0.01;
@@ -77,9 +80,6 @@ int main_comp(int argc, char ** argv)
     char quantiles_file[100];
     strcpy(quantiles_file, "/dev/null");
 
-    float prior_alpha = 0.1;
-
-    size_t min_quality_score = 5;
     const char *fastq_type = NULL;
 
     const char 
@@ -93,7 +93,7 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:r:t:m:z:T:f:X:y:a:I:M:C:p:q:F:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:r:t:m:T:f:X:y:a:I:M:C:p:q:F:v")) >= 0)
     {
         switch(c)
         {
@@ -101,7 +101,6 @@ int main_comp(int argc, char ** argv)
         case 'r': query_range_file = optarg; break;
         case 't': num_threads = (size_t)atof(optarg); break;
         case 'm': max_mem = (size_t)atof(optarg); break;
-        case 'z': pset.gradient_tolerance = atof(optarg); break;
         case 'T': pset.tuning_n_points = (size_t)atof(optarg); break;
         case 'f': pset.final_n_points = (size_t)atof(optarg); break;
         case 'X': test_quantile = atof(optarg); break;
@@ -111,7 +110,7 @@ int main_comp(int argc, char ** argv)
         case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'C': strcpy(quantiles_file, optarg); break;
         case 'p': prior_alpha = atof(optarg); break;
-        case 'q': min_quality_score = static_cast<size_t>(atoi(optarg)); break;
+        case 'q': pset.min_quality_score = static_cast<size_t>(atoi(optarg)); break;
         case 'F': fastq_type = optarg; break;
         case 'v': verbose = true; break;
         default: return comp_usage(); break;
@@ -129,11 +128,9 @@ int main_comp(int argc, char ** argv)
 
     return run_comp(max_mem,
                     num_threads,
-                    min_quality_score,
                     fastq_type,
                     label_string,
                     quantiles_file,
-                    prior_alpha,
                     pileup_input_file,
                     contig_order_file,
                     query_range_file,

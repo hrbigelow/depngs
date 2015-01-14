@@ -34,11 +34,7 @@ int simp_usage()
 
 int main_simp(int argc, char ** argv)
 {
-
-    if (argc < 3)
-    {
-        return simp_usage();
-    }
+    if (argc < 3) return simp_usage();
 
     char * ftype_string = argv[1];
     char * base_qual_params_file = argv[2];
@@ -54,22 +50,15 @@ int main_simp(int argc, char ** argv)
 
     FastqType fastq_type = None;
     if (strcmp(ftype_string, "Sanger") == 0)
-    {
         fastq_type = Sanger;
-    }
-    else if (strcmp(ftype_string, "Solexa") == 0)
-    {
-        fastq_type = Solexa;
-    }
-    else
-    {
-        fprintf(stderr, "Error: FTYPE must be 'Sanger' or 'Solexa'\n");
-    }
 
+    else if (strcmp(ftype_string, "Solexa") == 0)
+        fastq_type = Solexa;
+
+    else
+        fprintf(stderr, "Error: FTYPE must be 'Sanger' or 'Solexa'\n");
     
-    //char * founder_bases = new char[sample_size];
-    
-    gsl_rng * rand_gen = gsl_rng_alloc(gsl_rng_taus);
+    gsl_rng *rand_gen = gsl_rng_alloc(gsl_rng_taus);
     timeb millitime;
     ftime(& millitime);
     gsl_rng_set(rand_gen, millitime.millitm);
