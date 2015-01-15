@@ -3,13 +3,71 @@
 #include <string.h>
 #include <math.h>
 #include "yepMath.h"
+#include "yepCore.h"
+
+#include <gsl/gsl_statistics_double.h>
+#include <gsl/gsl_randist.h>
 
 #define BATCH 16
 #define NDIM 4
 
 
-inline double alphas_from_counts(struct packed_counts *cts, 
-                                 double *prior_alpha, double *est_alpha)
+/*
+  Calculates the average of N components of autocorrelation AC[i] =
+  Covar(P(i), P(i, offset)) / (SD(P(i)) * SD(P(i, offset))) where P(i)
+  is the vector of the i'th component of each point starting at point
+  0. P(i, offset) is the vector of the i'th component of each point,
+  starting at point 'offset'.
+ */
+double componentwise_autocorrelation(const double *points, 
+                                     size_t num_points, 
+                                     size_t offset)
+{
+    
+    double sdev[NDIM], covar[NDIM], mean[NDIM], autocors = 0;
+    size_t d;
+    for (d = 0; d != NDIM; ++d)
+    {
+        mean[d] = gsl_stats_mean(points + d, NDIM, num_points);
+        sdev[d] = gsl_stats_sd_m(points + d, NDIM, num_points, mean[d]);
+        covar[d] = gsl_stats_covariance_m(points + d, NDIM, 
+                                          points + (offset * NDIM) + d, NDIM,
+                                          num_points - offset,
+                                          mean[d], mean[d]);
+        autocors += covar[d] / (sdev[d] * sdev[d]);
+    }
+    autocors /= NDIM;
+    return autocors;
+}
+
+//returns the lowest offset between samples such that the overall autocorrelation
+//at that offset is below <valid_autocor>, or if not found, returns <autocor_max_offset>
+size_t best_autocorrelation_offset(const double *samples,
+                                   size_t num_samples,
+                                   size_t autocor_max_offset,
+                                   double valid_autocor)
+{
+    size_t best_offset = autocor_max_offset;
+    double autocor_measure;
+
+    //linear search to find first qualifying offset
+    for (size_t o = 1; o != autocor_max_offset && o <= num_samples; ++o)
+    {
+        autocor_measure = componentwise_autocorrelation(samples, num_samples, o);
+        if (autocor_measure < valid_autocor)
+        {
+            best_offset = o;
+            break;
+        }
+    }
+
+    return best_offset;
+}
+
+
+inline double alphas_from_counts(const struct packed_counts *cts, 
+                                 const double *prior_alpha, 
+                                 double *est_alpha)
 {
     char base;
     size_t d, qual, strand;
@@ -26,10 +84,10 @@ inline double alphas_from_counts(struct packed_counts *cts,
 
 
 inline void bounded_alphas_from_mean(double *mean, double alpha0, 
-                                     double *bound, double *alphas)
+                                     const double *bound, double *alphas)
 {
     unsigned d;
-    double qual_alpha0 = 0, new_alpha0 = 0, sum, adjust;
+    double qual_alpha0 = 0, new_alpha0 = 0, adjust;
     for (d = 0; d != NDIM; ++d)
     {
         alphas[d] = mean[d] * alpha0;
@@ -42,42 +100,46 @@ inline void bounded_alphas_from_mean(double *mean, double alpha0,
     for (d = 0; d != NDIM; ++d)
         if (alphas[d] != bound[d]) alphas[d] *= adjust;
 
-    sum = alphas[0] + alphas[1] + alphas[2] + alphas[3];
+    /* double sum = alphas[0] + alphas[1] + alphas[2] + alphas[3]; */
 }
 
 
 
 /* */
-size_t tune_proposal(struct packed_counts *cts,
-                     const struct posterior_settings *set,
+size_t tune_proposal(const struct packed_counts *cts,
+                     const struct posterior_settings *pset,
                      double *proposal_alpha,
                      double *estimated_mean,
                      double *points_buf)
 {
-    double alpha0 = alphas_from_counts(cts, set->prior_alpha, proposal_alpha);
+    double alpha0 = alphas_from_counts(cts, pset->prior_alpha, proposal_alpha);
 
-    size_t i, j, cumul_aoff, cur_aoff;
-    for (i = 0; i != set->max_tuning_iterations; ++i)
+    size_t i, j, d, cumul_aoff, cur_aoff;
+    for (i = 0; i != pset->max_tuning_iterations; ++i)
     {
-        cumul_aoff = current_aoff = 1;
+        cumul_aoff = cur_aoff = 1;
         for (j = 0; j != 3; ++j)
         {
-            metropolis_sampling(0, set->tuning_n_points, cts->stats, cts->num_data,
-                                proposal_alpha, logu, cumul_aoff, points_buf);
+            metropolis_sampling(0, pset->tuning_n_points, cts, pset->logu,
+                                proposal_alpha, cumul_aoff, points_buf);
             
-            current_aoff =
-                best_autocorrelation_offset(sample_points_buf, NDIM,
-                                            set->tuning_n_points,
-                                            set->autocor_max_offset, 
-                                            set->autocor_max_value);
+            cur_aoff =
+                best_autocorrelation_offset(points_buf,
+                                            pset->tuning_n_points,
+                                            pset->autocor_max_offset, 
+                                            pset->autocor_max_value);
             
-            if (current_aoff == 1) break;
-            cumul_aoff *= current_aoff;
+            if (cur_aoff == 1) break;
+            cumul_aoff *= cur_aoff;
         }
-        if (cumul_aoff <= set->target_autocor_offset) break;
+        if (cumul_aoff <= pset->target_autocor_offset) break;
         
-        multivariate_mean(points_buf, NDIM, set->tuning_n_points, estimated_mean);
-        bounded_alphas_from_mean(estimated_mean, alpha0, prior_alpha, proposal_alpha);
+        
+        for (d = 0; d != NDIM; ++d)
+            estimated_mean[d] = 
+                gsl_stats_mean(points_buf + d, NDIM, pset->tuning_n_points);
+
+        bounded_alphas_from_mean(estimated_mean, alpha0, pset->prior_alpha, proposal_alpha);
     }
     return cumul_aoff;
 }
@@ -95,13 +157,15 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
                          size_t nth, /* collect every nth point */
                          double *sample_points)
 {
-    const struct cpd_count *trm_end = cts->stats + cts->num_data;
+    const struct cpd_count *trm = cts->stats, *trm_end = trm + cts->num_data;
 
     double points[BATCH * NDIM], dotp[BATCH], ldotp[BATCH];
     double llh[BATCH], rll[BATCH], ivp[BATCH];
     double ar; /* acceptance ratio */
     double *pt, *outpt = sample_points + start_point * NDIM;
     unsigned short a = start_point;
+    size_t i;
+    gsl_rng *randgen = gsl_rng_alloc(gsl_rng_taus);
 
     while (a != n_points_wanted)
     {
@@ -109,8 +173,8 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
         pt = points;
         for (i = 0; i != BATCH; ++i)
         {
-            gsl_ran_dirichlet(proposal_alpha, NDIM, pt);
-            rll[i] = gsl_ran_dirichlet_lnpdf(proposal_alpha, NDIM, pt);
+            gsl_ran_dirichlet(randgen, NDIM, proposal_alpha, pt);
+            rll[i] = gsl_ran_dirichlet_lnpdf(NDIM, proposal_alpha, pt);
             pt += NDIM;
         }        
         /* 3. Generate a batch log likelihoods */
@@ -131,7 +195,7 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
         for (c = 1; c != BATCH && a != n_points_wanted; ++c)
         {
             ar = ivp[c] / ivp[p];
-            if (ar > logU[++u]) p = c;
+            if (ar > logu[++u]) p = c;
             if (u % nth)
             {
                 memcpy(outpt, &points[p * NDIM], NDIM * sizeof(double));
@@ -140,6 +204,7 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
             }
         }
     }
+    gsl_rng_free(randgen);
 }
 
 

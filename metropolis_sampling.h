@@ -24,7 +24,7 @@ struct posterior_settings
 };
 
 
-size_t tune_proposal(struct packed_counts *cts,
+size_t tune_proposal(const struct packed_counts *cts,
                      const struct posterior_settings *set,
                      double *proposal_alpha,
                      double *estimated_mean,

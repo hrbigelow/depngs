@@ -33,13 +33,6 @@ void compute_marginal_quantiles(double *sample_points,
     free(dim_points);
 }
 
-// this should be in synch with print_marginal_quantiles
-// there are 5 lines per locus
-size_t marginal_quantiles_locus_bytes(size_t num_quantiles)
-{
-    return 5 * (71 + (10 * num_quantiles) + 11 + num_quantiles);
-}
-
 #define NDIM 4
 
 // return next write position after writing to out_buf

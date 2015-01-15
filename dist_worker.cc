@@ -200,7 +200,8 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
             {
                 cumul_aoff[i] = 
                     tune_proposal(&sdpair[i]->locus.counts, 
-                                  input->pset, proposal_alpha[i], estimated_mean[i], 
+                                  input->pset,
+                                  proposal_alpha[i], estimated_mean[i], 
                                   sdpair[i]->sample_points);
                 
                 metropolis_sampling(0, input->prelim_n_points, 
@@ -541,7 +542,8 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     
     double estimated_mean[NUM_NUCS], proposal_alpha[NUM_NUCS];;
     size_t cumul_aoff = tune_proposal(&null_sd.locus.counts,
-                                      dw->pset, proposal_alpha, estimated_mean,
+                                      dw->pset, 
+                                      proposal_alpha, estimated_mean,
                                       null_sd.sample_points);
     
     // dw->worker[0]->tune(&null_sd, estimated_mean);
