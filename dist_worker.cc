@@ -206,7 +206,9 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
                 
                 metropolis_sampling(0, input->prelim_n_points, 
                                     &sdpair[i]->locus.counts,
-                                    input->pset->logu, proposal_alpha[i], cumul_aoff[i], 
+                                    input->pset->logu, proposal_alpha[i], 
+                                    input->pset->prior_alpha,
+                                    cumul_aoff[i], 
                                     sdpair[i]->sample_points);
                 
                 // input->worker[s1]->tune(sd1, estimated_mean1);
@@ -235,7 +237,9 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
                 metropolis_sampling(sdpair[i]->n_sample_points, 
                                     input->pset->final_n_points, 
                                     &sdpair[i]->locus.counts,
-                                    input->pset->logu, proposal_alpha[i], cumul_aoff[i], 
+                                    input->pset->logu, proposal_alpha[i], 
+                                    input->pset->prior_alpha,
+                                    cumul_aoff[i], 
                                     sdpair[i]->sample_points);
                 
                 // input->worker[s1]->sample(sdpair[i], estimated_mean1, input->final_n_points);
@@ -550,7 +554,8 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     metropolis_sampling(0, dw->pset->final_n_points,
                         &null_sd.locus.counts,
                         dw->pset->logu,
-                        proposal_alpha, cumul_aoff,
+                        proposal_alpha, dw->pset->prior_alpha, 
+                        cumul_aoff,
                         null_sd.sample_points);
 
     // dw->worker[0]->sample(&null_sd, estimated_mean, dw->final_n_points);
@@ -616,8 +621,7 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
 }
 
 
-void dist_offload(void *par,
-                  const struct managed_buf *bufs)
+void dist_offload(void *par, const struct managed_buf *bufs)
 {
     struct dist_worker_offload_par *ol = (struct dist_worker_offload_par *)par;
     unsigned i = 0;

@@ -42,37 +42,35 @@ char *print_quantiles(const double *quantiles,
 }
 
 
-struct sample_attributes
-make_sample_attributes(const char *jpd_file,
-                       const char *label_string,
-                       const char *pileup_file)
+void init_sample_attributes(const char *jpd_file,
+                            const char *label_string,
+                            const char *pileup_file,
+                            struct sample_attributes *s)
 {
-    struct sample_attributes s;
-    s.nuc_stats = make_nucleotide_stats();
-    nucleotide_stats_initialize(jpd_file, &s.nuc_stats);
-    if (strlen(label_string) + 1 > sizeof(s.label_string)) 
+    nucleotide_stats_initialize(jpd_file, &s->nuc_stats);
+    if (strlen(label_string) + 1 > sizeof(s->label_string)) 
     {
         fprintf(stderr, "%s: error: sample label string must be "
                 "less than %Zu characters\n", __func__,
-                sizeof(s.label_string));
+                sizeof(s->label_string));
         exit(1);
     }
-    strcpy(s.label_string, label_string);
-    s.fh = fopen(pileup_file, "r");
-    if (! s.fh)
+    strcpy(s->label_string, label_string);
+    s->fh = fopen(pileup_file, "r");
+    if (! s->fh)
     {
         fprintf(stderr, "%s: error: couldn't open pileup input file %s\n",
                 __func__, pileup_file);
         exit(1);
     }
-    return s;
 }
 
 
+
 /* initialize the locus in 'ls' defined by sd->current */
-inline void init_pileup_locus(const struct nucleotide_stats *stats,
-                              size_t min_quality_score,
-                              locus_sampling *ls)
+void init_pileup_locus(const struct nucleotide_stats *stats,
+                       size_t min_quality_score,
+                       locus_sampling *ls)
 {
     ls->locus.load_line(ls->current);
     ls->locus_ord = init_locus(ls->current);
@@ -145,7 +143,8 @@ char *process_line_comp(struct comp_worker_input *cw,
 
     // this->tune(&ls, initial_point);
     metropolis_sampling(0, cw->pset.final_n_points, &ls->locus.counts,
-                        cw->pset.logu, proposal_alpha, cumul_aoff,
+                        cw->pset.logu, proposal_alpha, 
+                        cw->pset.prior_alpha, cumul_aoff,
                         ls->sample_points);
     // this->sample(&ls, initial_point, this->s.final_n_points);
 

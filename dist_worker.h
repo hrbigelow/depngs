@@ -30,7 +30,7 @@ struct dist_worker_input
     double dist_quantile_values[MAX_NUM_QUANTILES];
     double comp_quantile_values[MAX_NUM_QUANTILES];
 
-    float min_high_conf_dist; // minimum mutational distance at high confidence to report change
+    float min_high_conf_dist; 
     size_t prelim_n_points;
     double prelim_quantile;
 
@@ -46,7 +46,7 @@ struct dist_worker_input
 
 
 struct dist_worker_offload_par {
-    FILE *dist_fh, *comp_fh, *indel_fh, *vcf_fh;
+    FILE *dist_fh, *comp_fh, *indel_fh;
 };
 
 /* conforms to thread_queue_worker_t */

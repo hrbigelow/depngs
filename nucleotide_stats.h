@@ -13,17 +13,14 @@
 
 /* holds the overall statistics for one sample. */
 struct nucleotide_stats {
-    double jpd_buffer[NUC_NUM_FBQS]; /* P(F,B,Q,S).  Ordered F,B,Q,S */
-    double cpd_buffer[NUC_NUM_FBQS]; /* P(B,Q,S|F). */
-
-    double founder_base_marginal[4];
-    double *complete_jpd[4];
-    double *founder_base_likelihood[4];
+    double jpd[4][NUC_NUM_BQS]; /* P(F,B,Q,S).  Ordered F,B,Q,S */
+    double cpd[4][NUC_NUM_BQS]; /* P(B,Q,S|F). */
+    double marg[4]; /* ?? Sum over BQS? */
 };
 
 struct cpd_count {
-    double cpd[4]; /* = P(b,q,s|f) for each f in (A,C,G,T), and a
-                      particular (b,q,s) */
+    /* holds P(b,q,s|f) for each f, and particular (b,q,s) */
+    double cpd[4];
     unsigned long ct; /* the count of this (b,q,s) tuple */
 };
 
@@ -42,7 +39,6 @@ struct packed_counts
 };
 
 int base_to_index(char base);
-struct nucleotide_stats make_nucleotide_stats();
 void nucleotide_stats_initialize(const char *rdb_file, struct nucleotide_stats *s);
 extern size_t encode_nucleotide(char basecall, size_t quality, size_t strand);
 extern void decode_nucleotide(size_t code, char *basecall, size_t *quality, size_t *strand);

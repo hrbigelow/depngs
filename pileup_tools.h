@@ -4,9 +4,12 @@
 #include <map>
 #include <string.h>
 #include "tools.h"
-#include "nucleotide_stats.h"
 
+extern "C" {
+#include "nucleotide_stats.h"
 #include "cache.h"
+}
+
 
 #define NUM_BASE_SYMBOLS 10
 

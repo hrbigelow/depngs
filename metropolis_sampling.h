@@ -4,13 +4,15 @@
 #include "nucleotide_stats.h"
 #include "defs.h"
 
-/* should be just one instance of this for an entire run */
+/* should be just one instance of this for an entire run.  holds
+   settings for doing metropolis sampling, plus settings common to
+   comp or dist estimation. */
 struct posterior_settings
 {
     double prior_alpha[4];
     size_t max_tuning_iterations;
-    size_t tuning_n_points;
-    size_t final_n_points;
+    size_t tuning_n_points; /* # points used to find autocor offset */
+    size_t final_n_points; /* # points needed for final sampling test */
     double autocor_max_offset;
     double autocor_max_value;
 
@@ -34,6 +36,7 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
                          const struct packed_counts *cts,
                          const double *logu, /* logs of U[0, 1] values */
                          double *proposal_alpha,
+                         const double *prior_alpha,
                          size_t nth, /* collect every nth point */
                          double *sample_points);
 

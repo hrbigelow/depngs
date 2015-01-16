@@ -1,6 +1,8 @@
-#include "nucleotide_stats.h"
 #include "tools.h"
 
+extern "C" {
+#include "nucleotide_stats.h"
+}
 
 int bqs2jpd_usage()
 {

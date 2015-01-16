@@ -47,7 +47,18 @@ typedef void (thread_queue_worker_t)(void *par,
 typedef void (thread_queue_offload_t)(void *par, 
                                       const struct managed_buf *bufs);
 
-/* initialize resources */
+/* initialize resources.
+
+   -- void *reader_par must hold the address of a single struct, which
+      will be cast to that struct by the reader function.
+
+   -- void *offload_par must hold the address of a single struct,
+      which will be cast to that struct by the offload function.
+
+   -- worker_par must hold the address of an array of n_threads
+      addresses, each an address to a struct to be used for each
+      worker function.  The struct is chosen by the user.
+*/
 struct thread_queue *
 thread_queue_init(thread_queue_reader_t reader,
                   void *reader_par,

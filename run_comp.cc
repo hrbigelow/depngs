@@ -80,10 +80,11 @@ int run_comp(size_t max_mem,
     
     dict_build();
 
-    const struct sample_attributes sample_atts = 
-        make_sample_attributes(jpd_data_params_file,
-                               label_string,
-                               pileup_input_file);
+    struct sample_attributes sample_atts;
+    init_sample_attributes(jpd_data_params_file,
+                           label_string,
+                           pileup_input_file,
+                           &sample_atts);
 
     /* 1. create and initialize a root index node representing the
        entire pileup file */

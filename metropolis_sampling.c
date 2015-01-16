@@ -8,7 +8,6 @@
 #include <gsl/gsl_statistics_double.h>
 #include <gsl/gsl_randist.h>
 
-#define BATCH 16
 #define NDIM 4
 
 
@@ -65,13 +64,15 @@ size_t best_autocorrelation_offset(const double *samples,
 }
 
 
-inline double alphas_from_counts(const struct packed_counts *cts, 
-                                 const double *prior_alpha, 
-                                 double *est_alpha)
+static inline double alphas_from_counts(const struct packed_counts *cts, 
+                                        const double *prior_alpha, 
+                                        double *est_alpha)
 {
     char base;
     size_t d, qual, strand;
-    double alpha0 = 0;
+    double alpha0 = prior_alpha[0] + prior_alpha[1]
+        + prior_alpha[2] + prior_alpha[3];
+        
     memcpy(est_alpha, prior_alpha, sizeof(double) * NDIM);
     for (d = 0; d != cts->num_data; ++d)
     {
@@ -83,8 +84,8 @@ inline double alphas_from_counts(const struct packed_counts *cts,
 }
 
 
-inline void bounded_alphas_from_mean(double *mean, double alpha0, 
-                                     const double *bound, double *alphas)
+static inline void bounded_alphas_from_mean(double *mean, double alpha0, 
+                                            const double *bound, double *alphas)
 {
     unsigned d;
     double qual_alpha0 = 0, new_alpha0 = 0, adjust;
@@ -121,7 +122,8 @@ size_t tune_proposal(const struct packed_counts *cts,
         for (j = 0; j != 3; ++j)
         {
             metropolis_sampling(0, pset->tuning_n_points, cts, pset->logu,
-                                proposal_alpha, cumul_aoff, points_buf);
+                                proposal_alpha, pset->prior_alpha,
+                                cumul_aoff, points_buf);
             
             cur_aoff =
                 best_autocorrelation_offset(points_buf,
@@ -134,47 +136,79 @@ size_t tune_proposal(const struct packed_counts *cts,
         }
         if (cumul_aoff <= pset->target_autocor_offset) break;
         
-        
         for (d = 0; d != NDIM; ++d)
             estimated_mean[d] = 
                 gsl_stats_mean(points_buf + d, NDIM, pset->tuning_n_points);
 
-        bounded_alphas_from_mean(estimated_mean, alpha0, pset->prior_alpha, proposal_alpha);
+        bounded_alphas_from_mean(estimated_mean, alpha0, 
+                                 pset->prior_alpha, proposal_alpha);
     }
     return cumul_aoff;
 }
 
-
 /* Generate sample points according to Metropolis criterion, using the
     alphas for a dirichlet proposal distribution, and the polynomial
     terms for the posterior. The sample points generated are written
-    to sample_points, in the range from start_point to
-    n_points_wanted.  Collect every 'nth' point */
-void metropolis_sampling(unsigned short start_point, unsigned short n_points_wanted,
+    to sample_points, in the range [start_point, end_point).  Collect
+    every 'nth' point.  Note the following identities, and the
+    cancellation of the prior.
+
+   Post(pri,obs) := Dir(pri)Mult(obs)
+   Prop(pro) := Dir(pri+(pro - pri)) := Dir(pri)Dir(pro-pri+1)
+   Post(pri,obs) / Prop(pri+obs) = Mult(obs) / Dir(pro-pri+1)
+
+   let res = pro-pri+1  (residual alphas)
+*/
+#define BATCH 16
+
+void metropolis_sampling(unsigned short start_point, 
+                         unsigned short end_point,
                          const struct packed_counts *cts,
-                         const double *logu, /* logs of U[0, 1] values */
+                         const double *logu, /* must have start_point
+                                                + end_point points */
                          double *proposal_alpha,
+                         const double *prior_alpha,
                          size_t nth, /* collect every nth point */
                          double *sample_points)
 {
     const struct cpd_count *trm = cts->stats, *trm_end = trm + cts->num_data;
 
+    double *pa = proposal_alpha;
+    fprintf(stdout, "metropolis_sampling: %f,%f,%f,%f\n", pa[0], pa[1], pa[2], pa[3]);
+    fflush(stdout);
+
     double points[BATCH * NDIM], dotp[BATCH], ldotp[BATCH];
     double llh[BATCH], rll[BATCH], ivp[BATCH];
     double ar; /* acceptance ratio */
     double *pt, *outpt = sample_points + start_point * NDIM;
-    unsigned short a = start_point;
     size_t i;
     gsl_rng *randgen = gsl_rng_alloc(gsl_rng_taus);
 
-    while (a != n_points_wanted)
+    unsigned short a = start_point, u = start_point;
+
+    memset(llh, 0, sizeof(llh));
+
+    double residual_alpha[] = {
+        proposal_alpha[0] - prior_alpha[0] + 1,
+        proposal_alpha[1] - prior_alpha[1] + 1,
+        proposal_alpha[2] - prior_alpha[2] + 1,
+        proposal_alpha[3] - prior_alpha[3] + 1
+    };
+    /* there are end_point values in logu.  and, in one iteration of
+     this while-loop, we will increment u BATCH * nth times. So, this
+     is the max value u can have before the iteration. */
+    unsigned u_max = end_point - nth * BATCH;
+    while (a != end_point)
     {
-        /* 1. Generate a batch of proposal points and log likelihoods for them */
+        if (u >= u_max) u = start_point;
+
+        /* 1. Generate a batch of proposal points and log likelihoods
+           for them */
         pt = points;
         for (i = 0; i != BATCH; ++i)
         {
             gsl_ran_dirichlet(randgen, NDIM, proposal_alpha, pt);
-            rll[i] = gsl_ran_dirichlet_lnpdf(NDIM, proposal_alpha, pt);
+            rll[i] = gsl_ran_dirichlet_lnpdf(NDIM, residual_alpha, pt);
             pt += NDIM;
         }        
         /* 3. Generate a batch log likelihoods */
@@ -188,15 +222,15 @@ void metropolis_sampling(unsigned short start_point, unsigned short n_points_wan
         }
         /* 4. Compute ivp ratios */
         for (i = 0; i != BATCH; ++i)
-            ivp[i] = rll[i] / llh[i]; /* any way to avoid the division? */
+            ivp[i] = rll[i] - llh[i]; /* any way to avoid the division? */
         
         /* 5. Copy with rejection */
-        unsigned short c, p = 0, u = 0;
-        for (c = 1; c != BATCH && a != n_points_wanted; ++c)
+        unsigned short p = 0, c;
+        for (c = 1; c != BATCH && a != end_point; ++c)
         {
-            ar = ivp[c] / ivp[p];
+            ar = ivp[c] - ivp[p];
             if (ar > logu[++u]) p = c;
-            if (u % nth)
+            if (u % nth == 0)
             {
                 memcpy(outpt, &points[p * NDIM], NDIM * sizeof(double));
                 ++a;

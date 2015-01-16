@@ -205,7 +205,6 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
     ix->cur_node = nd;
 }
 
-inline
 off_t off_bound_aux(const struct file_bsearch_node *ix,
                     struct pair_ordering query,
                     int cmp)

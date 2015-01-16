@@ -13,15 +13,17 @@ CC = g++
 INSTALL = /usr/bin/install -c
 INSTALLDATA = /usr/bin/install -c -m 644
 OBJDIR = obj
-YEPLIBDIR = ../yeppp/library/binaries/x64-linux-sysv-default/
-YEPHEADERS = ../yeppp/library/headers
+YEPLIBDIR = $(HOME)/cc/yeppp/library/binaries/x64-linux-sysv-default
+GSLDEBUGLIB = /usr/lib/debug/usr/lib
+YEPHEADERS = $(HOME)/cc/yeppp/library/headers
 CPPFLAGS = -I. -I.. -I$(YEPHEADERS)
 OPT = -O0
 PROF = 
 CXXFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu++0x
-CFLAGS = -ggdb3 $(OPT) -Wall -std=gnu99
+CFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu99
 LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt
 
+DEPLIBS = -lgsl -lgslcblas -lm -lyeppp -lz -lpthread -lc -lstdc++
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
 
 SOURCES = $(shell find $(srcdir) -name "*.cc")
@@ -35,13 +37,13 @@ EXE = dep test_dirichlet
 .PHONY : all
 all : $(EXE)
 
-dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o simc.o bqs.o			\
-	bqs2jpd.o sampling.o tools.o pileup_tools.o metropolis_sampling.o	\
-	nucleotide_stats.o usage_strings.o run_comp.o dist.o				\
-	dist_worker.o comp_worker.o pug.o file_utils.o						\
-	file_binary_search.o ordering.o locus.o range_line_reader.o			\
+dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o bqs.o bqs2jpd.o	\
+	sampling.o tools.o nucleotide_stats.o pileup_tools.o			\
+	metropolis_sampling.o usage_strings.o run_comp.o dist.o			\
+	dist_worker.o comp_worker.o pug.o file_utils.o					\
+	file_binary_search.o ordering.o locus.o range_line_reader.o		\
 	thread_queue.o)
-	$(CXX) $(CXXFLAGS) -L$(YEPLIBDIR) -o $@ $^ -lgsl -lgslcblas -lm -lyeppp
+	ld -L /usr/lib/gcc/x86_64-linux-gnu/4.8/ -L $(YEPLIBDIR) -L $(GSLDEBUGLIB) -rpath $(YEPLIBDIR) -rpath $(GSLDEBUGLIB) -o $@ $^ $(DEPLIBS)
 
 test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)
 	$(C) $(CFLAGS) -o $@ $^ -lgsl -lgslcblas -lrt -lm

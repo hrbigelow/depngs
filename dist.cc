@@ -21,9 +21,8 @@ int dist_usage()
             "Options:\n\n"
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
-            "-V STRING   (optional) name of output vcf file.  If absent, do not output VCF file\n"
             "-i STRING   (optional) name of output indel distance file.  If absent, do not perform indel distance calculation.\n"
-            "-S STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
+            "-s STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
             "-r STRING   range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
             "-y REAL     Minimum mutational distance to report as changed [0.2]\n"
             "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
@@ -36,7 +35,7 @@ int dist_usage()
 
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
-            "-v <empty>  if present, be verbose [absent]\n"
+            // "-v <empty>  if present, be verbose [absent]\n"
             "\n"
             "These options affect how sampling is done.\n"
             "\n"
@@ -66,16 +65,12 @@ int dist_usage()
 extern char *optarg;
 extern int optind;
 
-
-
 int main_dist(int argc, char **argv)
 {
-
     size_t n_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
     float prior_alpha = 0.1;
-
     struct posterior_settings pset = {
         { prior_alpha, 
           prior_alpha,
@@ -93,40 +88,34 @@ int main_dist(int argc, char **argv)
         5       // min_quality_score
     };
 
-
     size_t prelim_n_points = 1e2;
     float prelim_quantile = 0.01;
     size_t n_sample_point_pairs = 1e4;
 
     int print_pileup_fields = 0;
 
-
     const char *dist_quantiles_string = "0.005,0.05,0.5,0.95,0.995";
     const char *comp_quantiles_string = "0.005,0.05,0.5,0.95,0.995";
 
     const char *dist_file = NULL;
     const char *comp_file = NULL;
-    const char *vcf_file = NULL;
     const char *indel_dist_file = NULL;
     const char *fastq_type = NULL;
-
     const char *sample_pairings_file = NULL;
     const char *query_range_file = NULL;
 
     float min_dist_to_report = 0.2;
-
-    bool verbose = false;
+    // bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:V:i:S:r:y:t:m:T:x:X:f:gP:a:I:M:p:q:F:vD:C:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:i:s:r:y:t:m:T:x:X:f:gP:a:I:M:p:q:F:D:C:")) >= 0)
     {
         switch(c)
         {
         case 'd': dist_file = optarg; break;
         case 'c': comp_file = optarg; break;
-        case 'V': vcf_file = optarg; break;
         case 'i': indel_dist_file = optarg; break;
-        case 'S': sample_pairings_file = optarg; break;
+        case 's': sample_pairings_file = optarg; break;
         case 'r': query_range_file = optarg; break;
         case 'y': min_dist_to_report = atof(optarg); break;
         case 't': n_threads = (size_t)atof(optarg); break;
@@ -142,7 +131,7 @@ int main_dist(int argc, char **argv)
         case 'p': prior_alpha = atof(optarg); break;
         case 'q': pset.min_quality_score = (size_t)atoi(optarg); break;
         case 'F': fastq_type = optarg; break;
-        case 'v': verbose = true; break;
+        // case 'v': verbose = true; break;
         case 'D': dist_quantiles_string = optarg; break;
         case 'C': comp_quantiles_string = optarg; break;
         case 'g': print_pileup_fields = 1; break;
@@ -151,6 +140,30 @@ int main_dist(int argc, char **argv)
     }
     if (argc - optind != 2)
         return dist_usage();
+
+    /* initialize logu with suitably distributed uniform values */
+    pset.logu = (double *)malloc(sizeof(double) * 
+                                 (pset.final_n_points + prelim_n_points));
+    unsigned p;
+    double prelim_n_inv = 1.0 / (double)prelim_n_points;
+    double next_n_inv = 1.0 / (double)(pset.final_n_points - prelim_n_points);
+
+    for (p = 0; p != prelim_n_points; ++p)
+        pset.logu[p] = log(p * prelim_n_inv);
+
+    gsl_rng *randgen = gsl_rng_alloc(gsl_rng_taus);
+
+    gsl_ran_shuffle(randgen, pset.logu, prelim_n_points, 
+                    sizeof(pset.logu[0]));
+
+    for (p = 0; p != pset.final_n_points - prelim_n_points; ++p)
+        pset.logu[p + prelim_n_points] = log(p * next_n_inv);
+
+    gsl_ran_shuffle(randgen, pset.logu + prelim_n_points, 
+                    pset.final_n_points, 
+                    sizeof(pset.logu[0]));
+
+    gsl_rng_free(randgen);
 
     const char *samples_file = argv[optind];
     const char *contig_order_file = argv[optind + 1];
@@ -180,7 +193,7 @@ int main_dist(int argc, char **argv)
     size_t max_label_len = sizeof((*sample_attrs).label_string);
     while (! feof(samples_fh))
     {
-        fscanf(samples_fh, "%s\t%s\t%s\n", label, jpd, pileup);
+        (void)fscanf(samples_fh, "%s\t%s\t%s\n", label, jpd, pileup);
         ALLOC_GROW_TYPED(sample_attrs, n_samples + 1, n_alloc);
         if (strlen(label) > max_label_len)
         {
@@ -188,15 +201,13 @@ int main_dist(int argc, char **argv)
                     "Label was \"%s\"\n", max_label_len, label);
             exit(1);
         }
-        sample_attrs[n_samples] = 
-            make_sample_attributes(jpd, label, pileup);
+        init_sample_attributes(jpd, label, pileup, &sample_attrs[n_samples]);
         ++n_samples;
     }
     fclose(samples_fh);
 
     int offset;
-    if (fastq_type)
-        offset = fastq_type_to_offset(fastq_type);
+    if (fastq_type) offset = fastq_type_to_offset(fastq_type);
     else
     {
         size_t sz = 1024 * 1024 * 64;
@@ -218,7 +229,6 @@ int main_dist(int argc, char **argv)
 
     FILE *dist_fh = open_if_present(dist_file, "w");
     FILE *comp_fh = open_if_present(comp_file, "w");
-    FILE *vcf_fh = open_if_present(vcf_file, "w");
     FILE *indel_fh = open_if_present(indel_dist_file, "w");
 
 
@@ -234,19 +244,21 @@ int main_dist(int argc, char **argv)
 
     size_t rval;
     double qval;
-    int i, pos;
+    int i, pos, off;
     pset.n_dist_quantiles = 0;
     pset.n_comp_quantiles = 0;
     for (i = 0; i != 2; ++i)
     {
         pos = 0;
-        while ((rval = sscanf(Q[i].quant_string + pos, "%lf%n", &qval, &pos)) == 2)
+        off = 0;
+        while (Q[i].quant_string[off] != '\0' &&
+               (rval = sscanf(Q[i].quant_string + off, "%lf%n", &qval, &pos)) == 1)
         {
             if (*Q[i].n_quant == MAX_NUM_QUANTILES) break;
             Q[i].quant[(*Q[i].n_quant)++] = qval;
-            pos += Q[i].quant_string[pos] == ',' ? 1 : 0;
+            off += pos + (Q[i].quant_string[off + pos] == ',' ? 1 : 0);
         }
-        if (rval != 2 || *Q[i].n_quant == 0 
+        if (rval != 1 || *Q[i].n_quant == 0 
             || *Q[i].n_quant == MAX_NUM_QUANTILES)
         {
             fprintf(stderr, "Error: something amiss with quantiles\n%s\n",
@@ -260,7 +272,6 @@ int main_dist(int argc, char **argv)
 
     // parse pairings file
     size_t n_pairings, *pair_sample1, *pair_sample2;
-
     {
         FILE *sample_pairings_fh = open_if_present(sample_pairings_file, "r");
         std::vector<size_t> pair1, pair2;
@@ -269,7 +280,7 @@ int main_dist(int argc, char **argv)
         size_t p, s;
         while (! feof(sample_pairings_fh))
         {
-            fscanf(sample_pairings_fh, "%s\t%s\n", label[0], label[1]);
+            (void)fscanf(sample_pairings_fh, "%s\t%s\n", label[0], label[1]);
             for (p = 0; p != 2; ++p)
             {
                 for (s = 0; s != n_samples; ++s)
@@ -317,31 +328,36 @@ int main_dist(int argc, char **argv)
 
     size_t t, s; /* threads, samples */
 
-    struct dist_worker_input *worker_inputs = (struct dist_worker_input *)
+    struct dist_worker_input *worker_buf = (struct dist_worker_input *)
         malloc(n_threads * sizeof(struct dist_worker_input));
     
+    void **worker_inputs = (void **)malloc(n_threads * sizeof(void *));
     // initialize all generic structures in the worker_inputs
     for (t = 0; t != n_threads; ++t)
     {
-        worker_inputs[t].sample_atts = sample_attrs;
-        worker_inputs[t].pset = &pset; 
-        worker_inputs[t].thread_num = t;
-        worker_inputs[t].n_samples = n_samples;
-        worker_inputs[t].n_sample_pairs = n_pairings;
-        worker_inputs[t].n_sample_point_pairings = n_sample_point_pairs;
-        worker_inputs[t].min_high_conf_dist = min_dist_to_report;
-        worker_inputs[t].prelim_n_points = prelim_n_points;
-        worker_inputs[t].prelim_quantile = prelim_quantile;
-        worker_inputs[t].randgen = gsl_rng_alloc(gsl_rng_taus);
-        worker_inputs[t].square_dist_buf = 
+        worker_buf[t].sample_atts = sample_attrs;
+        worker_buf[t].pset = &pset; 
+        worker_buf[t].thread_num = t;
+        worker_buf[t].n_samples = n_samples;
+        worker_buf[t].n_sample_pairs = n_pairings;
+        worker_buf[t].n_sample_point_pairings = n_sample_point_pairs;
+        worker_buf[t].min_high_conf_dist = min_dist_to_report;
+        worker_buf[t].prelim_n_points = prelim_n_points;
+        worker_buf[t].prelim_quantile = prelim_quantile;
+        worker_buf[t].randgen = gsl_rng_alloc(gsl_rng_taus);
+        worker_buf[t].square_dist_buf = 
             (double *)malloc(sizeof(double) * n_sample_point_pairs);
-        worker_inputs[t].print_pileup_fields = print_pileup_fields;
-        worker_inputs[t].do_dist = (dist_fh != NULL);
-        worker_inputs[t].do_comp = (comp_fh != NULL);
-        worker_inputs[t].do_indel = (indel_fh != NULL);
-        worker_inputs[t].pair_sample1 = pair_sample1;
-        worker_inputs[t].pair_sample2 = pair_sample2;
+        worker_buf[t].print_pileup_fields = print_pileup_fields;
+        worker_buf[t].do_dist = (dist_fh != NULL);
+        worker_buf[t].do_comp = (comp_fh != NULL);
+        worker_buf[t].do_indel = (indel_fh != NULL);
+        worker_buf[t].pair_sample1 = pair_sample1;
+        worker_buf[t].pair_sample2 = pair_sample2;
     }
+
+    for (t = 0; t != n_threads; ++t)
+        worker_inputs[t] = &worker_buf[t];
+
     size_t scan_thresh_size = 1e6;
     file_bsearch_init(init_locus, scan_thresh_size);
     struct file_bsearch_index *ix = (struct file_bsearch_index *)
@@ -373,14 +389,13 @@ int main_dist(int argc, char **argv)
     };
 
     struct dist_worker_offload_par offload_par = {
-        dist_fh, comp_fh, indel_fh, vcf_fh
+        dist_fh, comp_fh, indel_fh
     };
 
     size_t n_output_files = 
         (dist_fh ? 1 : 0)
         + (comp_fh ? 1 : 0)
-        + (indel_fh ? 1 : 0)
-        + (vcf_fh ? 1 : 0);
+        + (indel_fh ? 1 : 0);
 
     /* this should be revisited if it turns out that threads are
        stalling */
@@ -404,14 +419,13 @@ int main_dist(int argc, char **argv)
     free(ix);
     for (t = 0; t != n_threads; ++t)
     {
-        gsl_rng_free(worker_inputs[t].randgen);
-        free(worker_inputs[t].dist_quantile_values);
-        free(worker_inputs[t].comp_quantile_values);
-        free(worker_inputs[t].square_dist_buf);
+        gsl_rng_free(worker_buf[t].randgen);
+        free(worker_buf[t].square_dist_buf);
     }
 
+    free(worker_buf);
     free(worker_inputs);
-
+    free(pset.logu);
     // fprintf(stderr, "File reading metrics:  %Zu total bytes read in %Zu nanoseconds, %5.3f MB/s\n",
     //         total_bytes_read, total_fread_nsec,
     //         static_cast<float>(total_bytes_read) * 1000.0 / static_cast<float>(total_fread_nsec));
@@ -419,7 +433,6 @@ int main_dist(int argc, char **argv)
     if (dist_fh) fclose(dist_fh);
     if (comp_fh) fclose(comp_fh);
     if (indel_fh) fclose(indel_fh);
-    if (vcf_fh) fclose(vcf_fh);
 
     for (s = 0; s != n_samples; ++s)
         fclose(sample_attrs[s].fh);

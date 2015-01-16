@@ -239,7 +239,6 @@ static void *worker_func(void *args)
         tq->reader(tq->reader_par, in->buf);
         rc = pthread_mutex_unlock(&tq->read_mtx);
         CHECK_THREAD(rc);
-        PROGRESS_MSG("Read input");
 
         /* no need to free any resources here */
         size_t sz = 0, b;
@@ -250,7 +249,12 @@ static void *worker_func(void *args)
                 break;
             }
         if (sz == 0)
+        {
+            PROGRESS_MSG("No more to read.  Exiting.");
             pthread_exit(NULL);
+        }
+        else 
+            PROGRESS_MSG("Read input");
 
         /* search for EMPTY output buf, append, set status to
            LOADING */

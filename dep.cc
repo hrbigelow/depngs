@@ -11,8 +11,8 @@ int usage()
             "Usage:\n\n"
             "dep comp       Estimate per-locus base composition with confidence intervals\n"
             "dep dist       Estimate sample-pairwise base composition distance with confidence intervals\n"
-            "dep simp       Simulate pileup file\n"
-            "dep simc       Simulate loci compositions\n"
+            // "dep simp       Simulate pileup file\n"
+            // "dep simc       Simulate loci compositions\n"
             // "dep bqslocus   Tally {basecall, quality score, strand} counts per locus\n"
             "dep bqs        Tally {basecall, quality score, strand} counts overall\n"
             "dep bqs2jpd    Expand {basecall, quality score, strand} counts to jpd\n"
@@ -36,8 +36,8 @@ int main(int argc, char **argv)
     // else if (strcmp(argv[1], "simp") == 0)
     //     return main_simp(argc - 1, argv + 1);
 
-    else if (strcmp(argv[1], "simc") == 0)
-        return main_simc(argc - 1, argv + 1);
+    // else if (strcmp(argv[1], "simc") == 0)
+    //     return main_simc(argc - 1, argv + 1);
 
     else if (strcmp(argv[1], "bqs") == 0)
         return main_bqs(argc - 1, argv + 1);

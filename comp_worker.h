@@ -68,15 +68,16 @@ char *print_discrete_comp(PileupSummary *locus,
                           double min_value_to_print,
                           char *out_buf);
 
-struct sample_attributes
-make_sample_attributes(const char *jpd_file,
-                       const char *sample_label,
-                       const char *pileup_file);
+void init_sample_attributes(const char *jpd_file,
+                            const char *sample_label,
+                            const char *pileup_file,
+                            struct sample_attributes *s);
 
 /* initialize the locus in 'ls' defined by sd->current */
 void init_pileup_locus(const struct nucleotide_stats *stats,
                        size_t min_quality_score,
                        locus_sampling *ls);
+
 
 void refresh_locus(const struct nucleotide_stats *stats,
                    size_t min_quality_score,
