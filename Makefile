@@ -23,7 +23,7 @@ CXXFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu++0x
 CFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu99
 LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt
 
-DEPLIBS = -lgsl -lgslcblas -lm -lyeppp -lz -lpthread -lc -lstdc++
+DEPLIBS = -lgsl -lgslcblas -lm -lyeppp -lz -lpthread
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
 
 SOURCES = $(shell find $(srcdir) -name "*.cc")
@@ -43,7 +43,8 @@ dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o bqs.o bqs2jpd.o	\
 	dist_worker.o comp_worker.o pug.o file_utils.o					\
 	file_binary_search.o ordering.o locus.o range_line_reader.o		\
 	thread_queue.o)
-	ld -L /usr/lib/gcc/x86_64-linux-gnu/4.8/ -L $(YEPLIBDIR) -L $(GSLDEBUGLIB) -rpath $(YEPLIBDIR) -rpath $(GSLDEBUGLIB) -o $@ $^ $(DEPLIBS)
+	$(CC) -L$(YEPLIBDIR) -L$(GSLDEBUGLIB) \
+	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB) -o $@ $^ $(DEPLIBS)
 
 test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)
 	$(C) $(CFLAGS) -o $@ $^ -lgsl -lgslcblas -lrt -lm

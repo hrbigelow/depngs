@@ -616,6 +616,14 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     for (s = 0; s != dw->n_samples; ++s)
         free(samples[s].sample_points);
 
+    if (dw->thread_num == 0)
+    {
+        fprintf(stderr, "Finished processing %s %i\n", 
+                samples[gs].locus.reference,
+                samples[gs].locus.position);
+        fflush(stderr);
+    }
+
     // free(samples);
     delete[] samples;
 }
