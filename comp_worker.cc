@@ -136,16 +136,17 @@ char *process_line_comp(struct comp_worker_input *cw,
     /* opportunity here to not re-sample points if the tuning has okay
        autocorrelation */
     double estimated_mean[NUM_NUCS], proposal_alpha[NUM_NUCS];;
+    struct eval_counts eval;
     size_t cumul_aoff = 
         tune_proposal(&ls->locus.counts,
                       &cw->pset, proposal_alpha, estimated_mean,
-                      ls->sample_points);
+                      ls->sample_points, &eval);
 
     // this->tune(&ls, initial_point);
     metropolis_sampling(0, cw->pset.final_n_points, &ls->locus.counts,
                         cw->pset.logu, proposal_alpha, 
                         cw->pset.prior_alpha, cumul_aoff,
-                        ls->sample_points);
+                        ls->sample_points, &eval);
     // this->sample(&ls, initial_point, this->s.final_n_points);
 
     // we always print a base composition estimate for loci with

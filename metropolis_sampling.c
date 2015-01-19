@@ -111,11 +111,13 @@ size_t tune_proposal(const struct packed_counts *cts,
                      const struct posterior_settings *pset,
                      double *proposal_alpha,
                      double *estimated_mean,
-                     double *points_buf)
+                     double *points_buf,
+                     struct eval_counts *eval)
 {
     double alpha0 = alphas_from_counts(cts, pset->prior_alpha, proposal_alpha);
 
     size_t i, j, d, cumul_aoff, cur_aoff;
+
     for (i = 0; i != pset->max_tuning_iterations; ++i)
     {
         cumul_aoff = cur_aoff = 1;
@@ -123,7 +125,7 @@ size_t tune_proposal(const struct packed_counts *cts,
         {
             metropolis_sampling(0, pset->tuning_n_points, cts, pset->logu,
                                 proposal_alpha, pset->prior_alpha,
-                                cumul_aoff, points_buf);
+                                cumul_aoff, points_buf, eval);
             
             cur_aoff =
                 best_autocorrelation_offset(points_buf,
@@ -161,15 +163,17 @@ size_t tune_proposal(const struct packed_counts *cts,
 */
 #define BATCH 16
 
-void metropolis_sampling(unsigned short start_point, 
-                         unsigned short end_point,
-                         const struct packed_counts *cts,
-                         const double *logu, /* must have start_point
-                                                + end_point points */
-                         double *proposal_alpha,
-                         const double *prior_alpha,
-                         size_t nth, /* collect every nth point */
-                         double *sample_points)
+void
+metropolis_sampling(unsigned short start_point, 
+                    unsigned short end_point,
+                    const struct packed_counts *cts,
+                    const double *logu, /* must have start_point
+                                           + end_point points */
+                    double *proposal_alpha,
+                    const double *prior_alpha,
+                    size_t nth, /* collect every nth point */
+                    double *sample_points,
+                    struct eval_counts *eval)
 {
     const struct cpd_count *trm = cts->stats, *trm_end = trm + cts->num_data;
 
@@ -194,6 +198,7 @@ void metropolis_sampling(unsigned short start_point,
         proposal_alpha[2] - prior_alpha[2] + 1,
         proposal_alpha[3] - prior_alpha[3] + 1
     };
+
     /* there are end_point values in logu.  and, in one iteration of
      this while-loop, we will increment u BATCH * nth times. So, this
      is the max value u can have before the iteration. */
@@ -211,6 +216,8 @@ void metropolis_sampling(unsigned short start_point,
             rll[i] = gsl_ran_dirichlet_lnpdf(NDIM, residual_alpha, pt);
             pt += NDIM;
         }        
+        eval->n_dirichlet += BATCH;
+
         /* 3. Generate a batch log likelihoods */
         while (trm != trm_end)
         {
@@ -220,6 +227,8 @@ void metropolis_sampling(unsigned short start_point,
             (void)yepCore_Add_V64fV64f_V64f(llh, ldotp, llh, BATCH);
             ++trm;
         }
+        eval->n_yep += cts->num_data * BATCH;
+
         /* 4. Compute ivp ratios */
         for (i = 0; i != BATCH; ++i)
             ivp[i] = rll[i] - llh[i]; /* any way to avoid the division? */
