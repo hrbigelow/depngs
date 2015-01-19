@@ -23,7 +23,7 @@ CXXFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu++0x
 CFLAGS = -ggdb3 $(OPT) $(PROF) -Wall -std=gnu99
 LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt
 
-DEPLIBS = -lgsl -lgslcblas -lm -lyeppp -lz -lpthread
+DEPLIBS = -lgsl -lgslcblas -lm -lyeppp -lz -lpthread -lrt
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
 
 SOURCES = $(shell find $(srcdir) -name "*.cc")

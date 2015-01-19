@@ -189,7 +189,7 @@ int main_dist(int argc, char **argv)
     char jpd[1000], pileup[1000], label[1000];
     size_t n_samples = 0, n_alloc = 0;
 
-    struct sample_attributes *sample_attrs;
+    struct sample_attributes *sample_attrs = NULL;
     size_t max_label_len = sizeof((*sample_attrs).label_string);
     while (! feof(samples_fh))
     {
@@ -242,7 +242,7 @@ int main_dist(int argc, char **argv)
         comp_quantiles_string, pset.comp_quantiles, &pset.n_comp_quantiles
     };
 
-    size_t rval;
+    size_t rval = 0;
     double qval;
     int i, pos, off;
     pset.n_dist_quantiles = 0;

@@ -11,7 +11,7 @@
 
 namespace FileUtils
 {
-    int switch_printf(bool is_file, void ** buf, char const* format, ...);
+    /* int switch_printf(bool is_file, void ** buf, char const* format, ...); */
 
     void cat(char * buf, 
              size_t bufsize, 

@@ -12,6 +12,7 @@
 
 //optionally prints to a string or a file.  to make a string behave
 //the same as a file, though, we need to increment it after printing.
+/*
 int FileUtils::switch_printf(bool is_file, void ** buf, char const* format, ...)
 {
     va_list arg;
@@ -34,7 +35,7 @@ int FileUtils::switch_printf(bool is_file, void ** buf, char const* format, ...)
 
     return done;
 }
-
+*/
 
 
 //safely reads and writes 'bytes_to_print' bytes from input_fh to

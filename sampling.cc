@@ -3,6 +3,7 @@
 #include <string.h>
 #include <algorithm>
 #include <map>
+#include <cmath>
 
 /* compute marginal quantiles on a given dimension of the sample
    points */

@@ -173,9 +173,9 @@ void metropolis_sampling(unsigned short start_point,
 {
     const struct cpd_count *trm = cts->stats, *trm_end = trm + cts->num_data;
 
-    double *pa = proposal_alpha;
-    fprintf(stdout, "metropolis_sampling: %f,%f,%f,%f\n", pa[0], pa[1], pa[2], pa[3]);
-    fflush(stdout);
+    /* double *pa = proposal_alpha; */
+    /* fprintf(stdout, "metropolis_sampling: %f,%f,%f,%f\n", pa[0], pa[1], pa[2], pa[3]); */
+    /* fflush(stdout); */
 
     double points[BATCH * NDIM], dotp[BATCH], ldotp[BATCH];
     double llh[BATCH], rll[BATCH], ivp[BATCH];
