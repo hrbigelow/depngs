@@ -3,3 +3,6 @@
 pileup_depth_stats
 dep
 pileup_to_bindepth
+test_likelihood.c
+testopt.c
+
