@@ -13,6 +13,10 @@ extern "C" {
 #include "metropolis_sampling.h"
 }
 
+
+/* With 100 sample points */
+#define MAX_SAMPLE_POINTS 100
+
 /* instantiate one of these for each thread and each sample.  holds
    the information for the locus currently being processed in this
    thread and sample. */
@@ -21,6 +25,7 @@ struct locus_sampling
     PileupSummary locus;
     bool is_next;
     unsigned char dist_printed;
+    /* double proposal_alpha[NUM_NUCS]; */
     double *sample_points;
     unsigned n_sample_points;
     size_t autocor_offset;

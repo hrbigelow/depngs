@@ -65,20 +65,21 @@ size_t best_autocorrelation_offset(const double *samples,
 
 
 static inline double alphas_from_counts(const struct packed_counts *cts, 
-                                        const double *prior_alpha, 
+                                        const double *prior_alpha,
                                         double *est_alpha)
 {
     char base;
     size_t d, qual, strand;
-    double alpha0 = prior_alpha[0] + prior_alpha[1]
-        + prior_alpha[2] + prior_alpha[3];
-        
     memcpy(est_alpha, prior_alpha, sizeof(double) * NDIM);
+    double alpha0 = est_alpha[0] + est_alpha[1]
+        + est_alpha[2] + est_alpha[3];
+
     for (d = 0; d != cts->num_data; ++d)
     {
         decode_nucleotide(cts->stats_index[d], &base, &qual, &strand);
         alpha0 += cts->stats[d].ct;
-        est_alpha[base_to_index(base)] += cts->stats[d].ct;
+        unsigned bi = base_to_index(base);
+        est_alpha[bi] += cts->stats[d].ct;
     }
     return alpha0;
 }
@@ -126,7 +127,9 @@ size_t tune_proposal(const struct packed_counts *cts,
             metropolis_sampling(0, pset->tuning_n_points, cts, pset->logu,
                                 proposal_alpha, pset->prior_alpha,
                                 cumul_aoff, points_buf, eval);
-            
+
+            eval->n_tuning_iter++;
+
             cur_aoff =
                 best_autocorrelation_offset(points_buf,
                                             pset->tuning_n_points,
@@ -136,6 +139,7 @@ size_t tune_proposal(const struct packed_counts *cts,
             if (cur_aoff == 1) break;
             cumul_aoff *= cur_aoff;
         }
+        
         if (cumul_aoff <= pset->target_autocor_offset) break;
         
         for (d = 0; d != NDIM; ++d)
@@ -145,6 +149,8 @@ size_t tune_proposal(const struct packed_counts *cts,
         bounded_alphas_from_mean(estimated_mean, alpha0, 
                                  pset->prior_alpha, proposal_alpha);
     }
+    eval->cumul_aoff = cumul_aoff;
+
     return cumul_aoff;
 }
 
@@ -160,6 +166,9 @@ size_t tune_proposal(const struct packed_counts *cts,
    Post(pri,obs) / Prop(pri+obs) = Mult(obs) / Dir(pro-pri+1)
 
    let res = pro-pri+1  (residual alphas)
+
+   Therefore, we should sample from Dir(pro), but compute
+   Dir(pro-pri+1) values, and Mult(obs) values to compute the ratio.
 */
 #define BATCH 16
 
@@ -181,7 +190,8 @@ metropolis_sampling(unsigned short start_point,
     /* fprintf(stdout, "metropolis_sampling: %f,%f,%f,%f\n", pa[0], pa[1], pa[2], pa[3]); */
     /* fflush(stdout); */
 
-    double points[BATCH * NDIM], dotp[BATCH], ldotp[BATCH];
+    double points[BATCH * NDIM], lgpts[BATCH * NDIM];
+    double dotp[BATCH], ldotp[BATCH];
     double llh[BATCH], rll[BATCH], ivp[BATCH];
     double ar; /* acceptance ratio */
     double *pt, *outpt = sample_points + start_point * NDIM;
@@ -192,17 +202,25 @@ metropolis_sampling(unsigned short start_point,
 
     memset(llh, 0, sizeof(llh));
 
-    double residual_alpha[] = {
-        proposal_alpha[0] - prior_alpha[0] + 1,
-        proposal_alpha[1] - prior_alpha[1] + 1,
-        proposal_alpha[2] - prior_alpha[2] + 1,
-        proposal_alpha[3] - prior_alpha[3] + 1
-    };
+    /* double residual_alpha[] = { */
+    /*     proposal_alpha[0] - prior_alpha[0] + 1, */
+    /*     proposal_alpha[1] - prior_alpha[1] + 1, */
+    /*     proposal_alpha[2] - prior_alpha[2] + 1, */
+    /*     proposal_alpha[3] - prior_alpha[3] + 1 */
+    /* }; */
+
+    double mul_cts[] = {
+        proposal_alpha[0] - prior_alpha[0],
+        proposal_alpha[1] - prior_alpha[1],
+        proposal_alpha[2] - prior_alpha[2],
+        proposal_alpha[3] - prior_alpha[3]
+    };        
 
     /* there are end_point values in logu.  and, in one iteration of
      this while-loop, we will increment u BATCH * nth times. So, this
      is the max value u can have before the iteration. */
     unsigned u_max = end_point - nth * BATCH;
+
     while (a != end_point)
     {
         if (u >= u_max) u = start_point;
@@ -213,15 +231,27 @@ metropolis_sampling(unsigned short start_point,
         for (i = 0; i != BATCH; ++i)
         {
             gsl_ran_dirichlet(randgen, NDIM, proposal_alpha, pt);
-            rll[i] = gsl_ran_dirichlet_lnpdf(NDIM, residual_alpha, pt);
+            /* rll[i] = gsl_ran_dirichlet_lnpdf(NDIM, residual_alpha, pt); */
             pt += NDIM;
         }        
+        (void)yepMath_Log_V64f_V64f(points, lgpts, BATCH * NDIM);
+        
+        /* Calculate the multinomial value */
+        double *lgpt, *lgpe = lgpts + 4 * BATCH;
+        for (lgpt = lgpts, i = 0; lgpt != lgpe; lgpt += 4, ++i)
+            rll[i] = mul_cts[0] * lgpt[0] + mul_cts[1] * lgpt[1]
+                + mul_cts[2] * lgpt[2] + mul_cts[3] * lgpt[3];
+
         eval->n_dirichlet += BATCH;
 
         /* 3. Generate a batch log likelihoods */
+        double *point, *pe = points + 4 * BATCH;
         while (trm != trm_end)
         {
-            (void)yepCore_DotProduct_V64fV64f_S64f(points, trm->cpd, dotp, NDIM);
+            for (point = points, i = 0; point != pe; point += 4, ++i)
+                dotp[i] = point[0] * trm->cpd[0] + point[1] * trm->cpd[1]
+                    + point[2] * trm->cpd[2] + point[3] * trm->cpd[3];
+
             (void)yepMath_Log_V64f_V64f(dotp, ldotp, BATCH);
             (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)trm->ct, BATCH);
             (void)yepCore_Add_V64fV64f_V64f(llh, ldotp, llh, BATCH);

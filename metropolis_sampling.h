@@ -28,6 +28,8 @@ struct posterior_settings
 struct eval_counts {
     unsigned n_dirichlet;
     unsigned n_yep;
+    unsigned n_tuning_iter;
+    unsigned cumul_aoff;
 };
 
 

@@ -182,6 +182,7 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
     double estimated_mean[2][NUM_NUCS], proposal_alpha[2][NUM_NUCS];
     locus_sampling *sdpair[2];
+    unsigned sdi[2];
     size_t cumul_aoff[2];
     size_t p, i;
 
@@ -195,8 +196,10 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
 
     for (p = 0; p != input->n_sample_pairs; ++p)
     {
-        sdpair[0] = &sd[input->pair_sample1[p]];
-        sdpair[1] = &sd[input->pair_sample2[p]];
+        sdi[0] = input->pair_sample1[p];
+        sdi[1] = input->pair_sample2[p];
+        sdpair[0] = &sd[sdi[0]];
+        sdpair[1] = &sd[sdi[1]];
 
         if (input->min_high_conf_dist > 0 && ! (sdpair[0]->is_next && sdpair[1]->is_next))
             continue;
@@ -211,7 +214,7 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
                                   input->pset,
                                   proposal_alpha[i], estimated_mean[i], 
                                   sdpair[i]->sample_points,
-                                  &tune_eval[i]);
+                                  &tune_eval[sdi[i]]);
                 
                 metropolis_sampling(0, input->prelim_n_points, 
                                     &sdpair[i]->locus.counts,
@@ -219,7 +222,7 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
                                     input->pset->prior_alpha,
                                     cumul_aoff[i], 
                                     sdpair[i]->sample_points,
-                                    &samp_eval[i]);
+                                    &samp_eval[sdi[i]]);
                 
                 // input->worker[s1]->tune(sd1, estimated_mean1);
                 // input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_n_points);
@@ -251,7 +254,7 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
                                     input->pset->prior_alpha,
                                     cumul_aoff[i], 
                                     sdpair[i]->sample_points,
-                                    &samp_eval[i]);
+                                    &samp_eval[sdi[i]]);
                 
                 // input->worker[s1]->sample(sdpair[i], estimated_mean1, input->final_n_points);
                 sdpair[i]->n_sample_points = input->pset->final_n_points;
@@ -278,9 +281,12 @@ char *next_distance_quantiles_aux(dist_worker_input *input,
     }
     for (i = 0; i != input->n_samples; ++i)
         fprintf(stderr,
-                "sample %Zu: n_dir_tune: %u, n_yep_tune: %u\t"
+                "sample %Zu: n_dir_tune: %u, n_yep_tune: %u, "
+                "n_tuning_iter: %u, cumul_aoff: %u\t"
                 "n_dir_samp: %u, n_yep_samp: %u\n", 
-                i, tune_eval[i].n_dirichlet, tune_eval[i].n_yep,
+                i, tune_eval[i].n_dirichlet, tune_eval[i].n_yep, 
+                tune_eval[i].n_tuning_iter,
+                tune_eval[i].cumul_aoff,
                 samp_eval[i].n_dirichlet, samp_eval[i].n_yep);
     free(tune_eval);
     free(samp_eval);
