@@ -1,6 +1,7 @@
 #include <fstream>
 #include <string.h>
 #include <unistd.h>
+#include <gsl/gsl_randist.h>
 
 #include "run_comp.h"
 #include "comp_worker.h"
@@ -74,6 +75,23 @@ int main_comp(int argc, char ** argv)
         5       // min_quality_score
     };
 
+
+    /* initialize logu with suitably distributed uniform values.  this
+       is cut-and-pasted from dist.cc.  Likely this logu scheme will
+       be replaced by a non-MH sampling scheme.
+     */
+    pset.logu = (double *)malloc(sizeof(double) * pset.final_n_points);
+    double n_inv = 1.0 / (double)(pset.final_n_points);
+
+    unsigned p;
+    for (p = 0; p != pset.final_n_points; ++p)
+        pset.logu[p] = log(p * n_inv);
+
+    gsl_rng *randgen = gsl_rng_alloc(gsl_rng_taus);
+    gsl_ran_shuffle(randgen, pset.logu, pset.final_n_points, sizeof(pset.logu[0]));
+    gsl_rng_free(randgen);
+
+
     double test_quantile = 0.01;
     double min_test_quantile_value = 0;
 
@@ -126,20 +144,22 @@ int main_comp(int argc, char ** argv)
 
     cdfs_output_file = (optind + 4 < argc) ? argv[optind + 4] : "/dev/null";
 
-    return run_comp(max_mem,
-                    num_threads,
-                    fastq_type,
-                    label_string,
-                    quantiles_file,
-                    pileup_input_file,
-                    contig_order_file,
-                    query_range_file,
-                    jpd_data_params_file,
-                    posterior_output_file,
-                    cdfs_output_file,
-                    &pset,
-                    test_quantile,
-                    min_test_quantile_value,
-                    verbose);
-    
+    int rval = run_comp(max_mem,
+                        num_threads,
+                        fastq_type,
+                        label_string,
+                        quantiles_file,
+                        pileup_input_file,
+                        contig_order_file,
+                        query_range_file,
+                        jpd_data_params_file,
+                        posterior_output_file,
+                        cdfs_output_file,
+                        &pset,
+                        test_quantile,
+                        min_test_quantile_value,
+                        verbose);
+
+    free(pset.logu);
+    return rval;
 }

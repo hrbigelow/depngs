@@ -107,6 +107,7 @@ char *process_line_comp(struct comp_worker_input *cw,
                         float test_quantile,
                         float min_test_quantile_value)
 {
+    /*
     const struct cpd_count
         *pc = ls->locus.counts.stats,
         *pce = pc + ls->locus.counts.num_data;
@@ -116,6 +117,7 @@ char *process_line_comp(struct comp_worker_input *cw,
         pc->cpd[0], pc->cpd[1], pc->cpd[2], pc->cpd[3], pc->ct);
         ++pc;
     }
+    */
 
     double 
         test_quantile_value,
@@ -141,19 +143,21 @@ char *process_line_comp(struct comp_worker_input *cw,
         tune_proposal(&ls->locus.counts,
                       &cw->pset, proposal_alpha, estimated_mean,
                       ls->sample_points, &eval);
-
     // this->tune(&ls, initial_point);
     metropolis_sampling(0, cw->pset.final_n_points, &ls->locus.counts,
                         cw->pset.logu, proposal_alpha, 
                         cw->pset.prior_alpha, cumul_aoff,
                         ls->sample_points, &eval);
+
+    ls->n_sample_points = cw->pset.final_n_points;
+
     // this->sample(&ls, initial_point, this->s.final_n_points);
 
     // we always print a base composition estimate for loci with
     // ref=N.  So, we only do the filtering test if ref!=N
     if (ref_ind >= 0)
         compute_marginal_quantiles(ls->sample_points,
-                                   cw->pset.final_n_points,
+                                   ls->n_sample_points,
                                    ref_ind,
                                    &ref_test_quantile,
                                    1,
@@ -185,8 +189,7 @@ void comp_worker(void *par,
                  const struct managed_buf *in_buf,
                  struct managed_buf *out_buf)
 {
-    struct comp_worker_input *cw = 
-        (struct comp_worker_input *)par;
+    struct comp_worker_input *cw = (struct comp_worker_input *)par;
 
     char *write_ptr = out_buf->buf;
     size_t max_line = 1000;
@@ -194,7 +197,7 @@ void comp_worker(void *par,
         PileupSummary(),
         false,
         0,
-        (double *)malloc(cw->pset.final_n_points * sizeof(double)),
+        (double *)malloc(cw->pset.final_n_points * NUM_NUCS * sizeof(double)),
         0,
         0,
         in_buf->buf,

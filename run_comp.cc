@@ -1,6 +1,7 @@
 #include "run_comp.h"
 #include "pileup_tools.h"
 #include "comp_worker.h"
+#include "yepLibrary.h"
 
 #include "defs.h"
 #include "tools.h"
@@ -130,20 +131,25 @@ int run_comp(size_t max_mem,
     PileupSummary::set_offset(offset);
 
     // create the reusable resources here
-    struct comp_worker_input *worker_inputs =
+    struct comp_worker_input *worker_buf =
         (struct comp_worker_input *)
         malloc(n_threads * sizeof(struct comp_worker_input));
+
+    void **worker_inputs = (void **)malloc(n_threads * sizeof(void *));
 
     size_t t;
     for (t = 0; t != n_threads; ++t)
     {
-        worker_inputs[t].sample_atts = sample_atts;
-        worker_inputs[t].pset = *pset;
-        memcpy(worker_inputs[t].quantiles, quantiles, sizeof(double) * n_quantiles);
-        worker_inputs[t].n_quantiles = n_quantiles;
-        worker_inputs[t].test_quantile = test_quantile;
-        worker_inputs[t].min_test_quantile_value = min_test_quantile_value;
+        worker_buf[t].sample_atts = sample_atts;
+        worker_buf[t].pset = *pset;
+        memcpy(worker_buf[t].quantiles, quantiles, sizeof(double) * n_quantiles);
+        worker_buf[t].n_quantiles = n_quantiles;
+        worker_buf[t].test_quantile = test_quantile;
+        worker_buf[t].min_test_quantile_value = min_test_quantile_value;
     }
+
+    for (t = 0; t != n_threads; ++t)
+        worker_inputs[t] = &worker_buf[t];
     
     // the functions in the workers require this.
     gsl_set_error_handler_off();
@@ -170,6 +176,9 @@ int run_comp(size_t max_mem,
                           1, /* number of output files */
                           max_mem);
 
+    enum YepStatus status = yepLibrary_Init();
+    assert(status == YepStatusOk);
+
     thread_queue_run(tqueue);
 
     thread_queue_free(tqueue);
@@ -180,6 +189,7 @@ int run_comp(size_t max_mem,
         fclose(cdfs_output_fh);
 
     delete quantiles;
+    free(worker_buf);
     free(worker_inputs);
 
     return 0;

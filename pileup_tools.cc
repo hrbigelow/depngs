@@ -60,17 +60,22 @@ void PileupSummary::load_line(const char *read_ptr)
 {
 
     size_t span_depth;
-    int read_pos, qual_pos;
-
-    int scanned_fields =
-        sscanf(read_ptr, 
-               "%s\t%i\t%c\t%zi\t%n%*[^\t]\t%n", 
+    int read_pos, raw_len, scanned_fields;
+    
+    scanned_fields =
+        sscanf(read_ptr, "%s %i %c %zi%n", 
                this->reference, 
                &this->position, 
                &this->reference_base, 
-               &span_depth, 
-               &read_pos, &qual_pos);
-    
+               &span_depth,
+               &read_pos);
+
+    assert(read_ptr[read_pos] == '\t');
+    read_pos++;
+
+    if (span_depth == 0) raw_len = 0;
+    else sscanf(read_ptr + read_pos, "%*[^\t]%n", &raw_len);
+
     if (scanned_fields != 4)
     {
         char *line = strndup(read_ptr, strchr(read_ptr, '\n') - read_ptr);
@@ -95,12 +100,11 @@ void PileupSummary::load_line(const char *read_ptr)
     ALLOC_GROW_TYPED(this->bases_upper.buf, this->bases_upper.size,
                      this->bases_upper.alloc);
 
-    int rawlen = qual_pos - read_pos - 1;
-    this->bases_raw.size = rawlen + 1;
+    this->bases_raw.size = raw_len + 1;
     ALLOC_GROW_TYPED(this->bases_raw.buf, this->bases_raw.size,
                      this->bases_raw.alloc);
-    strncpy(this->bases_raw.buf, read_ptr, rawlen);
-    this->bases_raw.buf[rawlen] = '\0';
+    strncpy(this->bases_raw.buf, read_ptr, raw_len);
+    this->bases_raw.buf[raw_len] = '\0';
 
     const int max_indel_size = 1000;
     char indel_sequence[max_indel_size + 1];
@@ -197,8 +201,9 @@ void PileupSummary::load_line(const char *read_ptr)
         else if (pileup_redux == '\t' || pileup_redux == ' ')
         {
             //end of read_string, get the qual string
-            sscanf(read_ptr, " %n", & read_pos); //eat white space
-            read_ptr += read_pos;
+            /* Not sure what I was thinking here...This seems unnecessary. */
+            // sscanf(read_ptr, " %n", & read_pos); //eat white space
+            // read_ptr += read_pos;
 
             memcpy(this->quality_codes.buf, read_ptr, span_depth);
             read_ptr += span_depth;
