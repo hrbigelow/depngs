@@ -68,6 +68,7 @@ char *print_marginal_quantiles(char *out_buf,
     /* calculate mean rank order */
     size_t mean_rank_order[NDIM];
     std::multimap<double, size_t, std::greater<double> >::iterator dtm;
+    d = 0;
     for (dtm = dim_to_mean.begin(); dtm != dim_to_mean.end(); ++dtm)
         mean_rank_order[(*dtm).second] = d++;
 
