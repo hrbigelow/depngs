@@ -1,0 +1,439 @@
+Proposed algorithm:
+
+1. Calculate proposal alphas based on counts plus prior.
+
+2. Generate 10 (or similar small number) of Dirichlet sample
+   points using the proposal alphas.  If this is the first cycle
+   of tuning, these may be pre-generated.
+
+3. Calculate the density on these points, omitting the prior as a
+   factor.  (No need to use dirichlet_lnpdf to calculate these,
+   since we don't need it to be a normalized pdf.
+
+4. Calculate density of the integrand (again, omitting the prior)
+   at these positions.
+
+5. Take the ratios of integrand to proposal density.  If the
+   spread (measured in a way to be determined) is sufficiently
+   small, stop.
+
+6. Calculate the weighted center of mass of the points, using the
+   integrand (adding in the dirichlet prior density).  Repeat
+   from step 2 using a proposal alphas calculated from this new
+   center of mass.
+
+
+Hopefully, this will converge.
+
+Repeat this with the second sample in the pair.
+
+Pairwise comparison.
+
+1. Compute the product of the two sums of weights of the points.
+
+2. For each pair of sampling points, one sample point from each
+   biological sample, compute the distance between the two, and
+   the product of weight. Separately, keep a tally of the total
+   weight accumulated that is at a distance less than the min
+   threshold distance.  The target weight is the desired
+   quantile.
+
+   At any point in the loop where enough weight accumulates that
+   is less than this distance, the loci should be deemed 'too
+   similar' and the loop exited.  No further calculate needs to
+   be done.
+
+3. If the loop completes successfully, more sampling may be
+   needed, depending on the user's desired minimum confidence.
+   For example, if the desired minimum confidence is 0.001, then
+   1000 pairs of points need to be generated, and thus sqrt(1000)
+   or 32 points must be generated.
+
+
+Note, 10 points is probably a minimum needed to establish that the
+proposal fits the integrand well enough.
+
+Like before, the current locus of each sample has a locus_sampling
+structure to keep track of information, and to hold previous sample
+points that have been taken.
+
+Instead of MH samples though, these will be from a Dirichlet proposal,
+and will be 
+
+The pair-sampling paradox:
+
+Suppose you have two distinct dirichlet distributions A and B, of
+the same dimension (and thus same domain) but perhaps different
+alphas.  Consider estimating the expected euclidean distance
+between sample points from each.
+
+The exact answer to this would be the double integral, over the
+domain of A, then over the domain of B, of the distance between
+point a and point b times the density at A times the density at
+B.
+
+However, suppose you wanted instead to estimate this.  There are
+two possible ways you could do it:
+
+Technique 1: Sample from A, then sample from B, and measure the
+distance.  Repeat this process M^2 times to get an estimate for
+the distance.
+
+Technique 2: Sample from A M times, and sample from B M times.
+Then, take the M^2 combinations of one point from A and one from
+B to get an expected distance.
+
+In the limit of large M, both of these procedures converge to the
+same answer, which is the integral.  However, the convergence
+properties are likely different.
+
+In particular, consider the distribution of estimates of expected
+ distance for a given M.  As M increases, this distribution tightens,
+ converging on the true value.
+
+What is the behavior of this relationship for Technique 1 or 2?
+
+Consider even a more extreme case of having M/2 points from A and 2*M
+points from B.  Or even M/4 points from A and 4*M points from B.  What
+happens when
+
+
+There seem to be two things going on here.  First is that,
+intuitively, the re-use of sample points will amplify their
+arbitrariness.  Thus, the deviation in the means of the samples from A
+from experiment to experiment will be much greater in technique 2 than
+technique 1.  Thus, the deviation in distance estimate to distribution
+B will also reflect the deviation of the sample points in A as a
+whole, from experiment to experiment, which is bad.
+
+But, aside from the noise (deviation in mean), there is real signal
+there too, namely that the dispersion of the points does reflect the
+dispersion of the distribution.  So, to the extent that the dispersion
+is a good estimate, its still beneficial to combine a point with more
+than one point in the other distribution.  Perhaps an ad-hoc sweet
+spot of one third of all possible pairs would be a good one.
+
+This would leave us with using about 30 points as an initial test.
+That may be a tolerable number, if further optimizations are used.
+
+
+
+Now, the difficult question: How does the deviation of ivp ratios
+depend on the choice of prior, and why *would* it depend on the choice
+of prior, for a given set of counts?
+
+For one thing, regardless of the prior chosen, the integrand will
+always be more diffuse than the corresponding Dirichlet proposal based
+on the idealized counts (idealized counts are simply the same
+basecalls but assuming infinitely high quality scores).  So, if you
+choose a weak prior, then the proposal will be very focused, and it
+will have very low density outside of this focused region.  Thus the
+integrand will be undersampled there.  Using a Dirichlet with stronger
+prior exposes this, and it also exposes the poorer fit of the proposal
+with the integrand.
+
+What's really needed is a proposal that is a better fit, with more
+density where it is needed.
+
+
+
+A Dirichlet with alphas = 0.1 goes to infinity towards the faces,
+edges, and corners of the 4-simplex.  It goes towards infinity in
+the faces as 1/x^0.9, and on the edges as 1/x^1.8, and on the
+corners as 1/x^2.7.  (This is simply because of having 1, 2, or 3
+component factors going to zero in the denominator)
+
+Now consider the addition of a multinomial with positive integer
+coefficients.  Note that if a given component has at least one
+positive coefficient, this completely cancels the exponent in the
+denominator for that component.  Thus, for that component, we no
+longer have the density going towards infinity at the opposite
+face.  Then, we have the density going to infinity along the
+three opposite edges as 1/x^0.9, and the three opposite corners
+as 1/x^2.7.
+
+
+Now, consider instead, a noisy multinomial, in which the terms
+have the same counts, but the underlying term is not
+x_i, (a.k.a. 1*x_i + 0) but rather, 0.99*x_i + 0.01.
+
+In this case, in contrast to the pure multinomial, we do not have
+cancellation of the denominator, and thus the density goes to
+infinity at the face as well.  However, what really will be the
+largest difference?  What is the ratio of individual factors?
+
+It will be:
+
+x_i^C / (0.99*x_i + 0.001)^C
+
+And, so where x_i is getting close to zero, we will have 0 /
+0.01^C, which will diverge sharply.
+
+But, elsewhere, the difference should be negligible.  For instance, at x_i = 0.5, the difference is:
+
+at 0.5, it is an intersection point and breaks even.  At x = 1, we have:
+
+
+1 / (0.991)^C
+
+which should be quite close to 1 for modest C.  For very large C,
+this ratio will also diverge, but not nearly as much as with
+other factors.
+
+So, in this case, the Dirichlet proposal will not be able to hit
+the edges of the simplex sufficiently.
+
+So, to recap: an integrand with a prior of alpha=0.1, and 23 A
+basecalls of quality 40, vs. a Dirichlet proposal with alphas
+40.1, 0.1, 0.1, 0.1.
+
+The integrand will have infinities at the faces, edges and
+corners.  The overall density will be at the 'A' corner, and all
+of the density that diverges from the A corner will have a
+concave shape, concentrated at the edges and faces (in fact, have
+infinities there)
+
+The proposal will have infinities along all faces, edges, and
+corners, except for at the 'A' corner (due to cancellation).
+
+So, we know that the difference between these two densities is
+entirely due to the gradient along the 'A' direction.
+
+What's a bit weird is that the biggest discrepancies between
+proposal and integrand in this case will be very close to the 'A'
+corner.  The proposal gets extremely steep towards the corner,
+while the integrand gets less so.
+
+So, what are some ways to ameliorate the discrepancy?
+
+
+NEW APPROACH
+
+Observations:
+
+1.  The true separation between any two loci will always be less than
+the separation between their idealized, perfect-quality-score
+estimates based on basecalls.
+
+2.  In the limit of infinitely many sample points, the sample points
+from I(*) (the idealized perfect-quality-score distribution) weighted
+by P(*) / I(*), gives the exact distribution of P(*).
+
+3.  Given (1), if we are looking for at least a certain difference
+between loci, and the idealized distributions do not have difference,
+then we need consider the pair no further.
+
+4.  The approach (2) suffers from undersampling, because the idealized
+distribution I(*) will not have density where needed in order to
+support the more diffuse P(*).
+
+5.  The above suggests an increasing-stringency approach to
+establishing difference, in which we test the locus pair using a small
+number of sample points using technique (2) (while being aware that
+this will in general be undersampled, and thus give us an upper bound
+on the true separation).  If this passes, we increase the number of
+sample points until we hit the hard limit or the difference falls
+below the user-defined threshold of minimum difference to report.
+
+
+
+
+More precise statements:
+
+For the family of pairs of (I(*), P(*)) that have the uniform
+prior, we can say two things:
+
+1.  All distributions are convex
+2.  For each pair, the P(*) is more diffuse than the I(*).
+
+3.  For any two pairs (I1, P1), (I2, P2), consider the derived
+distance distributions ID = D{I1, I2} and PD = D{P1, P2}.  I claim
+that, for 
+
+We need a new fundamental notion that describes the relationship
+between two distributions I(*) (the 'idealized distribution consisting
+of a multinomial only') and P(*) (the actual posterior, consisting of
+factors that are close to multinomial factors but not quite).  Loosely
+speaking, the two distributions are "similar".  They both have a
+majority of their mass close to each other, are both convex.  However,
+I(*) is tighter than P(*).
+
+What statements can we make about existence and value of various
+quantiles of I(*) and P(*)?
+
+Can we make any absolute statements about the quantile values for low
+or high quantiles.
+
+What I would like to be able to say is that there exists some low
+quantile such that for any I(*) and a related P(*), the quantile value
+is always greater for P(*).  Similarly that there exists some high
+quantile that is always lesser for P(*) than I(*).
+
+Let's take some examples.  In one dimension and a fixed depth D, we
+could have an I(*) with D successes.  This would give rise to a very
+concave distribution with a peak at 1.  A related P(*) could be the
+product of D lines that cross (0,0.1), (1,0.9).  This would also have
+a peak at 1.  So, in this case, *every* corresponding quantile except
+1 would be lower for P(*) than for I(*).
+
+What about if we have D-1 successes and 1 failure?  In this case, I(*)
+would have a peak very close to 1.  It is unclear to me where the peak
+would be for P(*).  Wherever the peak is located in I(*), the peak
+will be at P(*) where the factors take on the same values.  This is
+because those values give the characteristic spread.  In this
+situation it means that we should expect the peak at P(*) to be
+further to the right, and possibly even at 1.
+
+This also implies that there is a value for the intrinsic slope of
+these factors that makes it such that D-1 successes and 1 failure will
+have a peak just shy of 1.
+
+It seems possible in principle that a low quantile (say 0.01) of the
+distance distribution between I1 and I2 would be lower than P1 and P2.
+This would be a bad situation.  But, it seems possible unfortunately.
+
+This could happen in the following way.  Suppose we have P1 as high
+quality {28,0,2,0} calls, and P2 a much lower quality {28,0,2,0}
+calls.  Then, we would estimate that the 0.01 quantile for I1,I2 would
+be indeed very close to zero, because both of these are strongly
+peaked, and identically shaped, and further, the peak is firmly away
+from the boundary, it is 1/15th the distance away from all A.
+However, the lower quality P2 may in fact have its peak right at 100%
+A, because of the reasons mentioned above.  Paradoxically, the P2
+density may have enough mass to one side of 14/15 A, 1/15 C, that the
+distance distribution has a peak shifted appreciably from 0, and thus
+its 0.01 quantile is shifted from zero.  It seems doubtful, but I
+cannot concoct an intuitive argument to refute it.
+
+What could we say about medians?  Would they be more stable?  In
+general, the medians of P1 and P2 should be much closer together than
+their modes.  Again though, the relationship between this and the
+median of the distance distribution is not clear.
+
+
+
+USING THE JEFFRIES DISTRIBUTION:
+
+Suppose you have two distributions I(*) and P(*) on the domain
+[0, 1], that you can sample from.  Define a 'success' as the
+sample point is above some desired value V, in [0, 1].
+
+After n sample points from I(*), let x of them be above V.  We
+would like to estimate the true quantile QV of I(*) having value
+V.
+
+We don't know the value of QV, but want to determine whether it is
+greater than QV_min (e.g. 0.99) with at least a confidence Conf
+(e.g. 0.999).
+
+QV_min is a confidence that pertains to the I(*) distribution
+(i.e. the model describing a phenomenon of interest).  Conf is a
+confidence that pertains to the sampling procedure itself.
+
+It is probably somewhat defeating the purpose to have one higher than
+the other, because both confidences are in the same pipeline.
+
+The Jeffrey's distribution Beta(x + 1/2, n - x + 1/2) gives the
+posterior distribution of QV, given our observations.  It is this
+distribution that we apply Conf to in order to establish a QV_lb,
+which is the value of QV for which there is a Conf probability that
+the true QV is above this value.
+
+Once we calculate this QV_lb, we ask, is it greater than QV_min.  If
+it is, we stop sampling.
+
+We can do the inverse as well.  That is, calculate the QV_ub from the
+Beta, and ask, is QV_ub less than QV_min?  If it is, stop sampling and
+reject.
+
+We expect that the majority of experiments like this will result in
+QV_ub < QV_min, and thus an early rejection.  So, the best approach is
+to calculate QV_ub at each step up until a max_N.  If the loop
+finishes, this is success.  There is then no need to calculate QV_lb.
+
+At this point, simply use the set of points at hand to get ML
+estimates for all desired quantiles.  No need to use Beta anymore.
+
+
+
+USING THE JEFFRIES WITH WEIGHTED SAMPLE POINTS:
+
+Now, what happens if you want to simulate sampling from P(*) by
+instead sampling from I(*) and weighting each point x by P(x)/I(x)?
+
+In this case, we accept that the set of weighted sample points is an
+asymptotically correct description of P(*).
+
+Let's note one thing: The only aspect of I(*) that matters to the
+Jeffries is the fraction of mass on one or the other side of a given
+threshold V of interest.  Once we choose V, any I'(*) distribution
+that has the same mass fraction on either side of V will produce the
+same Beta.
+
+Now, note that the P(*) distribution has a different mass fraction on
+either side of V, and now, working with weighted sample points, our
+estimate for that fraction will arise from the weighted set of
+'success' points x.
+
+How is this procedure different from one in which we could,
+hypothetically sample directly from P(*)?
+
+There are two ways we could think of this:
+
+1.  Supposing, in either procedure, we generate n sample points.  In
+the indirect (weighted) approach, the x will be sum of weights of
+success points divided by the average weight over points.  In the
+direct approach, x will be the total number of success points.  Let's
+assume that in both cases, we happen to arrive at the same value of x.
+
+Now, in this first scenario, our Beta will be the same shape.  Is this
+justified?
+
+On the one hand, we know that in the limit as n approaches infinity,
+that x indeed will converge to the same value from both approaches.
+This is what is meant by 'asymptotically correct'.
+
+On the other hand, the Beta is meant to characterize a noise, and it
+is not clear that these two approaches converge at the same rate.  If
+they do not, (i.e. if the indirect approach converges more slowly, for
+example) then how could we expect the Beta to be the same?
+
+In general, this sounds as though it will NOT be the same.  
+
+
+
+So, a workflow:
+
+
+1.  Take 20 samples from I(*) (parameterized by basecalls only),
+applying threshold V (~0.1)
+
+2.  Evaluate p_I from Beta() at the 0.99 quantile.
+
+3.  Calculate w_hi = sum_i{P(x_i)/I(x_i)} s.t. x_i > V
+              w_lo = sum_i{P(x_i)/I(x_i)} s.t. x_i < V
+              w = w_hi + w_lo
+
+4.  Calculate correction factors: 
+    c_hi = w_hi / s
+    c_lo = w_lo / (n - s)
+
+4.  Calculate p_P = (c_hi * p_I) / (c_lo * (1 - p_I) + (c_hi * p_I))
+                  = (c_hi * p_I) / (c_lo + p_I * (c_hi - c_lo))
+                  = 
+
+What are some ways that p_P might be > 0.999 and p_I < 0.999?
+
+Let's take the simplest case, where P(x) is equal to I(x) for all x
+Further, let's assume that n = 20 and s = 4 (s the number of successes).
+
+Then, c_hi = c_lo = 1, so p_P = p_I / 1
+
+
+Suppose c_hi = c_lo = 2, then p_P = p_I
+
+And, if there are no successes or no failures, then we take the
+ratio to be 1.
+
+
+
