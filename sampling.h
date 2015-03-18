@@ -8,6 +8,7 @@
    distributions */
 void compute_marginal_quantiles(double *sample_points,
                                 size_t n_points,
+                                size_t n_dims,
                                 size_t sort_dimension,
                                 const double *quantiles,
                                 size_t n_quantiles,

@@ -59,9 +59,9 @@ void compute_dist_quantiles(const double *points1,
 #endif
 
 
-void compute_wsq_dist(const double *points1,
+void compute_wsq_dist(const POINT *points1,
                       const double *weights1,
-                      const double *points2,
+                      const POINT *points2,
                       const double *weights2,
                       size_t n_points,
                       double *square_dist_buf,
@@ -73,10 +73,34 @@ void compute_wsq_dist(const double *points1,
     while (np-- > 0)
     {
         *sd = 0;
-        for (d = 0; d != NUM_NUCS; ++d) *sd++ += gsl_pow_2(*points1++ - *points2++);
+        for (d = 0; d != NUM_NUCS; ++d) *sd += gsl_pow_2((*points1)[d] - (*points2)[d]);
         *w++ = *weights1++ * *weights2++;
+        sd++;
+        points1++;
+        points2++;
     }
 }
+
+/* unlike previous, this does not require the points to have NUM_NUCS
+   components. */
+void compute_sq_dist(const double *points1,
+                     const double *points2,
+                     size_t n_points,
+                     size_t n_dims,
+                     double *square_dist_buf)
+{
+    int d;
+    double *sd = square_dist_buf;
+    size_t np = n_points;
+    while (np-- > 0)
+    {
+        *sd = 0;
+        for (d = 0; d != n_dims; ++d) *sd += gsl_pow_2(*points1++ - *points2++);
+        ++sd;
+    }
+}
+
+
 
 /* Compute the requested set of distance quantile values from two sets
    of weighted points. */
@@ -87,7 +111,6 @@ void compute_dist_wquantiles(double *square_dist_buf,
                              size_t n_dist_quantiles,
                              double *dist_quantile_values)
 {
-    /* Generate the set of squared distances */
     compute_marginal_wquantiles(square_dist_buf, weights_buf, n_points, 1, 0,
                                 dist_quantiles, n_dist_quantiles,
                                 dist_quantile_values);
@@ -260,18 +283,20 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
             {
                 locus_sampling *ls = lsp[i];
                 /* Generate missing points */
-                double *p,
-                    *pb = ls->points.buf + NUM_NUCS * ls->points.size,
-                    *pe = ls->points.buf + NUM_NUCS * dw->pset->max_sample_points;
-                for (p = pb; p != pe; p += NUM_NUCS * GEN_POINTS_BATCH)
+                POINT *p,
+                    *pb = ls->points.buf + ls->points.size,
+                    *pe = ls->points.buf + dw->pset->max_sample_points;
+                for (p = pb; p != pe; p += GEN_POINTS_BATCH)
                     ls->pgen.gen_point(ls->pgen.gen_point_par, p);
+
                 ls->points.size = dw->pset->max_sample_points;
                 
                 /* Generate missing weights */
                 double *w,
                     *wb = ls->weights.buf + ls->weights.size,
                     *we = ls->weights.buf + dw->pset->max_sample_points;
-                for (w = wb, p = ls->points.buf + ls->weights.size; w != we; ++w, p += NUM_NUCS)
+                for (w = wb, p = ls->points.buf + ls->weights.size; w != we; 
+                     w += GEN_POINTS_BATCH, p += GEN_POINTS_BATCH)
                     ls->pgen.weight(p, ls->pgen.weight_par, w);
             }
             /* Compute weighted square distances */
@@ -528,7 +553,7 @@ indel_event *count_indel_types(locus_sampling *sd1,
 
 // print out all next distance quantiles for indels
 char *next_indel_distance_quantiles_aux(dist_worker_input *input, 
-                                        locus_sampling *sd,
+                                        locus_sampling *lslist,
                                         size_t gs,
                                         char *out_buf)
 {
@@ -546,16 +571,16 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
     char contig[100];
     size_t position, n_events;
     
-    sscanf(sd[gs].current, "%s\t%zu", contig, &position);
+    sscanf(lslist[gs].current, "%s\t%zu", contig, &position);
 
-    for (size_t pi = 0; pi != input->n_sample_pairs; ++pi)
+    for (size_t pi = 0; pi != input->pset->max_sample_points; ++pi)
     {
         size_t s1 = input->pair_sample1[pi], s2 = input->pair_sample2[pi];
-        locus_sampling *sd1 = &sd[s1], *sd2 = &sd[s2];
+        locus_sampling *ls1 = &lslist[s1], *ls2 = &lslist[s2];
 
-        if (! (sd1->is_next && sd2->is_next) && input->min_high_conf_dist > 0) continue;
+        if (! (ls1->is_next && ls2->is_next) && input->pset->min_dist > 0) continue;
         
-        indel_event *all_events = count_indel_types(sd1, sd2, &n_events);
+        indel_event *all_events = count_indel_types(ls1, ls2, &n_events);
 
         if (n_events >= 2) 
         {
@@ -568,7 +593,7 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
                 alpha2[c] = all_events[c].count2 + 1;
             }
         
-            size_t bufsize = n_events * input->pset->final_n_points;
+            size_t bufsize = n_events * input->pset->max_num_points;
             double *points1 = new double[bufsize], *p1 = points1, *pe1 = points1 + bufsize;
             double *points2 = new double[bufsize], *p2 = points2;
 
@@ -580,11 +605,15 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
                 p2 += n_events;
             }
 
+            compute_sq_dist(points1, points2, input->pset->max_num_points, n_events,
+                            input->square_dist_buf);
+
+            
             // compute distance quantiles
             compute_dist_quantiles(points1,
                                    points2, 
                                    n_events, 
-                                   input->pset->final_n_points,
+                                   input->pset->max_sample_points,
                                    input->square_dist_buf,
                                    input->n_sample_point_pairings,
                                    input->randgen,
@@ -598,7 +627,7 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *input,
                 out_buf = 
                     print_indel_distance_quantiles(contig, position, input, p, 
                                                    input->dist_quantile_values, 
-                                                   all_events, n_events, sd, out_buf);
+                                                   all_events, n_events, lslist, out_buf);
             }
 
             delete[] points1;

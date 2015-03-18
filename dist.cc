@@ -24,10 +24,11 @@ int dist_usage()
             "-i STRING   (optional) name of output indel distance file.  If absent, do not perform indel distance calculation.\n"
             "-s STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
             "-r STRING   range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
-            "-y REAL     Minimum mutational distance to report as changed [0.2]\n"
-            "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
-            "-x INT      number of sample points used for first-pass distance checking [100]\n"
-            "-X REAL     quantile used to test first-pass distance [0.01]\n"
+            "-y FLOAT    min mutation distance (0-1 scale) from ref to call as changed locus [0.2]\n"
+            // "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
+            // "-x INT      number of sample points used for first-pass distance checking [100]\n"
+            "-X FLOAT    confidence for -y [0.99]\n"
+            "-Z FLOAT    confidence for binomial estimation [same as -X]\n"
             "-f INT      number of sample points used for final quantiles estimation [1000]\n"
             "-q INT      minimum quality score to include bases as evidence [%s]\n"
             "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
@@ -41,10 +42,10 @@ int dist_usage()
             "\n"
             "-D STRING   distance quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
             "-C STRING   composition quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
-            "-P INT      number of random sample point pairings to estimate Sampling/Sampling distance distribution [10000]\n"
-            "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
-            "-I INT      maximum number of proposal tuning iterations [10]\n"
-            "-M REAL     autocorrelation maximum value [0.2]\n"
+            // "-P INT      number of random sample point pairings to estimate Sampling/Sampling distance distribution [10000]\n"
+            // "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
+            // "-I INT      maximum number of proposal tuning iterations [10]\n"
+            // "-M REAL     autocorrelation maximum value [0.2]\n"
             "-p FLOAT    alpha value for dirichlet prior [0.1]\n"
             "\n"
             "samples.rdb has lines of <sample_id><tab></path/to/sample.jpd><tab></path/to/sample.pileup>\n"
@@ -72,25 +73,12 @@ int main_dist(int argc, char **argv)
 
     float prior_alpha = 0.1;
     struct posterior_settings pset = {
-        { prior_alpha, 
-          prior_alpha,
-          prior_alpha,
-          prior_alpha
-        },      // prior alphas
-        10,     // max_tuning_iterations
-        1000,   // tuning_n_points
-        1000,   // final_n_points
-        6,      // autocor_max_offset
-        0.2,    // autocor_max_value
-        30,     // initial_autocor_offset
-        6,      // target_autocor_offset
-        NULL,   // logu points
-        5       // min_quality_score
+        { prior_alpha, prior_alpha, prior_alpha, prior_alpha },
+        1000,
+        0.2,
+        0.99,
+        0.99,
     };
-
-    size_t prelim_n_points = 1e2;
-    float prelim_quantile = 0.01;
-    size_t n_sample_point_pairs = 1e4;
 
     int print_pileup_fields = 0;
 
@@ -104,11 +92,8 @@ int main_dist(int argc, char **argv)
     const char *sample_pairings_file = NULL;
     const char *query_range_file = NULL;
 
-    float min_dist_to_report = 0.2;
-    // bool verbose = false;
-
     char c;
-    while ((c = getopt(argc, argv, "d:c:i:s:r:y:t:m:T:x:X:f:gP:a:I:M:p:q:F:D:C:")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:i:s:r:y:t:m:f:y:X:Z:p:q:F:D:C:g")) >= 0)
     {
         switch(c)
         {
@@ -117,17 +102,18 @@ int main_dist(int argc, char **argv)
         case 'i': indel_dist_file = optarg; break;
         case 's': sample_pairings_file = optarg; break;
         case 'r': query_range_file = optarg; break;
-        case 'y': min_dist_to_report = atof(optarg); break;
         case 't': n_threads = (size_t)atof(optarg); break;
         case 'm': max_mem = (size_t)atof(optarg); break;
-        case 'T': pset.tuning_n_points = (size_t)atof(optarg); break;
-        case 'x': prelim_n_points = (size_t)atof(optarg); break;
-        case 'X': prelim_quantile = atof(optarg); break;
-        case 'f': pset.final_n_points = (size_t)atof(optarg); break;
-        case 'P': n_sample_point_pairs = (size_t)atof(optarg); break;
-        case 'a': pset.target_autocor_offset = (size_t)atof(optarg); break;
-        case 'I': pset.max_tuning_iterations = (size_t)atof(optarg); break;
-        case 'M': pset.autocor_max_value = atof(optarg); break;
+        // case 'T': pset.tuning_n_points = (size_t)atof(optarg); break;
+        // case 'x': prelim_n_points = (size_t)atof(optarg); break;
+        case 'f': pset.max_sample_points = (size_t)atof(optarg); break;
+        case 'y': pset.min_dist = atof(optarg); break;
+        case 'X': pset.post_confidence = atof(optarg); break;
+        case 'Z': pset.beta_confidence = atof(optarg); break;
+        // case 'P': n_sample_point_pairs = (size_t)atof(optarg); break;
+        // case 'a': pset.target_autocor_offset = (size_t)atof(optarg); break;
+        // case 'I': pset.max_tuning_iterations = (size_t)atof(optarg); break;
+        // case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'p': prior_alpha = atof(optarg); break;
         case 'q': pset.min_quality_score = (size_t)atoi(optarg); break;
         case 'F': fastq_type = optarg; break;
@@ -138,32 +124,7 @@ int main_dist(int argc, char **argv)
         default: return dist_usage(); break;
         }
     }
-    if (argc - optind != 2)
-        return dist_usage();
-
-    /* initialize logu with suitably distributed uniform values */
-    pset.logu = (double *)malloc(sizeof(double) * 
-                                 (pset.final_n_points + prelim_n_points));
-    unsigned p;
-    double prelim_n_inv = 1.0 / (double)prelim_n_points;
-    double next_n_inv = 1.0 / (double)(pset.final_n_points - prelim_n_points);
-
-    for (p = 0; p != prelim_n_points; ++p)
-        pset.logu[p] = log(p * prelim_n_inv);
-
-    gsl_rng *randgen = gsl_rng_alloc(gsl_rng_taus);
-
-    gsl_ran_shuffle(randgen, pset.logu, prelim_n_points, 
-                    sizeof(pset.logu[0]));
-
-    for (p = 0; p != pset.final_n_points - prelim_n_points; ++p)
-        pset.logu[p + prelim_n_points] = log(p * next_n_inv);
-
-    gsl_ran_shuffle(randgen, pset.logu + prelim_n_points, 
-                    pset.final_n_points, 
-                    sizeof(pset.logu[0]));
-
-    gsl_rng_free(randgen);
+    if (argc - optind != 2) return dist_usage();
 
     const char *samples_file = argv[optind];
     const char *contig_order_file = argv[optind + 1];
@@ -340,13 +301,11 @@ int main_dist(int argc, char **argv)
         worker_buf[t].thread_num = t;
         worker_buf[t].n_samples = n_samples;
         worker_buf[t].n_sample_pairs = n_pairings;
-        worker_buf[t].n_sample_point_pairings = n_sample_point_pairs;
-        worker_buf[t].min_high_conf_dist = min_dist_to_report;
-        worker_buf[t].prelim_n_points = prelim_n_points;
-        worker_buf[t].prelim_quantile = prelim_quantile;
         worker_buf[t].randgen = gsl_rng_alloc(gsl_rng_taus);
         worker_buf[t].square_dist_buf = 
-            (double *)malloc(sizeof(double) * n_sample_point_pairs);
+            (double *)malloc(sizeof(double) * pset.max_sample_points);
+        worker_buf[t].weights_buf =
+            (double *)malloc(sizeof(double) * pset.max_sample_points);
         worker_buf[t].print_pileup_fields = print_pileup_fields;
         worker_buf[t].do_dist = (dist_fh != NULL);
         worker_buf[t].do_comp = (comp_fh != NULL);
@@ -421,21 +380,17 @@ int main_dist(int argc, char **argv)
     {
         gsl_rng_free(worker_buf[t].randgen);
         free(worker_buf[t].square_dist_buf);
+        free(worker_buf[t].weights_buf);
     }
 
     free(worker_buf);
     free(worker_inputs);
-    free(pset.logu);
-    // fprintf(stderr, "File reading metrics:  %Zu total bytes read in %Zu nanoseconds, %5.3f MB/s\n",
-    //         total_bytes_read, total_fread_nsec,
-    //         static_cast<float>(total_bytes_read) * 1000.0 / static_cast<float>(total_fread_nsec));
 
     if (dist_fh) fclose(dist_fh);
     if (comp_fh) fclose(comp_fh);
     if (indel_fh) fclose(indel_fh);
 
-    for (s = 0; s != n_samples; ++s)
-        fclose(sample_attrs[s].fh);
+    for (s = 0; s != n_samples; ++s) fclose(sample_attrs[s].fh);
 
     free(pair_sample1);
     free(pair_sample2);

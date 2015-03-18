@@ -31,7 +31,8 @@ struct locus_sampling
     unsigned char dist_printed;
     /* double proposal_alpha[NUM_NUCS]; */
     struct points_gen pgen;
-    struct double_buf points, weights;
+    struct points_buf points;
+    struct weights_buf weights;
     /* size_t autocor_offset; */
     char *current, *end;
     pair_ordering locus_ord;
