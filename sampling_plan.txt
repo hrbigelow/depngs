@@ -415,10 +415,11 @@ applying threshold V (~0.1)
               w = w_hi + w_lo
 
 4.  Calculate correction factors: 
+    
     c_hi = w_hi / s
     c_lo = w_lo / (n - s)
 
-4.  Calculate p_P = (c_hi * p_I) / (c_lo * (1 - p_I) + (c_hi * p_I))
+5.  Calculate p_P = (c_hi * p_I) / (c_lo * (1 - p_I) + (c_hi * p_I))
                   = (c_hi * p_I) / (c_lo + p_I * (c_hi - c_lo))
                   = 
 

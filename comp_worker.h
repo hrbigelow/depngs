@@ -11,11 +11,15 @@ extern "C" {
 #include "thread_queue.h"
 #include "ordering.h"
 #include "metropolis_sampling.h"
+#include "cache.h"
+#include "binomial_est.h"
 }
 
 
 /* With 100 sample points */
 #define MAX_SAMPLE_POINTS 100
+
+
 
 /* instantiate one of these for each thread and each sample.  holds
    the information for the locus currently being processed in this
@@ -26,9 +30,9 @@ struct locus_sampling
     bool is_next;
     unsigned char dist_printed;
     /* double proposal_alpha[NUM_NUCS]; */
-    double *sample_points;
-    unsigned n_sample_points;
-    size_t autocor_offset;
+    struct points_gen pgen;
+    struct double_buf points, weights;
+    /* size_t autocor_offset; */
     char *current, *end;
     pair_ordering locus_ord;
 };
@@ -57,6 +61,22 @@ struct comp_worker_input
        min_quantile_value it will be reported. */
     float test_quantile, min_test_quantile_value; 
 };
+
+/* */
+#define GEN_POINTS_BATCH 4
+
+/* the following four functions can be used with binomial_est's struct
+   points_gen. */
+void gen_dirichlet_points_wrapper(const void *par, double *points);
+
+void calc_post_to_dir_ratio(const double *points, const void *par,
+                            double *weights);
+
+void gen_reference_points_wrapper(const void *par, double *points);
+
+void calc_dummy_ratio(const double * /* unused */, 
+                      const void * /* unused */, 
+                      double *weights);
 
 
 char *print_quantiles(const double *quantiles,

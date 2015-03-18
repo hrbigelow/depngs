@@ -19,12 +19,12 @@ int comp_usage()
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
             "-f INT      number of sample points used for final quantiles estimation [1000]\n"
-            "-X FLOAT    test quantile used for -y [0.01]\n"
-            "-y FLOAT    minimum test quantile value needed to output locus composition [0]\n"
-            "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
-            "-I INT      maximum number of proposal tuning iterations [10]\n"
-            "-s INT      number of loci simulations for estimating anomaly score (if zero, no estimate provided) [0]\n"
-            "-M FLOAT    autocorrelation maximum value [0.2]\n"
+            "-y FLOAT    min mutation distance (0-1 scale) from ref to call as changed locus [0.2]\n"
+            "-X FLOAT    confidence for -y [0.99]\n"
+            "-Z FLOAT    confidence for binomial estimation [same as -X]\n"
+            // "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
+            // "-I INT      maximum number of proposal tuning iterations [10]\n"
+            // "-M FLOAT    autocorrelation maximum value [0.2]\n"
             "-C STRING   quantiles file [\"0.005 0.05 0.5 0.95 0.995\\n\"]\n"
             "-p FLOAT    alpha value for dirichlet prior [0.1]\n"
             "-q INT      %s\n"
@@ -59,19 +59,11 @@ int main_comp(int argc, char ** argv)
     float prior_alpha = 0.1;
 
     struct posterior_settings pset = {
-        { prior_alpha, 
-          prior_alpha,
-          prior_alpha,
-          prior_alpha
-        },      // prior alphas
-        10,     // max_tuning_iterations
-        1000,    // tuning_n_points
-        1000,    // final_n_points
-        20,      // autocor_max_offset
-        0.2,    // autocor_max_value
-        30,     // initial_autocor_offset
-        6,      // target_autocor_offset
-        NULL,   // logu points
+        { prior_alpha, prior_alpha, prior_alpha, prior_alpha },
+        1000,    /* max_sample_points */
+        0.2,     /* min_dist */
+        0.99,    /* post_confidence */
+        0.99,    /* beta_confidence */
         5       // min_quality_score
     };
 
@@ -80,20 +72,20 @@ int main_comp(int argc, char ** argv)
        is cut-and-pasted from dist.cc.  Likely this logu scheme will
        be replaced by a non-MH sampling scheme.
      */
-    pset.logu = (double *)malloc(sizeof(double) * pset.final_n_points);
-    double n_inv = 1.0 / (double)(pset.final_n_points);
+    // pset.logu = (double *)malloc(sizeof(double) * pset.final_n_points);
+    // double n_inv = 1.0 / (double)(pset.final_n_points);
 
-    unsigned p;
-    for (p = 0; p != pset.final_n_points; ++p)
-        pset.logu[p] = log(p * n_inv);
+    // unsigned p;
+    // for (p = 0; p != pset.final_n_points; ++p)
+    //     pset.logu[p] = log(p * n_inv);
 
-    gsl_rng *randgen = gsl_rng_alloc(gsl_rng_taus);
-    gsl_ran_shuffle(randgen, pset.logu, pset.final_n_points, sizeof(pset.logu[0]));
-    gsl_rng_free(randgen);
+    // gsl_rng *randgen = gsl_rng_alloc(gsl_rng_taus);
+    // gsl_ran_shuffle(randgen, pset.logu, pset.final_n_points, sizeof(pset.logu[0]));
+    // gsl_rng_free(randgen);
 
 
-    double test_quantile = 0.01;
-    double min_test_quantile_value = 0;
+    // double test_quantile = 0.01;
+    // double min_test_quantile_value = 0;
 
     char quantiles_file[100];
     strcpy(quantiles_file, "/dev/null");
@@ -111,7 +103,7 @@ int main_comp(int argc, char ** argv)
     bool verbose = false;
 
     char c;
-    while ((c = getopt(argc, argv, "l:r:t:m:T:f:X:y:a:I:M:C:p:q:F:v")) >= 0)
+    while ((c = getopt(argc, argv, "l:r:t:m:f:y:X:Z:C:p:q:F:v")) >= 0)
     {
         switch(c)
         {
@@ -119,13 +111,14 @@ int main_comp(int argc, char ** argv)
         case 'r': query_range_file = optarg; break;
         case 't': num_threads = (size_t)atof(optarg); break;
         case 'm': max_mem = (size_t)atof(optarg); break;
-        case 'T': pset.tuning_n_points = (size_t)atof(optarg); break;
-        case 'f': pset.final_n_points = (size_t)atof(optarg); break;
-        case 'X': test_quantile = atof(optarg); break;
-        case 'y': min_test_quantile_value = atof(optarg); break;
-        case 'a': pset.target_autocor_offset = (size_t)atof(optarg); break;
-        case 'I': pset.max_tuning_iterations = (size_t)atof(optarg); break;
-        case 'M': pset.autocor_max_value = atof(optarg); break;
+        // case 'T': pset.tuning_n_points = (size_t)atof(optarg); break;
+        case 'f': pset.max_sample_points = (size_t)atof(optarg); break;
+        case 'y': pset.min_dist = atof(optarg); break;
+        case 'X': pset.post_confidence = atof(optarg); break;
+        case 'Z': pset.beta_confidence = atof(optarg); break;
+        // case 'a': pset.target_autocor_offset = (size_t)atof(optarg); break;
+        // case 'I': pset.max_tuning_iterations = (size_t)atof(optarg); break;
+        // case 'M': pset.autocor_max_value = atof(optarg); break;
         case 'C': strcpy(quantiles_file, optarg); break;
         case 'p': prior_alpha = atof(optarg); break;
         case 'q': pset.min_quality_score = static_cast<size_t>(atoi(optarg)); break;
@@ -156,10 +149,7 @@ int main_comp(int argc, char ** argv)
                         posterior_output_file,
                         cdfs_output_file,
                         &pset,
-                        test_quantile,
-                        min_test_quantile_value,
                         verbose);
 
-    free(pset.logu);
     return rval;
 }

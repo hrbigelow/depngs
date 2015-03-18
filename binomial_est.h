@@ -1,0 +1,55 @@
+#ifndef _BINOMIAL_EST_H
+#define _BINOMIAL_EST_H
+
+#include "defs.h"
+#include <stdlib.h>
+
+enum fuzzy_state {
+    CHANGED,               /* the two loci differ */
+    UNCHANGED,             /* the two loci do not differ */
+    AMBIGUOUS,             /* posterior distributions too diffuse to call */
+    AMBIGUOUS_OR_CHANGED,  /* max_points taken; UNCHANGED category eliminated  */
+    AMBIGUOUS_OR_UNCHANGED /* max_points taken; CHANGED category eliminated */
+};
+
+
+typedef double POINT[NUM_NUCS];
+
+struct points_buf {
+    POINT *buf;
+    size_t size, alloc;
+};
+
+struct weights_buf {
+    double *buf;
+    size_t size, alloc;
+};
+
+struct points_gen
+{
+    void *gen_point_par;
+    void (*gen_point)(const void *par, POINT *points);
+
+    void *weight_par;
+    void (*weight)(POINT *points, const void *par,
+                   double *weights);
+};
+
+
+/* Sample pairs of points from dist_pair up to max_points, classifying
+   each pair as 'success' if distance is less than min_dist, 'failure'
+   otherwise.  From the set of successes and failures, use the Beta
+   distribution to estimate the true binomial probability.  Use dist1
+   and dist2 to generate more points as needed. */
+enum fuzzy_state
+binomial_quantile_est(unsigned max_points, float min_dist,
+                      float post_conf, float beta_conf,
+                      struct points_gen pgen1,
+                      struct points_buf *points1,
+                      struct weights_buf *weights1,
+                      struct points_gen pgen2,
+                      struct points_buf *points2,
+                      struct weights_buf *weights2,
+                      size_t batch_size);
+
+#endif /* _BINOMIAL_EST_H */

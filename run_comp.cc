@@ -37,8 +37,6 @@ int run_comp(size_t max_mem,
              const char *posterior_output_file,
              const char *cdfs_output_file,
              struct posterior_settings *pset,
-             double test_quantile,
-             double min_test_quantile_value,
              bool verbose)
 {
     double *quantiles;
@@ -144,8 +142,8 @@ int run_comp(size_t max_mem,
         worker_buf[t].pset = *pset;
         memcpy(worker_buf[t].quantiles, quantiles, sizeof(double) * n_quantiles);
         worker_buf[t].n_quantiles = n_quantiles;
-        worker_buf[t].test_quantile = test_quantile;
-        worker_buf[t].min_test_quantile_value = min_test_quantile_value;
+        // worker_buf[t].test_quantile = test_quantile;
+        // worker_buf[t].min_test_quantile_value = min_test_quantile_value;
     }
 
     for (t = 0; t != n_threads; ++t)

@@ -62,6 +62,4 @@ struct managed_buf {
     size_t size, alloc;
 };
 
-
-
 #endif /* _CACHE_H */

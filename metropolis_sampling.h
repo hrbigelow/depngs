@@ -7,18 +7,34 @@
 /* should be just one instance of this for an entire run.  holds
    settings for doing metropolis sampling, plus settings common to
    comp or dist estimation. */
+
+#if 0
 struct posterior_settings
 {
     double prior_alpha[4];
     size_t max_tuning_iterations;
     size_t tuning_n_points; /* # points used to find autocor offset */
     size_t final_n_points; /* # points needed for final sampling test */
+    size_t max_sample_points; /* maximum number of sample points to take */
+
     double autocor_max_offset;
     double autocor_max_value;
 
     size_t initial_autocor_offset;
     size_t target_autocor_offset;
     double *logu; /* log(U) for a set of values U sampled from Uniform(0, 1) */
+    double min_quality_score;
+    double dist_quantiles[MAX_NUM_QUANTILES];
+    double comp_quantiles[MAX_NUM_QUANTILES];
+    size_t n_dist_quantiles, n_comp_quantiles;
+};
+#endif
+
+struct posterior_settings
+{
+    double prior_alpha[4];
+    size_t max_sample_points; /* maximum number of sample points to take */
+    double min_dist, post_confidence, beta_confidence;
     double min_quality_score;
     double dist_quantiles[MAX_NUM_QUANTILES];
     double comp_quantiles[MAX_NUM_QUANTILES];
@@ -32,6 +48,10 @@ struct eval_counts {
     unsigned cumul_aoff;
 };
 
+
+double alphas_from_counts(const struct packed_counts *cts, 
+                          const double *prior_alpha,
+                          double *est_alpha);
 
 size_t tune_proposal(const struct packed_counts *cts,
                      const struct posterior_settings *set,

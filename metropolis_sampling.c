@@ -64,9 +64,9 @@ size_t best_autocorrelation_offset(const double *samples,
 }
 
 
-static inline double alphas_from_counts(const struct packed_counts *cts, 
-                                        const double *prior_alpha,
-                                        double *est_alpha)
+double alphas_from_counts(const struct packed_counts *cts, 
+                          const double *prior_alpha,
+                          double *est_alpha)
 {
     char base;
     size_t d, qual, strand;

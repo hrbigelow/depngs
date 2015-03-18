@@ -18,6 +18,7 @@ struct sample_attributes;
    across different samples.  Since each thread computes a chunk of
    input across all samples, there are sample-specific parameters as
    well, held in sample_attributes. */
+
 struct dist_worker_input
 {
     struct sample_attributes *sample_atts;
@@ -30,12 +31,16 @@ struct dist_worker_input
     double dist_quantile_values[MAX_NUM_QUANTILES];
     double comp_quantile_values[MAX_NUM_QUANTILES];
 
-    float min_high_conf_dist; 
-    size_t prelim_n_points;
-    double prelim_quantile;
+    /* float min_high_conf_dist;  */
+    /* size_t prelim_n_points; */
+    /* double prelim_quantile; */
 
     gsl_rng *randgen;
     double *square_dist_buf; /* holds squares of distances for distance calculation */
+    double *weights_buf; /* holds weights from those square distances
+                            (product of weights on individual
+                            points) */
+
     int print_pileup_fields; // if 0, do not print extra pileup fields
 
     int do_dist, do_comp, do_indel;

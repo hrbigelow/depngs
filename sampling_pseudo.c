@@ -31,13 +31,15 @@ bqv_lo_adj, the 99% confidence lower bound esimtate of Q(qv;P)
 bqv_hi_adj, the 99% confidence upper bound esimtate of Q(qv;P)
 
 This then yields these three cases.  The vertical bars represent our
-desired confidence in claiming a locus has 'less than qv non-reference
-base' or 'greater than qv non-reference base'.  The brackets represent
-our confidence in the lower and upper-bound estimates of Q(qv;P).
+desired confidence (post_qmin and post_qmax) in claiming a locus has
+'less than qv non-reference base' or 'greater than qv non-reference
+base'.  The brackets (beta_qvmin and beta_qvmax) represent our
+confidence in the lower and upper-bound estimates of Q(qv;P),
+calculated from the user-provided beta_qmin and beta_qmax.
 
 We have six cases:
 
- changed  | too-little-data  |  non-changed
+ changed  | too-little-data  |  unchanged
 I       [ |                  | ]
 A         |                [ | ]
 B       [ | ]                |
@@ -50,14 +52,14 @@ I: More sample points are needed to say anything.  This is the most
    It should never happen that we end up here after taking max points.
 
 A: 'changed' category eliminated.  More sample points needed to call
-   'non-changed' or 'too-little-data'. If max points taken, do not
+   'unchanged' or 'too-little-data'. If max points taken, do not
    report.  stop.
 
-B: 'non-changed' category eliminated.  More sample points needed to
+B: 'unchanged' category eliminated.  More sample points needed to
    call 'changed' or 'too-little-data'.  If max points taken, do not
    report. stop.
 
-C: called as 'non-changed'.  stop.  (most common case)
+C: called as 'unchanged'.  stop.  (most common case)
 
 D: called as 'too-little-data'.  stop.  (second most common case)
 
@@ -66,12 +68,23 @@ E: called as 'changed'.  Continue taking samples until max in order to
 
 During a given loop, the possible paths through these states would be:
 
-IBC or IC   (non-changed locus)
-IAD or ID   (low-coverage locus that has no non-reference bases)
+IAC or IC   (unchanged locus)
+IBD or ID   (low-coverage locus that has no non-reference bases)
 IBE or IE   (changed locus)
-IB          (borderline non-changed locus, hitting max points)
-IC          (borderline changed locus, hitting max points)
+IA          (borderline unchanged locus, hitting max points)
+IB          (borderline changed locus, hitting max points)
 
+TESTS:
+
+state = I: if (beta_qvmin > post_qmin) state = A;
+           if (beta_qvmin > post_qmax) return C;
+           if (beta_qvmax < post_qmin) return E;
+
+state = A: if (beta_qvmin > post_qmax) return C;
+           if (beta_qvmax < post_qmax) return D;
+
+state = B: if (beta_qvmin > post_qmin) return D;
+           if (beta_qvmax < post_qmin) return E;
 
 CONCEPTUAL NOTES:
 
@@ -80,7 +93,7 @@ categories.
 
 Conceptually, our P distribution is wholly determined by the existing
 data and thus can only represent changed, too-little-data, or
-non-changed.  These three categories are determined solely by the
+unchanged.  These three categories are determined solely by the
 Q(qv;P) value being below lo_thresh, between lo_thresh and hi_thresh,
 or above hi_thresh, respectively.  However, since we can't compute
 Q(qv;P) directly, (can only generate confidence intervals for it)

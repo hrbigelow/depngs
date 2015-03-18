@@ -17,8 +17,6 @@ int run_comp(size_t max_mem,
              const char *posterior_output_file,
              const char *cdfs_output_file,
              posterior_settings *pset,
-             double test_quantile,
-             double min_test_quantile_value,
              bool verbose);
 
 #endif // _RUN_COMP_H
