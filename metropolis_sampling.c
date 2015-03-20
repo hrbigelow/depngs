@@ -108,6 +108,7 @@ static inline void bounded_alphas_from_mean(double *mean, double alpha0,
 
 
 /* */
+#if 0
 size_t tune_proposal(const struct packed_counts *cts,
                      const struct posterior_settings *pset,
                      double *proposal_alpha,
@@ -153,6 +154,8 @@ size_t tune_proposal(const struct packed_counts *cts,
 
     return cumul_aoff;
 }
+#endif
+
 
 /* Generate sample points according to Metropolis criterion, using the
     alphas for a dirichlet proposal distribution, and the polynomial
@@ -172,6 +175,7 @@ size_t tune_proposal(const struct packed_counts *cts,
 */
 #define BATCH 16
 
+#if 0
 void
 metropolis_sampling(unsigned short start_point, 
                     unsigned short end_point,
@@ -279,5 +283,6 @@ metropolis_sampling(unsigned short start_point,
     }
     gsl_rng_free(randgen);
 }
+#endif
 
 

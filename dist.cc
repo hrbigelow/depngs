@@ -1,4 +1,3 @@
-#include "comp_worker.h"
 #include "tools.h"
 #include "usage_strings.h"
 #include "defs.h"
@@ -78,6 +77,7 @@ int main_dist(int argc, char **argv)
         0.2,
         0.99,
         0.99,
+        5
     };
 
     int print_pileup_fields = 0;
@@ -150,19 +150,19 @@ int main_dist(int argc, char **argv)
     char jpd[1000], pileup[1000], label[1000];
     size_t n_samples = 0, n_alloc = 0;
 
-    struct sample_attributes *sample_attrs = NULL;
-    size_t max_label_len = sizeof((*sample_attrs).label_string);
+    struct sample_attributes *sample_attrs_tmp = NULL, *sample_attrs = NULL;
+    size_t max_label_len = sizeof((*sample_attrs_tmp).label_string);
     while (! feof(samples_fh))
     {
         (void)fscanf(samples_fh, "%s\t%s\t%s\n", label, jpd, pileup);
-        ALLOC_GROW_TYPED(sample_attrs, n_samples + 1, n_alloc);
+        ALLOC_GROW_TYPED(sample_attrs_tmp, n_samples + 1, n_alloc);
         if (strlen(label) > max_label_len)
         {
             fprintf(stderr, "Error: sample label must be less than %Zu characters\n"
                     "Label was \"%s\"\n", max_label_len, label);
             exit(1);
         }
-        init_sample_attributes(jpd, label, pileup, &sample_attrs[n_samples]);
+        init_sample_attributes(jpd, label, pileup, &sample_attrs_tmp[n_samples]);
         ++n_samples;
     }
     fclose(samples_fh);
@@ -234,20 +234,30 @@ int main_dist(int argc, char **argv)
     // parse pairings file
     size_t n_pairings, *pair_sample1, *pair_sample2;
     {
+        int *sample_remap = (int *)malloc(n_samples * sizeof(int));
+        size_t p, s, n = 0, na = 0;
+        for (s = 0; s != n_samples; ++s) sample_remap[s] = -1;
+
         FILE *sample_pairings_fh = open_if_present(sample_pairings_file, "r");
         std::vector<size_t> pair1, pair2;
         std::vector<size_t> *trg[] = { & pair1, & pair2 };
         char label[2][100];
-        size_t p, s;
         while (! feof(sample_pairings_fh))
         {
             (void)fscanf(sample_pairings_fh, "%s\t%s\n", label[0], label[1]);
             for (p = 0; p != 2; ++p)
             {
                 for (s = 0; s != n_samples; ++s)
-                    if (strcmp(sample_attrs[s].label_string, label[p]) == 0)
+                    if (strcmp(sample_attrs_tmp[s].label_string, label[p]) == 0)
                     {
-                        (*trg[p]).push_back(s);
+                        if (sample_remap[s] == -1)
+                        {
+                            sample_remap[s] = n;
+                            ALLOC_GROW_TYPED(sample_attrs, n + 1, na);
+                            sample_attrs[n] = sample_attrs_tmp[s];
+                            ++n;
+                        }
+                        (*trg[p]).push_back(sample_remap[s]);
                         break;
                     }
                 if (s == n_samples)
@@ -260,13 +270,18 @@ int main_dist(int argc, char **argv)
             }
         }
         fclose(sample_pairings_fh);
+        free(sample_remap);
         
         n_pairings = pair1.size();
         pair_sample1 = (size_t *)malloc(n_pairings * sizeof(size_t));
         pair_sample2 = (size_t *)malloc(n_pairings * sizeof(size_t));
         std::copy(pair1.begin(), pair1.end(), pair_sample1);
         std::copy(pair2.begin(), pair2.end(), pair_sample2);
+        n_samples = n;
     }
+    free(sample_attrs_tmp);
+
+    /* */
     
     /* 0. parse contig order file */
     char contig[1024];
@@ -355,6 +370,9 @@ int main_dist(int argc, char **argv)
         (dist_fh ? 1 : 0)
         + (comp_fh ? 1 : 0)
         + (indel_fh ? 1 : 0);
+
+    /* initialize beta quantile estimation procedure */
+    init_beta(pset.beta_confidence);
 
     /* this should be revisited if it turns out that threads are
        stalling */

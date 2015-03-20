@@ -27,8 +27,8 @@ int main(int argc, char **argv)
     if (argc < 2) 
         return usage();
 
-    else if (strcmp(argv[1], "comp") == 0)
-        return main_comp(argc - 1, argv + 1);
+    // else if (strcmp(argv[1], "comp") == 0)
+    //     return main_comp(argc - 1, argv + 1);
 
     else if (strcmp(argv[1], "dist") == 0)
         return main_dist(argc - 1, argv + 1);

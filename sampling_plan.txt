@@ -358,6 +358,122 @@ estimates for all desired quantiles.  No need to use Beta anymore.
 
 USING THE JEFFRIES WITH WEIGHTED SAMPLE POINTS:
 
+
+A 'quantile' is a chosen mass partition fraction of a density.  A
+'quantile value' is the position in the domain of the density where
+that mass partition fraction is obtained.
+
+Motivation:
+
+Our distributions fall into 3 groups based on a quantile value qv of
+interest.  qv is typically around 0.2 and represents the minimum
+amount of non-reference base needed to make a locus 'interesting'.
+
+Q is the 'quantile' function which provides the quantile corresponding
+to a given quantile value of a distribution.  Otherwise known as the
+CDF or Error Function.
+
+A) non-changed             0.99 < Q(qv;I)
+B) too-little-data         0.01 < Q(qv;I) < 0.99.
+C) changed                 Q(qv;I) < 0.01
+
+However, there are a few layers of indirection here.  First, we are
+interested in P(*), not I(*).  Second, we can only get lower and
+upper-bound estimates of Q(qv;I(*)), and these estimates converge
+towards each other as we take more and more sample points.
+
+We thus have:
+
+bqv_lo, the 99% confidence lower bound estimate of Q(qv;I)
+bqv_hi, the 99% confidence upper bound esitmate of Q(qv;I)
+
+bqv_lo_adj, the 99% confidence lower bound esimtate of Q(qv;P)
+bqv_hi_adj, the 99% confidence upper bound esimtate of Q(qv;P)
+
+This then yields these three cases.  The vertical bars represent our
+desired confidence (post_qmin and post_qmax) in claiming a locus has
+'less than qv non-reference base' or 'greater than qv non-reference
+base'.  The brackets (beta_qvmin and beta_qvmax) represent our
+confidence in the lower and upper-bound estimates of Q(qv;P),
+calculated from the user-provided beta_qmin and beta_qmax.
+
+We have six cases:
+
+ changed  | too-little-data  |  unchanged
+I       [ |                  | ]
+A         |                [ | ]
+B       [ | ]                |
+C         |                  |   [   ]
+D         |       [   ]      |
+E  [   ]  |                  |
+
+I: More sample points are needed to say anything.  This is the most
+   likely starting point when very few sample points have been taken.
+   It should never happen that we end up here after taking max points.
+
+A: 'changed' category eliminated.  More sample points needed to call
+   'unchanged' or 'too-little-data'. If max points taken, do not
+   report.  stop.
+
+B: 'unchanged' category eliminated.  More sample points needed to
+   call 'changed' or 'too-little-data'.  If max points taken, do not
+   report. stop.
+
+C: called as 'unchanged'.  stop.  (most common case)
+
+D: called as 'too-little-data'.  stop.  (second most common case)
+
+E: called as 'changed'.  Continue taking samples until max in order to
+   get accurate estimates.  (Should there be a separate max for this?)
+
+During a given loop, the possible paths through these states would be:
+
+IAC or IC   (unchanged locus)
+IBD or ID   (low-coverage locus that has no non-reference bases)
+IBE or IE   (changed locus)
+IA          (borderline unchanged locus, hitting max points)
+IB          (borderline changed locus, hitting max points)
+
+TESTS:
+
+state = I: if (beta_qvmin > post_qmin) state = A;
+           if (beta_qvmin > post_qmax) return C;
+           if (beta_qvmax < post_qmin) return E;
+
+state = A: if (beta_qvmin > post_qmax) return C;
+           if (beta_qvmax < post_qmax) return D;
+
+state = B: if (beta_qvmin > post_qmin) return D;
+           if (beta_qvmax < post_qmin) return E;
+
+CONCEPTUAL NOTES:
+
+We keep a tally of the number of loci that fall into each of the 6
+categories.
+
+Conceptually, our P distribution is wholly determined by the existing
+data and thus can only represent changed, too-little-data, or
+unchanged.  These three categories are determined solely by the
+Q(qv;P) value being below lo_thresh, between lo_thresh and hi_thresh,
+or above hi_thresh, respectively.  However, since we can't compute
+Q(qv;P) directly, (can only generate confidence intervals for it)
+cases D and E exist.  Faced with this, we choose to resolve the
+sampling ambiguity in favor of the too-little-data category.
+
+Loci whose true Q(qv;P) are in the changed partition but happen to
+fall in case D will not be reported, but the number of such loci will
+be tallied.  These loci represent the true borderline cases of
+interest.  However, they are not reported, because one can always
+adjust the threshold a little lower and get them reported.
+
+In summary, no matter what choices of value or confidence theshold a
+user chooses, there will be edge cases that question the threshold.
+There is no way around it.
+
+QV is the quantile value function.  It accepts a quantile and outputs
+a quantile value, relative to a distribution function.
+
+
 Now, what happens if you want to simulate sampling from P(*) by
 instead sampling from I(*) and weighting each point x by P(x)/I(x)?
 

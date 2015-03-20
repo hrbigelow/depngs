@@ -49,14 +49,19 @@ struct less_wcoord {
     }
 };
 
+
+/* computes the marginal quantiles from a set of weighted sample
+   points, selecting the 'dim' component of the point. Note: This
+   function can process POINT *points as well, but needs a cast (?) */
 void compute_marginal_wquantiles(double *sample_points,
                                  double *weights,
                                  size_t n_points,
                                  size_t n_dims,
-                                 size_t sort_dimension,
+                                 size_t dim,
                                  const double *quantiles,
                                  size_t n_quantiles,
-                                 double *quantile_values)
+                                 double *quantile_values,
+                                 double *mean)
 {
     /* copy appropriate dimension */
     struct weighted_coord 
@@ -65,7 +70,7 @@ void compute_marginal_wquantiles(double *sample_points,
     
     struct weighted_coord *start = wgt_points, *end = start + n_points, *cut;
 
-    double *ps = sample_points + sort_dimension;
+    double *ps = sample_points + dim;
     double *pw = weights;
     for (cut = start; cut != end; ++cut, ps += n_dims, ++pw) 
     {
@@ -74,53 +79,49 @@ void compute_marginal_wquantiles(double *sample_points,
     }
 
     size_t f;
-    double running_sum = 0;
+    double sum_wgts = 0, sum_wval = 0;
     struct less_wcoord lesswc;
     for (f = 0; f != n_quantiles; ++f)
     {
         cut = wgt_points + (size_t)std::round(quantiles[f] * n_points);
         std::nth_element(start, cut, end, lesswc);
-        while (start != cut) running_sum += start++->weight;
-        quantile_values[f] = running_sum;
+        while (start != cut) 
+        {
+            sum_wgts += start->weight;
+            ++start;
+        }
+        quantile_values[f] = sum_wgts;
     }
 
-    /* normalize */
-    double running_sum_inv = 1.0 / running_sum;
+    /* finish computing the sum_wgts */
+    while (start != end) sum_wgts += start++->weight;
+
+    /* normalize quantile values */
+    double sum_wgts_inv = 1.0 / sum_wgts;
     for (f = 0; f != n_quantiles; ++f)
-        quantile_values[f] *= running_sum_inv;
+        quantile_values[f] *= sum_wgts_inv;
+
+    /* compute mean */
+    for (start = wgt_points; start != end; ++start)
+        sum_wval += start->weight * start->coord;
+    *mean = sum_wval * sum_wgts_inv;
 
     free(wgt_points);
 }
 
 
-// return next write position after writing to out_buf
-char *print_marginal_wquantiles(char *out_buf, 
-                                double *sample_points,
-                                double *weights,
-                                size_t n_points,
-                                const char *line_label,
-                                const double **quantile_values,
-                                size_t n_quantiles)
+#if 0
+/* prints out return next write position after writing to out_buf */
+char *print_marginal_quantiles(char *out_buf, 
+                               const char *line_label,
+                               const double **quantile_values,
+                               const double *means,
+                               size_t n_quantiles)
 {
-    double mean[] = { 0, 0, 0, 0 };
-
-    /* calculate mean */
-    double *point = sample_points;
-    double weights_sum = 0;
-    size_t d, q, p = 0;
-    for ( ; p != n_points; ++p, point += NUM_NUCS)
-    {
-        weights_sum += weights[p];
-        for (d = 0; d != NUM_NUCS; ++d) mean[d] += point[d] * weights[p];
-    }
-    double weights_sum_inv = 1.0 / weights_sum;
-
     std::multimap<double, size_t, std::greater<double> > dim_to_mean;
+    unsigned d, q;
     for (d = 0; d != NUM_NUCS; ++d)
-    {
-        mean[d] *= weights_sum_inv;
-        dim_to_mean.insert(std::make_pair(mean[d], d));
-    }
+        dim_to_mean.insert(std::make_pair(means[d], d));
 
     /* calculate mean rank order */
     size_t mean_rank_order[NUM_NUCS];
@@ -134,7 +135,7 @@ char *print_marginal_wquantiles(char *out_buf,
     {
         out_buf += 
             sprintf(out_buf, "%s\t%c\t%Zu\t%10.8f", line_label, 
-                    dimension_labels[d], mean_rank_order[d], mean[d]);
+                    dimension_labels[d], mean_rank_order[d], means[d]);
 
         for (q = 0; q != n_quantiles; ++q)
             out_buf += sprintf(out_buf, "\t%10.8f", quantile_values[d][q]);
@@ -144,8 +145,10 @@ char *print_marginal_wquantiles(char *out_buf,
     
     return out_buf;
 }
+#endif
 
 
+#if 0
 // return next write position after writing to out_buf
 char *print_marginal_quantiles(char *out_buf, 
                                double *sample_points,
@@ -209,6 +212,9 @@ char *print_marginal_quantiles(char *out_buf,
     out_buf += sprintf(out_buf, "\n");
     return out_buf;
 }
+#endif
+
+
 
 struct less_ptr
 {

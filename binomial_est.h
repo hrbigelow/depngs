@@ -36,6 +36,9 @@ struct points_gen
 };
 
 
+void init_beta(double beta_conf);
+
+
 /* Sample pairs of points from dist_pair up to max_points, classifying
    each pair as 'success' if distance is less than min_dist, 'failure'
    otherwise.  From the set of successes and failures, use the Beta
@@ -46,10 +49,8 @@ binomial_quantile_est(unsigned max_points, float min_dist,
                       float post_conf, float beta_conf,
                       struct points_gen pgen1,
                       struct points_buf *points1,
-                      struct weights_buf *weights1,
                       struct points_gen pgen2,
                       struct points_buf *points2,
-                      struct weights_buf *weights2,
                       size_t batch_size);
 
 #endif /* _BINOMIAL_EST_H */

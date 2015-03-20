@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <fstream>
+#include <gsl/gsl_rng.h>
 
 #include "pileup_tools.h"
 #include "defs.h"
@@ -21,30 +22,6 @@ extern "C" {
 
 
 
-/* instantiate one of these for each thread and each sample.  holds
-   the information for the locus currently being processed in this
-   thread and sample. */
-struct locus_sampling
-{
-    PileupSummary locus;
-    bool is_next;
-    unsigned char dist_printed;
-    /* double proposal_alpha[NUM_NUCS]; */
-    struct points_gen pgen;
-    struct points_buf points;
-    struct weights_buf weights;
-    /* size_t autocor_offset; */
-    char *current, *end;
-    pair_ordering locus_ord;
-};
-
-/* attributes intrinsic to one sample */
-struct sample_attributes
-{
-    char label_string[100];
-    struct nucleotide_stats nuc_stats;
-    FILE *fh;
-};
 
 
 /* instantiate one of these for each thread x sample (but there is
@@ -64,7 +41,6 @@ struct comp_worker_input
 };
 
 /* */
-#define GEN_POINTS_BATCH 4
 
 /* the following four functions can be used with binomial_est's struct
    points_gen. */

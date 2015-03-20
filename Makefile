@@ -14,7 +14,8 @@ INSTALL = /usr/bin/install -c
 INSTALLDATA = /usr/bin/install -c -m 644
 OBJDIR = obj
 YEPLIBDIR = $(HOME)/cc/yeppp/library/binaries/x64-linux-sysv-default
-GSLDEBUGLIB = /usr/lib/debug/usr/lib
+#GSLDEBUGLIB = /usr/lib/debug/usr/lib
+GSLDEBUGLIB= $(HOME)/usr/lib/
 YEPHEADERS = $(HOME)/cc/yeppp/library/headers
 CPPFLAGS = -I. -I.. -I$(YEPHEADERS)
 OPT = -O0
@@ -37,12 +38,11 @@ EXE = dep test_dirichlet
 .PHONY : all
 all : $(EXE)
 
-dep : $(addprefix $(OBJDIR)/, dep.o comp.o dict.o bqs.o bqs2jpd.o	\
-	sampling.o tools.o nucleotide_stats.o pileup_tools.o			\
-	metropolis_sampling.o usage_strings.o run_comp.o dist.o			\
-	dist_worker.o comp_worker.o pug.o file_utils.o					\
-	file_binary_search.o ordering.o locus.o range_line_reader.o		\
-	thread_queue.o)
+dep : $(addprefix $(OBJDIR)/, dep.o dict.o bqs.o bqs2jpd.o sampling.o	\
+	tools.o nucleotide_stats.o pileup_tools.o metropolis_sampling.o		\
+	usage_strings.o dist.o dist_worker.o binomial_est.o pug.o			\
+	file_utils.o file_binary_search.o ordering.o locus.o				\
+	range_line_reader.o thread_queue.o)
 	$(CC) -L$(YEPLIBDIR) -L$(GSLDEBUGLIB) \
 	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB) -o $@ $^ $(DEPLIBS)
 
