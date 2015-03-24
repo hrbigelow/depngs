@@ -409,7 +409,7 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
     locus_sampling *lsp[2];
     unsigned lsi[2];
     size_t pi, i;
-
+    unsigned counts1[NUM_NUCS], counts2[NUM_NUCS];
     enum fuzzy_state diff_state = AMBIGUOUS;
 
     for (pi = 0; pi != dw->n_sample_pairs; ++pi)
@@ -419,20 +419,17 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
         lsp[0] = &lslist[lsi[0]];
         lsp[1] = &lslist[lsi[1]];
 
+        for (i = 0; i != NUM_NUCS; ++i)
+        {
+            counts1[i] = lsp[0]->locus->base_counts[i];
+            counts2[i] = lsp[1]->locus->base_counts[i];
+        }
+
         if (! (lsp[0]->is_next && lsp[1]->is_next))
             diff_state = AMBIGUOUS;
 
         else
-            diff_state = 
-                binomial_quantile_est(dw->pset->max_sample_points,
-                                      dw->pset->min_dist,
-                                      dw->pset->post_confidence,
-                                      dw->pset->beta_confidence,
-                                      lsp[0]->pgen,
-                                      &lsp[0]->points,
-                                      lsp[1]->pgen,
-                                      &lsp[1]->points,
-                                      GEN_POINTS_BATCH);
+            diff_state = cached_dirichlet_diff(counts1, counts2, dw->bpar);
         
         if (diff_state == CHANGED)
         {
@@ -972,133 +969,5 @@ void print_indel_comparisons(dist_worker_input *wi,
             delete[] cnt2;
         }
     }
-}
-#endif
-
-
-
-#if 0
-/* print out distance quantiles for the next locus, for all pairs.
-   also generates sample points for each sample as needed, both for
-   the preliminary test and more points for the final test */
-char *next_distance_quantiles_aux(dist_worker_input *input, 
-                                  locus_sampling *sd,
-                                  size_t gs,
-                                  const double *null_points,
-                                  char *out_buf)
-{
-    if (! out_buf) return out_buf;
-
-    double estimated_mean[2][NUM_NUCS], proposal_alpha[2][NUM_NUCS];
-    locus_sampling *sdpair[2];
-    unsigned sdi[2];
-    size_t cumul_aoff[2];
-    size_t p, i;
-
-    struct eval_counts *tune_eval = 
-        (struct eval_counts *)malloc(input->n_samples * sizeof(struct eval_counts));
-    struct eval_counts *samp_eval = 
-        (struct eval_counts *)malloc(input->n_samples * sizeof(struct eval_counts));
-
-    memset(tune_eval, 0, input->n_samples * sizeof(struct eval_counts));
-    memset(samp_eval, 0, input->n_samples * sizeof(struct eval_counts));
-
-    for (p = 0; p != input->n_sample_pairs; ++p)
-    {
-        sdi[0] = input->pair_sample1[pi];
-        sdi[1] = input->pair_sample2[pi];
-        sdpair[0] = &sd[sdi[0]];
-        sdpair[1] = &sd[sdi[1]];
-
-        if (input->min_high_conf_dist > 0 && ! (sdpair[0]->is_next && sdpair[1]->is_next))
-            continue;
-        
-        /* preliminary sampling */
-        for (i = 0; i != 2; ++i)
-        {
-            if (sdpair[i]->is_next && ! sdpair[i]->n_sample_points)
-            {
-                cumul_aoff[i] = 
-                    tune_proposal(&sdpair[i]->locus.counts, 
-                                  input->pset,
-                                  proposal_alpha[i], estimated_mean[i], 
-                                  sdpair[i]->sample_points,
-                                  &tune_eval[sdi[i]]);
-                
-                metropolis_sampling(0, input->prelim_n_points, 
-                                    &sdpair[i]->locus.counts,
-                                    input->pset->logu, proposal_alpha[i], 
-                                    input->pset->prior_alpha,
-                                    cumul_aoff[i], 
-                                    sdpair[i]->sample_points,
-                                    &samp_eval[sdi[i]]);
-                
-                // input->worker[s1]->tune(sd1, estimated_mean1);
-                // input->worker[s1]->sample(sd1, estimated_mean1, input->prelim_n_points);
-                sdpair[i]->n_sample_points = input->prelim_n_points;
-            }
-        }
-            
-        compute_dist_quantiles(sdpair[0]->is_next ? sdpair[0]->sample_points : null_points,
-                               sdpair[1]->is_next ? sdpair[1]->sample_points : null_points,
-                               4,
-                               input->prelim_n_points, input->square_dist_buf,
-                               MIN(input->n_sample_point_pairings,
-                                   input->prelim_n_points * 10), // ad-hoc
-                               input->randgen,
-                               &input->prelim_quantile, 1, input->dist_quantile_values);
-        
-        /* after prelim testing, still not enough difference */
-        if (input->dist_quantile_values[0] < input->min_high_conf_dist)
-            continue;
-        
-        for (i = 0; i != 2; ++i)
-        {
-            if (sdpair[i]->n_sample_points == input->prelim_n_points)
-            {
-                metropolis_sampling(sdpair[i]->n_sample_points, 
-                                    input->pset->final_n_points, 
-                                    &sdpair[i]->locus.counts,
-                                    input->pset->logu, proposal_alpha[i], 
-                                    input->pset->prior_alpha,
-                                    cumul_aoff[i], 
-                                    sdpair[i]->sample_points,
-                                    &samp_eval[sdi[i]]);
-                
-                // input->worker[s1]->sample(sdpair[i], estimated_mean1, input->final_n_points);
-                sdpair[i]->n_sample_points = input->pset->final_n_points;
-            }
-        }
-
-        compute_dist_quantiles(sdpair[0]->is_next ? sdpair[0]->sample_points : null_points,
-                               sdpair[1]->is_next ? sdpair[1]->sample_points : null_points,
-                               4,
-                               input->pset->final_n_points,
-                               input->square_dist_buf,
-                               input->n_sample_point_pairings,
-                               input->randgen,
-                               input->pset->dist_quantiles,
-                               input->pset->n_dist_quantiles,
-                               input->dist_quantile_values);
-        
-        if (input->dist_quantile_values[0] >= input->min_high_conf_dist)
-            out_buf = 
-                print_distance_quantiles(sd[gs].locus.reference, 
-                                         sd[gs].locus.position, input, 
-                                         p, input->dist_quantile_values, 
-                                         sd, out_buf);
-    }
-    for (i = 0; i != input->n_samples; ++i)
-        fprintf(stderr,
-                "sample %Zu: n_dir_tune: %u, n_yep_tune: %u, "
-                "n_tuning_iter: %u, cumul_aoff: %u\t"
-                "n_dir_samp: %u, n_yep_samp: %u\n", 
-                i, tune_eval[i].n_dirichlet, tune_eval[i].n_yep, 
-                tune_eval[i].n_tuning_iter,
-                tune_eval[i].cumul_aoff,
-                samp_eval[i].n_dirichlet, samp_eval[i].n_yep);
-    free(tune_eval);
-    free(samp_eval);
-    return out_buf;
 }
 #endif

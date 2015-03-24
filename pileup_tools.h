@@ -11,7 +11,7 @@ extern "C" {
 }
 
 
-#define NUM_BASE_SYMBOLS 10
+#define NUM_BASE_SYMBOLS 5
 
 /* A class for representing a single line of pileup information
  */
@@ -53,7 +53,7 @@ public:
        threshold quality score */
     size_t read_depth_high_qual; 
 
-    int base_counts[NUM_BASE_SYMBOLS]; //ACGTNacgtn
+    int base_counts[NUM_BASE_SYMBOLS]; //ACGTN
     int sum_of_counts;
     struct managed_buf bases, bases_upper, bases_raw, quality_codes;
 
