@@ -20,20 +20,6 @@ extern "C" {
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #if 0
 /* returns next write position after writing to out_buffer */
 char *process_line_comp_binom(struct comp_worker_input *cw,
@@ -143,7 +129,7 @@ void comp_worker(void *par,
     ALLOC_GROW_TYPED(loc_weights.buf, loc_weights.size, loc_weights.alloc);
     
     struct calc_post_to_dir_par post_dir_par;
-    struct gen_dirichlet_points_par dir_par;
+    struct dir_points_par dir_par;
     dir_par.randgen = gsl_rng_alloc(gsl_rng_taus);
     
     struct locus_sampling ls = {

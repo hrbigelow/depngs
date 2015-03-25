@@ -6,7 +6,7 @@ unsigned virtual_lower_bound(unsigned beg, unsigned end,
     unsigned mid, len = end - beg;
     while (len > 0)
     {
-        mid = beg + len>>1;
+        mid = beg + (len>>1);
         if (elem_is_less(mid, par)) beg = mid + 1;
         else end = mid;
         len = end - beg;
@@ -22,7 +22,7 @@ unsigned virtual_upper_bound(unsigned beg, unsigned end,
     unsigned mid, len = end - beg;
     while (len > 0)
     {
-        mid = beg + len>>1;
+        mid = beg + (len>>1);
         if (query_is_less(mid, par)) end = mid;
         else beg = mid + 1;
         len = end - beg;

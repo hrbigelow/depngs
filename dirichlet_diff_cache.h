@@ -2,21 +2,26 @@
 #define _DIRICHLET_DIFF_CACHE_H
 
 #include "binomial_est.h"
+#include "metropolis_sampling.h"
 
-/* Should have one of these per thread */
+struct distrib_points {
+    struct points_gen pgen;
+    struct points_buf points;
+    struct weights_buf weights;
+};
+
+
+/* one instance per thread. */
 struct binomial_est_params {
     enum fuzzy_state query_state;
-    unsigned max_points;
-    float min_dist;
-    float post_conf;
-    float beta_conf;
-    double prior_alpha[NUM_NUCS];
-    struct points_gen pgen1;
-    struct points_buf *points1;
-    struct points_gen pgen2;
-    struct points_buf *points2;
+    struct posterior_settings *pset;
+    struct distrib_points *dist[2];
     size_t batch_size;
 };
+
+
+void dirichlet_diff_init();
+void dirichlet_diff_free();
 
 
 /* test two dirichlets based on their counts. Use a thread-safe

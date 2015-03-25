@@ -202,13 +202,13 @@ binomial_quantile_est(unsigned max_points, float min_dist,
         n += batch_size;
         while (points1->size < n) 
         {
-            pgen1.gen_point(pgen1.gen_point_par, pend1);
+            pgen1.gen_point(pgen1.point_par, pend1);
             points1->size += batch_size;
             pend1 += batch_size;
         }
         while (points2->size < n) 
         {
-            pgen2.gen_point(pgen2.gen_point_par, pend2);
+            pgen2.gen_point(pgen2.point_par, pend2);
             points2->size += batch_size;
             pend2 += batch_size;
         }

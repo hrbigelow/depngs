@@ -40,9 +40,10 @@ all : $(EXE)
 
 dep : $(addprefix $(OBJDIR)/, dep.o dict.o bqs.o bqs2jpd.o sampling.o	\
 	tools.o nucleotide_stats.o pileup_tools.o metropolis_sampling.o		\
-	usage_strings.o dist.o dist_worker.o binomial_est.o pug.o			\
-	file_utils.o file_binary_search.o ordering.o locus.o				\
-	range_line_reader.o thread_queue.o)
+	usage_strings.o dist.o dist_worker.o binomial_est.o					\
+	dirichlet_points_gen.o dirichlet_diff_cache.o pug.o file_utils.o	\
+	file_binary_search.o ordering.o locus.o range_line_reader.o			\
+	thread_queue.o virtual_bound.o)
 	$(CC) -L$(YEPLIBDIR) -L$(GSLDEBUGLIB) \
 	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB) -o $@ $^ $(DEPLIBS)
 

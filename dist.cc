@@ -9,6 +9,7 @@ extern "C" {
 #include "dict.h"
 #include "range_line_reader.h"
 #include "locus.h"
+#include "dirichlet_points_gen.h"
 }
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -312,7 +313,8 @@ int main_dist(int argc, char **argv)
     for (t = 0; t != n_threads; ++t)
     {
         worker_buf[t].sample_atts = sample_attrs;
-        worker_buf[t].pset = &pset; 
+        worker_buf[t].bep.batch_size = GEN_POINTS_BATCH;
+        worker_buf[t].bep.pset = &pset; 
         worker_buf[t].thread_num = t;
         worker_buf[t].n_samples = n_samples;
         worker_buf[t].n_sample_pairs = n_pairings;
@@ -374,6 +376,8 @@ int main_dist(int argc, char **argv)
     /* initialize beta quantile estimation procedure */
     init_beta(pset.beta_confidence);
 
+    dirichlet_diff_init();
+
     /* this should be revisited if it turns out that threads are
        stalling */
     size_t n_extra = n_threads;
@@ -413,5 +417,6 @@ int main_dist(int argc, char **argv)
     free(pair_sample1);
     free(pair_sample2);
     free(sample_attrs);
+    dirichlet_diff_free();
     return 0;
 }

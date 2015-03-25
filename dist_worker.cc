@@ -1,104 +1,15 @@
 #include "dist_worker.h"
-
-#include <gsl/gsl_sf_exp.h>
-
-#include "pileup_tools.h"
-#include "defs.h"
-#include "metropolis_sampling.h"
 #include "sampling.h"
 
-#include "yepMath.h"
-#include "yepCore.h"
-
 #include <gsl/gsl_math.h>
-#include <algorithm>
+#include <gsl/gsl_randist.h>
 
 extern "C" {
 #include "locus.h"
+#include "dirichlet_points_gen.h"
 }
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
-
-
-/* the following four functions can be used with binomial_est's struct
-   points_gen. */
-void gen_dirichlet_points_wrapper(const void *par, POINT *points)
-{
-    int i;
-    struct gen_dirichlet_points_par *gd = (struct gen_dirichlet_points_par *)par;
-
-    for (i = 0; i != GEN_POINTS_BATCH; ++i)
-    {
-        gsl_ran_dirichlet(gd->randgen, NUM_NUCS, gd->alpha, *points);
-        ++points;
-    }
-}
-
-
-/* generate a 'reference' point, representing the corner of the
-   simplex corresponding to the reference base, or a point outside the
-   simplex for reference 'N'.  This external point will serve as an
-   'always different' point. */
-void gen_reference_points_wrapper(const void *par, POINT *points)
-{
-    static POINT ref_points[] = {
-        { 1, 0, 0, 0 },
-        { 0, 1, 0, 0 },
-        { 0, 0, 1, 0 },
-        { 0, 0, 0, 1 },
-        { -1, -1, -1, -1 }
-    };
-    char *refbase = (char *)par;
-    int ref_ind = base_to_index(*refbase);
-    
-    int i;
-    for (i = 0; i != GEN_POINTS_BATCH; ++i, ++points)
-        memcpy(*points, ref_points[ref_ind], sizeof(ref_points[0]));
-}
-
-
-void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
-{
-    int i;
-    struct calc_post_to_dir_par *pd = (struct calc_post_to_dir_par *)par;
-    const struct cpd_count 
-        *trm = pd->post_counts->stats, 
-        *trm_end = trm + pd->post_counts->num_data;
-
-    double 
-        dotp[GEN_POINTS_BATCH], ldotp[GEN_POINTS_BATCH],
-        llh[GEN_POINTS_BATCH], dir[GEN_POINTS_BATCH];
-
-    POINT *p, *pe = points + GEN_POINTS_BATCH;
-    while (trm != trm_end)
-    {
-        for (p = points, i = 0; p != pe; ++p, ++i)
-            dotp[i] = 
-                (*p)[0] * trm->cpd[0] + (*p)[1] * trm->cpd[1]
-                + (*p)[2] * trm->cpd[2] + (*p)[3] * trm->cpd[3];
-        
-        (void)yepMath_Log_V64f_V64f(dotp, ldotp, GEN_POINTS_BATCH);
-        (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)trm->ct, GEN_POINTS_BATCH);
-        (void)yepCore_Add_V64fV64f_V64f(llh, ldotp, llh, GEN_POINTS_BATCH);
-        ++trm;
-    }
-    for (p = points, i = 0; p != pe; ++p, ++i)
-        dir[i] = gsl_ran_dirichlet_lnpdf(NUM_NUCS, pd->proposal_alpha, *p);
-
-    for (i = 0; i != GEN_POINTS_BATCH; ++i)
-        weights[i] = gsl_sf_exp(llh[i] - dir[i]);
-}
-
-
-
-
-void calc_dummy_ratio(POINT * /* unused */, const void * /* unused */,
-                      double *weights)
-{
-    int i;
-    for (i = 0; i != GEN_POINTS_BATCH; ++i)
-        weights[i] = 1;
-}
 
 
 void init_sample_attributes(const char *jpd_file,
@@ -246,23 +157,23 @@ void compute_dist_wquantiles(double *square_dist_buf,
 // middle for the second set.  return the next write position.
 char *print_distance_quantiles(const char *contig,
                                size_t position,
-                               struct dist_worker_input *wi,
+                               struct dist_worker_input *dw,
                                size_t pair_index,
                                double *dist_quantile_values,
                                locus_sampling *ls,
                                char *out_dist_buf)
 {
-    size_t s1 = wi->pair_sample1[pair_index], s2 = wi->pair_sample2[pair_index];
+    size_t s1 = dw->pair_sample1[pair_index], s2 = dw->pair_sample2[pair_index];
 
     out_dist_buf += sprintf(out_dist_buf, "%s\t%s\t%s\t%Zu", 
-                            wi->sample_atts[s1].label_string,
-                            wi->sample_atts[s2].label_string,
+                            dw->sample_atts[s1].label_string,
+                            dw->sample_atts[s2].label_string,
                             contig, position);
     
-    for (size_t q = 0; q != wi->pset->n_dist_quantiles; ++q)
+    for (size_t q = 0; q != dw->bep.pset->n_dist_quantiles; ++q)
        out_dist_buf += sprintf(out_dist_buf, "\t%7.4f", dist_quantile_values[q]);
 
-    if (wi->print_pileup_fields)
+    if (dw->print_pileup_fields)
         out_dist_buf += sprintf(out_dist_buf, "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
                                 ls[s1].locus.read_depth,
                                 ls[s1].locus.bases_raw.buf,
@@ -303,17 +214,18 @@ void init_pileup_locus(const struct nucleotide_stats *stats,
     ls->locus.load_line(ls->current);
     ls->locus_ord = init_locus(ls->current);
     ls->locus.parse(min_quality_score);
-    ls->points.size = 0;
-    ls->weights.size = 0;
+    ls->distp.points.size = 0;
+    ls->distp.weights.size = 0;
     nucleotide_stats_pack(stats, &ls->locus.counts);
-    struct calc_post_to_dir_par *wp = (struct calc_post_to_dir_par *)ls->pgen.weight_par;
+    struct calc_post_to_dir_par *wp = 
+        (struct calc_post_to_dir_par *)ls->distp.pgen.weight_par;
 
     wp->post_counts = &ls->locus.counts;
     (void)alphas_from_counts(wp->post_counts,
-                             dw->pset->prior_alpha,
+                             dw->bep.pset->prior_alpha,
                              wp->proposal_alpha);
-    struct gen_dirichlet_points_par *pp = 
-        (struct gen_dirichlet_points_par *)ls->pgen.gen_point_par;
+    struct dir_points_par *pp = 
+        (struct dir_points_par *)ls->distp.pgen.point_par;
 
     memcpy(pp->alpha, wp->proposal_alpha, sizeof(pp->alpha));
 }
@@ -339,7 +251,7 @@ void refresh_locus(const struct nucleotide_stats *stats,
 
 char *print_indel_distance_quantiles(const char *contig,
                                      size_t position,
-                                     dist_worker_input *wi,
+                                     dist_worker_input *dw,
                                      size_t pair_index,
                                      double *dist_quantile_values,
                                      indel_event *events,
@@ -347,14 +259,14 @@ char *print_indel_distance_quantiles(const char *contig,
                                      locus_sampling *sd,
                                      char *out_dist_buf)
 {
-    size_t s1 = wi->pair_sample1[pair_index], s2 = wi->pair_sample2[pair_index];
+    size_t s1 = dw->pair_sample1[pair_index], s2 = dw->pair_sample2[pair_index];
 
     out_dist_buf += sprintf(out_dist_buf, "%s\t%s\t%s\t%Zu", 
-                            wi->sample_atts[s1].label_string,
-                            wi->sample_atts[s2].label_string,
+                            dw->sample_atts[s1].label_string,
+                            dw->sample_atts[s2].label_string,
                             contig, position);
     
-    for (size_t q = 0; q != wi->pset->n_dist_quantiles; ++q)
+    for (size_t q = 0; q != dw->bep.pset->n_dist_quantiles; ++q)
         out_dist_buf += sprintf(out_dist_buf, "\t%.4f", dist_quantile_values[q]);
 
     // now print the indel event summary
@@ -414,74 +326,76 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
 
     for (pi = 0; pi != dw->n_sample_pairs; ++pi)
     {
-        lsi[0] = dw->pair_sample1[pi];
-        lsi[1] = dw->pair_sample2[pi];
+        dw->bep.dist[0] = &lslist[dw->pair_sample1[pi]].distp;
+        dw->bep.dist[1] = &lslist[dw->pair_sample2[pi]].distp;
         lsp[0] = &lslist[lsi[0]];
         lsp[1] = &lslist[lsi[1]];
 
         for (i = 0; i != NUM_NUCS; ++i)
         {
-            counts1[i] = lsp[0]->locus->base_counts[i];
-            counts2[i] = lsp[1]->locus->base_counts[i];
+            counts1[i] = lsp[0]->locus.base_counts[i];
+            counts2[i] = lsp[1]->locus.base_counts[i];
         }
 
         if (! (lsp[0]->is_next && lsp[1]->is_next))
             diff_state = AMBIGUOUS;
 
         else
-            diff_state = cached_dirichlet_diff(counts1, counts2, dw->bpar);
+            diff_state = cached_dirichlet_diff(counts1, counts2, &dw->bep);
         
         if (diff_state == CHANGED)
         {
             /* Finish sampling and do full distance marginal estimation */
             for (i = 0; i != 2; ++i)
             {
-                locus_sampling *ls = lsp[i];
+                struct distrib_points *dst = dw->bep.dist[i];
                 /* Generate missing points */
                 POINT *p,
-                    *pb = ls->points.buf + ls->points.size,
-                    *pe = ls->points.buf + dw->pset->max_sample_points;
+                    *pb = dst->points.buf + dst->points.size,
+                    *pe = dst->points.buf + dw->bep.pset->max_sample_points;
                 for (p = pb; p != pe; p += GEN_POINTS_BATCH)
-                    ls->pgen.gen_point(ls->pgen.gen_point_par, p);
+                    dst->pgen.gen_point(dst->pgen.point_par, p);
 
-                ls->points.size = dw->pset->max_sample_points;
+                dst->points.size = dw->bep.pset->max_sample_points;
                 
                 /* Generate missing weights */
                 double *w,
-                    *wb = ls->weights.buf + ls->weights.size,
-                    *we = ls->weights.buf + dw->pset->max_sample_points;
-                for (w = wb, p = ls->points.buf + ls->weights.size; w != we; 
+                    *wb = dst->weights.buf + dst->weights.size,
+                    *we = dst->weights.buf + dw->bep.pset->max_sample_points;
+                for (w = wb, p = dst->points.buf + dst->weights.size; w != we; 
                      w += GEN_POINTS_BATCH, p += GEN_POINTS_BATCH)
-                    ls->pgen.weight(p, ls->pgen.weight_par, w);
+                    dst->pgen.weight(p, dst->pgen.weight_par, w);
             }
             /* Compute weighted square distances */
-            compute_wsq_dist(lsp[0]->points.buf, lsp[0]->weights.buf,
-                             lsp[1]->points.buf, lsp[1]->weights.buf,
-                             dw->pset->max_sample_points,
+            compute_wsq_dist(dw->bep.dist[0]->points.buf, 
+                             dw->bep.dist[0]->weights.buf,
+                             dw->bep.dist[1]->points.buf, 
+                             dw->bep.dist[1]->weights.buf,
+                             dw->bep.pset->max_sample_points,
                              dw->square_dist_buf, dw->weights_buf);
 
-            double test_quantile = 1.0 - dw->pset->post_confidence, test_quantile_value;
+            double test_quantile = 1.0 - dw->bep.pset->post_confidence, test_quantile_value;
 
             /* Compute the test distance quantile */
             compute_dist_wquantiles(dw->square_dist_buf,
                                     dw->weights_buf,
-                                    dw->pset->max_sample_points,
+                                    dw->bep.pset->max_sample_points,
                                     &test_quantile,
                                     1,
                                     &test_quantile_value);
 
             test_quantile_value = sqrt(test_quantile_value);
-            if (test_quantile_value > dw->pset->min_dist)
+            if (test_quantile_value > dw->bep.pset->min_dist)
             {
                 compute_dist_wquantiles(dw->square_dist_buf,
                                         dw->weights_buf,
-                                        dw->pset->max_sample_points,
-                                        dw->pset->dist_quantiles,
-                                        dw->pset->n_dist_quantiles,
+                                        dw->bep.pset->max_sample_points,
+                                        dw->bep.pset->dist_quantiles,
+                                        dw->bep.pset->n_dist_quantiles,
                                         dw->dist_quantile_values);            
 
                 unsigned q;
-                for (q = 0; q != dw->pset->n_dist_quantiles; ++q)
+                for (q = 0; q != dw->bep.pset->n_dist_quantiles; ++q)
                     dw->dist_quantile_values[q] = sqrt(dw->dist_quantile_values[q]);
 
                 out_buf = 
@@ -607,7 +521,7 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *dw,
         size_t s1 = dw->pair_sample1[pi], s2 = dw->pair_sample2[pi];
         locus_sampling *ls1 = &lslist[s1], *ls2 = &lslist[s2];
 
-        if (! (ls1->is_next && ls2->is_next) && dw->pset->min_dist > 0) continue;
+        if (! (ls1->is_next && ls2->is_next) && dw->bep.pset->min_dist > 0) continue;
         
         indel_event *all_events = count_indel_types(ls1, ls2, &n_events);
 
@@ -622,7 +536,7 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *dw,
                 alpha2[c] = all_events[c].count2 + 1;
             }
         
-            size_t bufsize = n_events * dw->pset->max_sample_points;
+            size_t bufsize = n_events * dw->bep.pset->max_sample_points;
             double *points1 = new double[bufsize], *p1 = points1, *pe1 = points1 + bufsize;
             double *points2 = new double[bufsize], *p2 = points2;
 
@@ -634,14 +548,14 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *dw,
                 p2 += n_events;
             }
 
-            compute_sq_dist(points1, points2, dw->pset->max_sample_points, n_events,
+            compute_sq_dist(points1, points2, dw->bep.pset->max_sample_points, n_events,
                             dw->square_dist_buf);
 
-            double test_quantile = 1.0 - dw->pset->post_confidence, test_quantile_value;
+            double test_quantile = 1.0 - dw->bep.pset->post_confidence, test_quantile_value;
             
             // compute distance quantiles
             compute_marginal_quantiles(dw->square_dist_buf,
-                                       dw->pset->max_sample_points,
+                                       dw->bep.pset->max_sample_points,
                                        1, /* one dimensional */
                                        0, /* use the first dimension */
                                        &test_quantile,
@@ -649,17 +563,17 @@ char *next_indel_distance_quantiles_aux(dist_worker_input *dw,
                                        &test_quantile_value);
 
             test_quantile_value = sqrt(test_quantile_value);
-            if (test_quantile_value >= dw->pset->min_dist)
+            if (test_quantile_value >= dw->bep.pset->min_dist)
             {
                 compute_marginal_quantiles(dw->square_dist_buf,
-                                           dw->pset->max_sample_points,
+                                           dw->bep.pset->max_sample_points,
                                            1, /* one dimensional */
                                            0, /* use the first dimension */
-                                           dw->pset->dist_quantiles,
-                                           dw->pset->n_dist_quantiles,
+                                           dw->bep.pset->dist_quantiles,
+                                           dw->bep.pset->n_dist_quantiles,
                                            dw->dist_quantile_values);
                 unsigned q;
-                for (q = 0; q != dw->pset->n_dist_quantiles; ++q)
+                for (q = 0; q != dw->bep.pset->n_dist_quantiles; ++q)
                     dw->dist_quantile_values[q] = sqrt(dw->dist_quantile_values[q]);
 
                 out_buf = 
@@ -748,19 +662,19 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     size_t gs = 0, s;
 
     struct calc_post_to_dir_par post_dir_par;
-    struct gen_dirichlet_points_par dir_par;
+    struct dir_points_par dir_par;
     dir_par.randgen = gsl_rng_alloc(gsl_rng_taus);
 
-    unsigned msp = dw->pset->max_sample_points;
+    unsigned msp = dw->bep.pset->max_sample_points;
     for (s = 0; s != dw->n_samples; ++s)
     {    
         lslist[s].locus = PileupSummary();
         lslist[s].is_next = false;
         lslist[s].dist_printed = 0;
-        lslist[s].pgen = { (void *)&dir_par, gen_dirichlet_points_wrapper, 
-                           (void *)&post_dir_par, calc_post_to_dir_ratio };
-        lslist[s].points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
-        lslist[s].weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
+        lslist[s].distp.pgen = { (void *)&dir_par, gen_dirichlet_points_wrapper, 
+                                 (void *)&post_dir_par, calc_post_to_dir_ratio };
+        lslist[s].distp.points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
+        lslist[s].distp.weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
         
         lslist[s].current = in_bufs[s].buf;
         lslist[s].end = in_bufs[s].buf + in_bufs[s].size;
@@ -774,7 +688,7 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     {
         if (lslist[s].current == lslist[s].end) continue;
         init_pileup_locus(&dw->sample_atts[s].nuc_stats, 
-                          dw->pset->min_quality_score, 
+                          dw->bep.pset->min_quality_score, 
                           dw,
                           &lslist[s]);
     }
@@ -788,8 +702,8 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     // basic settings
     locus_sampling null_sd;
     null_sd.locus = PileupSummary();
-    null_sd.points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
-    null_sd.weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
+    null_sd.distp.points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
+    null_sd.distp.weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
     
     nucleotide_stats_pack(&dw->sample_atts[0].nuc_stats, &null_sd.locus.counts);
 
@@ -827,19 +741,19 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
 
                     unsigned d;
                     for (d = 0; d != NUM_NUCS; ++d)
-                        compute_marginal_wquantiles((double *)lslist[s].points.buf,
-                                                    lslist[s].weights.buf,
-                                                    dw->pset->max_sample_points,
+                        compute_marginal_wquantiles((double *)lslist[s].distp.points.buf,
+                                                    lslist[s].distp.weights.buf,
+                                                    dw->bep.pset->max_sample_points,
                                                     NUM_NUCS,
                                                     d,
-                                                    dw->pset->comp_quantiles,
-                                                    dw->pset->n_comp_quantiles,
+                                                    dw->bep.pset->comp_quantiles,
+                                                    dw->bep.pset->n_comp_quantiles,
                                                     comp_quantile_values[d],
                                                     &comp_means[d]);
                     
                     comp_ptr = print_basecomp_quantiles(comp_quantile_values,
                                                         comp_means,
-                                                        dw->pset->n_comp_quantiles,
+                                                        dw->bep.pset->n_comp_quantiles,
                                                         dw->sample_atts[s].label_string,
                                                         &lslist[s],
                                                         comp_ptr);
@@ -849,7 +763,7 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
         for (s = 0; s != dw->n_samples; ++s)
             if (lslist[s].is_next) 
                 refresh_locus(&dw->sample_atts[s].nuc_stats,
-                              dw->pset->min_quality_score, 
+                              dw->bep.pset->min_quality_score, 
                               dw,
                               &lslist[s]);
 
@@ -872,11 +786,11 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     gsl_rng_free(dir_par.randgen);
     for (s = 0; s != dw->n_samples; ++s)
     {    
-        free(lslist[s].points.buf);
-        free(lslist[s].weights.buf);
+        free(lslist[s].distp.points.buf);
+        free(lslist[s].distp.weights.buf);
     }
-    free(null_sd.points.buf);
-    free(null_sd.weights.buf);
+    free(null_sd.distp.points.buf);
+    free(null_sd.distp.weights.buf);
 
     // free(lslist);
     delete[] lslist;
@@ -906,7 +820,7 @@ void dist_offload(void *par, const struct managed_buf *bufs)
 
 
 #if 0
-void print_indel_comparisons(dist_worker_input *wi,
+void print_indel_comparisons(dist_worker_input *dw,
                              locus_sampling *sd,
                              size_t gs)
 {
@@ -918,9 +832,9 @@ void print_indel_comparisons(dist_worker_input *wi,
     size_t position;
     sscanf(*sd[gs].current, "%s\t%zu", contig, &position);
 
-    for (size_t p = 0; p != wi->n_sample_pairs; ++p)
+    for (size_t p = 0; p != dw->n_sample_pairs; ++p)
     {
-        size_t s1 = wi->pair_sample1[p], s2 = wi->pair_sample2[p];
+        size_t s1 = dw->pair_sample1[p], s2 = dw->pair_sample2[p];
         locus_sampling *sd1 = &sd[s1], *sd2 = &sd[s2];
 
         unsigned max1 = (! sd1->is_next) || sd1->locus.deletions.empty() 
@@ -935,8 +849,8 @@ void print_indel_comparisons(dist_worker_input *wi,
         {
         
             printf("%s\t%s\t%s\t%Zu\t%Zu\t%Zu",
-                   wi->worker[s1]->label_string,
-                   wi->worker[s2]->label_string,
+                   dw->worker[s1]->label_string,
+                   dw->worker[s2]->label_string,
                    contig,
                    position,
                    sd1->locus.read_depth,

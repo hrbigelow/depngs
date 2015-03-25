@@ -27,7 +27,7 @@ struct weights_buf {
 
 struct points_gen
 {
-    void *gen_point_par;
+    void *point_par;
     void (*gen_point)(const void *par, POINT *points);
 
     void *weight_par;

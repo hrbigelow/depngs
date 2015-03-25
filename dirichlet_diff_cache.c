@@ -3,16 +3,32 @@
    confidence thresholds. */
 
 #include "binomial_est.h"
-#include "dist_worker.h"
 #include "virtual_bound.h"
+#include "dirichlet_diff_cache.h"
+#include "dirichlet_points_gen.h"
 
+#include <math.h>
+#include <string.h>
+#include <pthread.h>
 
 #define MAX_COUNT1 1000
 #define MAX_COUNT2 100
 
-/* bounds_cache[a2][b2][b1] = a description of the matrix of distance
-   categories.  */
-struct binomial_est_bounds bounds_cache[MAX_COUNT2][MAX_COUNT2][MAX_COUNT1];
+#define MAX(a,b) ((a) < (b) ? (b) : (a))
+
+enum init_phase { UNSET, PENDING, SET };
+
+pthread_mutex_t set_flag_mtx;
+
+void dirichlet_diff_init()
+{
+    pthread_mutex_init(&set_flag_mtx, NULL);
+}
+
+void dirichlet_diff_free()
+{
+    pthread_mutex_destroy(&set_flag_mtx);
+}
 
 /* Describes estimated distance between two Dirichlets with alphas equal to:
    { A1 + p, A2 + p, p, p }
@@ -24,9 +40,16 @@ struct binomial_est_bounds bounds_cache[MAX_COUNT2][MAX_COUNT2][MAX_COUNT1];
    A1 for which it is deemed AMBIGUOUS (or UNCHANGED, where this
    interval overlaps the unchanged interval. */
 struct binomial_est_bounds {
+    enum init_phase state;
     int16_t ambiguous[2];
     int16_t unchanged[2];
 };
+
+
+/* bounds_cache[a2][b2][b1] = a description of the matrix of distance
+   categories.  */
+struct binomial_est_bounds bounds_cache[MAX_COUNT2][MAX_COUNT2][MAX_COUNT1];
+
 
 
 /* Interpolate the interval in the beb row */
@@ -48,48 +71,53 @@ struct pair_point_gen {
 
 /* find top 2 components in el, store their indices in i1 and i2.
    Count the number of occurrences of min_val in z */
-find_top2_aux(double *el, int *i1, int *i2, unsigned *z)
+void find_top2_aux(unsigned *el, int *i1, int *i2, unsigned *z)
 {
-    double m1 = -1, m2 = -1;
+    int m1 = -1, m2 = -1;
     *i1 = -1, *i2 = -1;
     *z = 0;
     unsigned i;
     for (i = 0; i != NUM_NUCS; ++i)
     {
-        if (m1 < el[i]) {
-            *i2 = *i1, *i1 = i;
-            m2 = m1, m1 = a[*i1];
-        }
+        if (m1 < el[i]) *i1 = i, m1 = el[i];
         if (el[i] == 0) ++*z;
     }
+    for (i = 0; i != NUM_NUCS; ++i)
+        if (i != *i1 && m2 < el[i])
+            *i2 = i, m2 = el[i];
+}
+
+enum fuzzy_state state_less_aux(unsigned pos, void *par)
+{
+    struct binomial_est_params *b = par;
+    struct posterior_settings *ps = b->pset;
+
+    ((struct dir_points_par *)b->dist[0]->pgen.point_par)->alpha[0] =
+        (double)pos + ps->prior_alpha[0];
+
+    return binomial_quantile_est(ps->max_sample_points, 
+                                 ps->min_dist,
+                                 ps->post_confidence, 
+                                 ps->beta_confidence,
+                                 b->dist[0]->pgen,
+                                 &b->dist[0]->points, 
+                                 b->dist[1]->pgen,
+                                 &b->dist[1]->points,
+                                 b->batch_size);
 }
 
 
 int query_is_less(unsigned pos, void *par)
 {
     struct binomial_est_params *b = par;
-    ((struct gen_dirichlet_points_par *)b->pgen1->gen_points_par)->alpha[0] =
-        (double)pos + b->prior_alpha[0];
-    enum fuzzy_state elem_state = binomial_quantile_est(b->max_points, b->min_dist,
-                                                        b->post_conf, b->beta_conf,
-                                                        b->pgen1, b->points1,
-                                                        b->pgen2, b->points2,
-                                                        b->batch_size);
-    return b->query_state < elem_state ? 1 : 0;
+    return b->query_state < state_less_aux(pos, par) ? 1 : 0;
 }
 
 
 int elem_is_less(unsigned pos, void *par)
 {
     struct binomial_est_params *b = par;
-    ((struct gen_dirichlet_points_par *)b->pgen1->gen_points_par)->alpha[0] =
-        (double)pos + b->prior_alpha[0];
-    enum fuzzy_state elem_state = binomial_quantile_est(b->max_points, b->min_dist,
-                                                        b->post_conf, b->beta_conf,
-                                                        b->pgen1, b->points1,
-                                                        b->pgen2, b->points2,
-                                                        b->batch_size);
-    return elem_state < b->query_state ? 1 : 0;
+    return state_less_aux(pos, par) < b->query_state ? 1 : 0;
 }
 
 
@@ -104,31 +132,37 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
     beb->ambiguous[0] = beb->ambiguous[1] = 0;
     beb->unchanged[0] = beb->unchanged[1] = 0;
 
-    struct gen_dirichlet_points_par *gd1, *gd2;
+    struct dir_points_par *gd1, *gd2;
     unsigned a1 = (unsigned)round(a2 + a2 * (b1 + b2) / (double)b2);
 
-    gd1 = bpar->pgen1.gen_point_par;
-    memcpy(gd1->alpha, bpar->prior_alpha, sizeof(gd1->alpha));
-    gd1->alpha[0] += nearest_a1;
+    gd1 = bpar->dist[0]->pgen.point_par;
+    memcpy(gd1->alpha, bpar->pset->prior_alpha, sizeof(gd1->alpha));
+    gd1->alpha[0] += a1;
     gd1->alpha[1] += a2;
     
-    gd2 = bpar->pgen2.gen_point_par;
-    memcpy(gd2->alpha, bpar->prior_alpha, sizeof(gd2->alpha));
+    gd2 = bpar->dist[1]->pgen.point_par;
+    memcpy(gd2->alpha, bpar->pset->prior_alpha, sizeof(gd2->alpha));
     gd2->alpha[0] += b1;
     gd2->alpha[1] += b2;
 
     /* 1. Find an UNCHANGED state, if it exists. */
-    unsigned step = 0, a1_lo, a1_hi, max_step = MAX(a1, MAX_COUNT1 - a1);
+    unsigned step = 0, max_step = MAX(a1, MAX_COUNT1 - a1);
     int16_t us = -1;
     enum fuzzy_state state;
+    struct posterior_settings *ps = bpar->pset;
     while (step <= max_step)
     {
         if (step <= a1)
         {
-            gd1->alpha[0] = a1 + step + bpar->prior_alpha[0];
-            state = binomial_quantile_est(bpar->max_points, bpar->min_dist, bpar->post_conf,
-                                          bpar->beta_conf, bpar->pgen1, bpar->points1,
-                                          bpar->pgen2, bpar->points2,
+            gd1->alpha[0] = a1 + step + bpar->pset->prior_alpha[0];
+            state = binomial_quantile_est(ps->max_sample_points, 
+                                          ps->min_dist,
+                                          ps->post_confidence, 
+                                          ps->beta_confidence,
+                                          bpar->dist[0]->pgen,
+                                          &bpar->dist[0]->points, 
+                                          bpar->dist[1]->pgen,
+                                          &bpar->dist[1]->points,
                                           bpar->batch_size);
             if (state == UNCHANGED)
             {
@@ -136,12 +170,17 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
                 break;
             }
         }
-        if (step + a1 <= MAX_COUNT)
+        if (step + a1 <= MAX_COUNT1)
         {
-            gd1->alpha[0] = a1 - step + bpar->prior_alpha[0];
-            state = binomial_quantile_est(bpar->max_points, bpar->min_dist, bpar->post_conf,
-                                          bpar->beta_conf, bpar->pgen1, bpar->points1,
-                                          bpar->pgen2, bpar->points2,
+            gd1->alpha[0] = a1 - step + bpar->pset->prior_alpha[0];
+            state = binomial_quantile_est(ps->max_sample_points, 
+                                          ps->min_dist,
+                                          ps->post_confidence, 
+                                          ps->beta_confidence,
+                                          bpar->dist[0]->pgen,
+                                          &bpar->dist[0]->points, 
+                                          bpar->dist[1]->pgen,
+                                          &bpar->dist[1]->points,
                                           bpar->batch_size);
             if (state == UNCHANGED)
             {
@@ -219,14 +258,25 @@ enum fuzzy_state cached_dirichlet_diff(unsigned *a_counts,
     else
     {
         /* need to test the bounds organically, with no caching */
-        bpar->pgen1->alpha[0] = a1 + bpar->prior_alpha[0];
-        bpar->pgen1->alpha[1] = a2 + bpar->prior_alpha[1];
-        bpar->pgen2->alpha[0] = b1 + bpar->prior_alpha[0];
-        bpar->pgen2->alpha[1] = b2 + bpar->prior_alpha[1];
-        state = binomial_quantile_est(bpar->max_points, bpar->min_dist, bpar->post_conf,
-                                      bpar->beta_conf, bpar->pgen1, bpar->points1,
-                                      bpar->pgen2, bpar->points2,
-                                      bpar->batch_size);
+        struct posterior_settings *ps = bpar->pset;
+        struct dir_points_par 
+            *pp1 = bpar->dist[0]->pgen.point_par,
+            *pp2 = bpar->dist[1]->pgen.point_par;
+
+        pp1->alpha[0] = a1 + ps->prior_alpha[0];
+        pp1->alpha[1] = a2 + ps->prior_alpha[1];
+        pp2->alpha[0] = b1 + ps->prior_alpha[0];
+        pp2->alpha[1] = b2 + ps->prior_alpha[1];
+        enum fuzzy_state state = 
+            binomial_quantile_est(ps->max_sample_points, 
+                                  ps->min_dist, 
+                                  ps->post_confidence,
+                                  ps->beta_confidence, 
+                                  bpar->dist[0]->pgen,
+                                  &bpar->dist[0]->points, 
+                                  bpar->dist[1]->pgen,
+                                  &bpar->dist[1]->points,
+                                  bpar->batch_size);
         return state;
     }
 }
