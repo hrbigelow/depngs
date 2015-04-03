@@ -310,6 +310,10 @@ int main_dist(int argc, char **argv)
     
     void **worker_inputs = (void **)malloc(n_threads * sizeof(void *));
     // initialize all generic structures in the worker_inputs
+
+    /* This adjustment makes max_sample_points a multiple of GEN_POINTS_BATCH */
+    pset.max_sample_points += GEN_POINTS_BATCH - (pset.max_sample_points % GEN_POINTS_BATCH);
+
     for (t = 0; t != n_threads; ++t)
     {
         worker_buf[t].sample_atts = sample_attrs;

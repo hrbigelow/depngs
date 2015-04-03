@@ -7,7 +7,7 @@
 #include "binomial_est.h"
 
 /* number of points or weights generated at a time */
-#define GEN_POINTS_BATCH 4
+#define GEN_POINTS_BATCH 32
 
 struct dir_points_par
 {

@@ -8,6 +8,59 @@
 #include "yepMath.h"
 #include "yepCore.h"
 
+
+/* compute GEN_POINTS_BATCH of unnormalized dirichlet values using the
+   same alpha.  assume NUM_NUCS dimensions */
+void ran_dirichlet_lnpdf_unnormalized(double *alpha, double *points, double *lndir)
+{
+    double 
+        lnpoints[GEN_POINTS_BATCH * NUM_NUCS], 
+        dir_lnpdf[GEN_POINTS_BATCH * NUM_NUCS],
+        alpha_minus_one[NUM_NUCS], 
+        *lnp;
+
+    size_t i, p;
+    for (i = 0; i != NUM_NUCS; ++i) alpha_minus_one[i] = alpha[i] - 1.0;
+
+    (void)yepMath_Log_V64f_V64f(points, lnpoints, sizeof(lnpoints) / sizeof(lnpoints[0]));
+
+    lnp = lnpoints;
+    for (p = 0; p != GEN_POINTS_BATCH; ++p)
+    {
+        dir_lnpdf[p] = 0.0;
+        for (i = 0; i != NUM_NUCS; ++i, ++lnp)
+            dir_lnpdf[p] += alpha_minus_one[i] * *lnp;
+    }
+    memcpy(lndir, dir_lnpdf, sizeof(dir_lnpdf));
+}
+
+
+#if 0
+void gsl_ran_dirichlet_batched(const gsl_rng *r, 
+                               const double *alpha, double *theta)
+{
+    size_t i;
+    double norm = 0.0, norm_inv;
+
+    for (i = 0; i != NUM_NUCS; i++)
+        theta[i] = gsl_ran_gamma(r, alpha[i], 1.0);
+    
+    for (i = 0; i != NUM_NUCS; i++)
+        norm += theta[i];
+    
+    if (norm < GSL_SQRT_DBL_MIN)  /* Handle underflow */
+    {
+        ran_dirichlet_small(r, NUM_NUCS, alpha, theta);
+        return;
+    }
+
+    norm_inv = 1.0 / norm;
+    for (i = 0; i != NUM_NUCS; i++) theta[i] *= norm_inv;
+}
+#endif
+
+
+
 /* the following four functions can be used with binomial_est's struct
    points_gen. */
 void gen_dirichlet_points_wrapper(const void *par, POINT *points)
@@ -55,7 +108,7 @@ void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
 
     double 
         dotp[GEN_POINTS_BATCH], ldotp[GEN_POINTS_BATCH],
-        llh[GEN_POINTS_BATCH], dir[GEN_POINTS_BATCH];
+        llh[GEN_POINTS_BATCH], ldir[GEN_POINTS_BATCH];
 
     POINT *p, *pe = points + GEN_POINTS_BATCH;
     while (trm != trm_end)
@@ -70,11 +123,10 @@ void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
         (void)yepCore_Add_V64fV64f_V64f(llh, ldotp, llh, GEN_POINTS_BATCH);
         ++trm;
     }
-    for (p = points, i = 0; p != pe; ++p, ++i)
-        dir[i] = gsl_ran_dirichlet_lnpdf(NUM_NUCS, pd->proposal_alpha, *p);
+    ran_dirichlet_lnpdf_unnormalized(pd->proposal_alpha, (double *)points, ldir);
 
     for (i = 0; i != GEN_POINTS_BATCH; ++i)
-        weights[i] = gsl_sf_exp(llh[i] - dir[i]);
+        weights[i] = gsl_sf_exp(llh[i] - ldir[i]);
 }
 
 void calc_dummy_ratio(POINT *point, const void *par, double *weights)
@@ -83,3 +135,6 @@ void calc_dummy_ratio(POINT *point, const void *par, double *weights)
     for (i = 0; i != GEN_POINTS_BATCH; ++i)
         weights[i] = 1;
 }
+
+
+

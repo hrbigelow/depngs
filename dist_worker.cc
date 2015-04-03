@@ -205,11 +205,41 @@ struct indel_event
 
 
 
-/* initialize the locus in 'ls' defined by sd->current */
-void init_pileup_locus(const struct nucleotide_stats *stats,
-                       size_t min_quality_score,
-                       struct dist_worker_input *dw,
-                       locus_sampling *ls)
+void alloc_pileup_locus(struct locus_sampling *ls,
+                        unsigned max_sample_points)
+{
+    unsigned msp = max_sample_points;
+    ls->locus = PileupSummary();
+    ls->is_next = false;
+    ls->dist_printed = 0;
+    ls->distp.pgen = { 
+        malloc(sizeof(struct dir_points_par)),
+        gen_dirichlet_points_wrapper, 
+        malloc(sizeof(struct calc_post_to_dir_par)),
+        calc_post_to_dir_ratio
+    };
+    ((struct dir_points_par *)ls->distp.pgen.point_par)->randgen = gsl_rng_alloc(gsl_rng_taus);
+    ls->distp.points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
+    ls->distp.weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
+    ls->locus_ord = min_pair_ord;
+}
+
+
+void free_pileup_locus(struct locus_sampling *ls)
+{
+    free((struct dir_points_par *)ls->distp.pgen.point_par);
+    free((struct calc_post_to_dir_par *)ls->distp.pgen.weight_par);
+    free(ls->distp.points.buf);
+    free(ls->distp.weights.buf);
+    gsl_rng_free(((struct dir_points_par *)ls->distp.pgen.point_par)->randgen);
+}
+
+
+/* update 'ls' fields to be consistent with sd->current */
+void update_pileup_locus(const struct nucleotide_stats *stats,
+                         size_t min_quality_score,
+                         struct dist_worker_input *dw,
+                         locus_sampling *ls)
 {
     ls->locus.load_line(ls->current);
     ls->locus_ord = init_locus(ls->current);
@@ -243,7 +273,7 @@ void refresh_locus(const struct nucleotide_stats *stats,
 
     else
     {
-        init_pileup_locus(stats, min_quality_score, dw, ls);
+        update_pileup_locus(stats, min_quality_score, dw, ls);
         ls->dist_printed = 0;
     }
 }
@@ -319,17 +349,21 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
     if (! out_buf) return out_buf;
 
     locus_sampling *lsp[2];
-    unsigned lsi[2];
     size_t pi, i;
     unsigned counts1[NUM_NUCS], counts2[NUM_NUCS];
     enum fuzzy_state diff_state = AMBIGUOUS;
+
 
     for (pi = 0; pi != dw->n_sample_pairs; ++pi)
     {
         dw->bep.dist[0] = &lslist[dw->pair_sample1[pi]].distp;
         dw->bep.dist[1] = &lslist[dw->pair_sample2[pi]].distp;
-        lsp[0] = &lslist[lsi[0]];
-        lsp[1] = &lslist[lsi[1]];
+        lsp[0] = &lslist[dw->pair_sample1[pi]];
+        lsp[1] = &lslist[dw->pair_sample2[pi]];
+
+        /* TEMPORARY */
+        print_beb_bounds(&dw->bep);
+        exit(1);
 
         for (i = 0; i != NUM_NUCS; ++i)
         {
@@ -661,25 +695,11 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
 
     size_t gs = 0, s;
 
-    struct calc_post_to_dir_par post_dir_par;
-    struct dir_points_par dir_par;
-    dir_par.randgen = gsl_rng_alloc(gsl_rng_taus);
-
-    unsigned msp = dw->bep.pset->max_sample_points;
     for (s = 0; s != dw->n_samples; ++s)
     {    
-        lslist[s].locus = PileupSummary();
-        lslist[s].is_next = false;
-        lslist[s].dist_printed = 0;
-        lslist[s].distp.pgen = { (void *)&dir_par, gen_dirichlet_points_wrapper, 
-                                 (void *)&post_dir_par, calc_post_to_dir_ratio };
-        lslist[s].distp.points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
-        lslist[s].distp.weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
-        
+        alloc_pileup_locus(&lslist[s], dw->bep.pset->max_sample_points);
         lslist[s].current = in_bufs[s].buf;
         lslist[s].end = in_bufs[s].buf + in_bufs[s].size;
-        lslist[s].locus_ord = min_pair_ord;
-
     }
 
     
@@ -687,10 +707,10 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     for (s = 0; s != dw->n_samples; ++s)
     {
         if (lslist[s].current == lslist[s].end) continue;
-        init_pileup_locus(&dw->sample_atts[s].nuc_stats, 
-                          dw->bep.pset->min_quality_score, 
-                          dw,
-                          &lslist[s]);
+        update_pileup_locus(&dw->sample_atts[s].nuc_stats, 
+                            dw->bep.pset->min_quality_score, 
+                            dw,
+                            &lslist[s]);
     }
 
     gs = init_global_and_next(dw, lslist);
@@ -701,11 +721,15 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
     // owing to the fact that there are multiple workers used, all with the same
     // basic settings
     locus_sampling null_sd;
-    null_sd.locus = PileupSummary();
-    null_sd.distp.points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
-    null_sd.distp.weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
-    
-    nucleotide_stats_pack(&dw->sample_atts[0].nuc_stats, &null_sd.locus.counts);
+    alloc_pileup_locus(&null_sd, dw->bep.pset->max_sample_points);
+
+    char null_pileup[] = "chr1\t1\tA\t1\t\n";
+    null_sd.current = null_pileup;
+    null_sd.end = null_pileup + sizeof(null_pileup);
+        
+    update_pileup_locus(&dw->sample_atts[0].nuc_stats, 
+                        dw->bep.pset->min_quality_score,
+                        dw, &null_sd);
 
     COMP_QV comp_quantile_values;
     double comp_means[NUM_NUCS];
@@ -783,16 +807,10 @@ void dist_worker(void *par, const struct managed_buf *in_bufs,
         fflush(stderr);
     }
 
-    gsl_rng_free(dir_par.randgen);
-    for (s = 0; s != dw->n_samples; ++s)
-    {    
-        free(lslist[s].distp.points.buf);
-        free(lslist[s].distp.weights.buf);
-    }
-    free(null_sd.distp.points.buf);
-    free(null_sd.distp.weights.buf);
+    for (s = 0; s != dw->n_samples; ++s) free_pileup_locus(&lslist[s]);
 
-    // free(lslist);
+    free_pileup_locus(&null_sd);
+
     delete[] lslist;
 }
 

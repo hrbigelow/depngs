@@ -41,7 +41,6 @@ struct sample_attributes
     FILE *fh;
 };
 
-
 void init_sample_attributes(const char *jpd_file,
                             const char *sample_label,
                             const char *pileup_file,

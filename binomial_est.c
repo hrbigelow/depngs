@@ -159,7 +159,7 @@ enum bound_class {
    otherwise.  From the set of successes and failures, use the Beta
    distribution to estimate the true binomial probability.  Use pgen1
    and pgen2 to generate more points (and weights) as needed. */
-enum fuzzy_state
+struct binomial_est_state
 binomial_quantile_est(unsigned max_points, float min_dist,
                       float post_conf, float beta_conf,
                       struct points_gen pgen1,
@@ -178,7 +178,9 @@ binomial_quantile_est(unsigned max_points, float min_dist,
 
     /* possibly weight-adjusted quantile values corresponding to
        beta_qmin and beta_qmax */
-    float beta_qvmin = 0, beta_qvmax = 1;
+    struct binomial_est_state est;
+    est.beta_qval_lo = 0;
+    est.beta_qval_hi = 1;
     float dist_squared, min_dist_squared = gsl_pow_2(min_dist);
 
     assert(max_points % batch_size == 0);
@@ -195,7 +197,8 @@ binomial_quantile_est(unsigned max_points, float min_dist,
     /* invariant: pcur <= pend */
     
     unsigned p;
-    while (n != max_points && (lo_tag != hi_tag || (beta_qvmax - beta_qvmin) > 0.05))
+    while (n != max_points 
+           && (lo_tag != hi_tag || (est.beta_qval_hi - est.beta_qval_lo) > 0.001))
     {
         /* process another batch of samples, generating sample
            points as needed. */
@@ -226,36 +229,36 @@ binomial_quantile_est(unsigned max_points, float min_dist,
             ++pcur2;
         }
 
-        /* regardless of state, we need to calculate beta_qvmin */
-        beta_qvmin = jeffreys_beta_lo(n, s, beta_conf);
+        /* regardless of est, we need to calculate est.beta_qval_lo */
+        est.beta_qval_lo = jeffreys_beta_lo(n, s, beta_conf);
         
-        if (post_qmax < beta_qvmin) lo_tag = BOUND_UNCHANGED;
-        else if (post_qmin < beta_qvmin) lo_tag = BOUND_AMBIGUOUS;
+        if (post_qmax < est.beta_qval_lo) lo_tag = BOUND_UNCHANGED;
+        else if (post_qmin < est.beta_qval_lo) lo_tag = BOUND_AMBIGUOUS;
         else lo_tag = BOUND_CHANGED;
 
         if (lo_tag != BOUND_UNCHANGED)
         {
-            /* Now, calculate beta_qvmax only if necessary */
-            beta_qvmax = jeffreys_beta_hi(n, s, beta_conf);
-            assert(!isnan(beta_qvmax));
+            /* Now, calculate est.beta_qval_hi only if necessary */
+            est.beta_qval_hi = jeffreys_beta_hi(n, s, beta_conf);
+            assert(!isnan(est.beta_qval_hi));
 
-            if (post_qmax < beta_qvmax) hi_tag = BOUND_UNCHANGED;
-            else if (post_qmin < beta_qvmax) hi_tag = BOUND_AMBIGUOUS;
+            if (post_qmax < est.beta_qval_hi) hi_tag = BOUND_UNCHANGED;
+            else if (post_qmin < est.beta_qval_hi) hi_tag = BOUND_AMBIGUOUS;
             else hi_tag = BOUND_CHANGED;
         }
     }
 
-    enum fuzzy_state state = AMBIGUOUS;
+    est.state = AMBIGUOUS;
 
     if (lo_tag == hi_tag)
         switch(lo_tag)
         {
-        case BOUND_CHANGED: state = CHANGED; break;
-        case BOUND_AMBIGUOUS: state = AMBIGUOUS; break;
-        case BOUND_UNCHANGED: state = UNCHANGED; break;
+        case BOUND_CHANGED: est.state = CHANGED; break;
+        case BOUND_AMBIGUOUS: est.state = AMBIGUOUS; break;
+        case BOUND_UNCHANGED: est.state = UNCHANGED; break;
         }
     else if (lo_tag < hi_tag)
-        state = (lo_tag == BOUND_CHANGED)
+        est.state = (lo_tag == BOUND_CHANGED)
             ? AMBIGUOUS_OR_CHANGED
             : AMBIGUOUS_OR_UNCHANGED;
     else
@@ -263,7 +266,7 @@ binomial_quantile_est(unsigned max_points, float min_dist,
         fprintf(stderr, "%s:%i: low and hi bounds cross each other\n", __FILE__, __LINE__);
         exit(1);
     }
-    return state;
+    return est;
 }
 
 
@@ -314,13 +317,13 @@ void weighted_binomial_est(struct points_gen pgen1,
     c_succ = w_succ / (float)s;
     c_fail = w_fail / (float)(n - s);
 
-    /* adjust beta_qvmin using the weights */
-    beta_qvmin = (c_fail * beta_qvmin) 
-        / (c_succ * (1.0 - beta_qvmin) + (c_fail * beta_qvmin));
+    /* adjust est.beta_qval_lo using the weights */
+    est.beta_qval_lo = (c_fail * est.beta_qval_lo) 
+        / (c_succ * (1.0 - est.beta_qval_lo) + (c_fail * est.beta_qval_lo));
 
     if (s != 0 && s != n)
-        beta_qvmax = (c_fail * beta_qvmax)
-            / (c_succ * (1.0 - beta_qvmax) + (c_fail * beta_qvmax));
+        est.beta_qval_hi = (c_fail * est.beta_qval_hi)
+            / (c_succ * (1.0 - est.beta_qval_hi) + (c_fail * est.beta_qval_hi));
 
 }
 #endif
