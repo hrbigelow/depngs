@@ -212,26 +212,14 @@ void alloc_pileup_locus(struct locus_sampling *ls,
     ls->locus = PileupSummary();
     ls->is_next = false;
     ls->dist_printed = 0;
-    ls->distp.pgen = { 
-        malloc(sizeof(struct dir_points_par)),
-        gen_dirichlet_points_wrapper, 
-        malloc(sizeof(struct calc_post_to_dir_par)),
-        calc_post_to_dir_ratio
-    };
-    ((struct dir_points_par *)ls->distp.pgen.point_par)->randgen = gsl_rng_alloc(gsl_rng_taus);
-    ls->distp.points = { (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
-    ls->distp.weights = { (double *)malloc(sizeof(double) * msp), 0, msp };
+    alloc_distrib_points(&ls->distp, msp);
     ls->locus_ord = min_pair_ord;
 }
 
 
 void free_pileup_locus(struct locus_sampling *ls)
 {
-    free((struct dir_points_par *)ls->distp.pgen.point_par);
-    free((struct calc_post_to_dir_par *)ls->distp.pgen.weight_par);
-    free(ls->distp.points.buf);
-    free(ls->distp.weights.buf);
-    gsl_rng_free(((struct dir_points_par *)ls->distp.pgen.point_par)->randgen);
+    free_distrib_points(&ls->distp);
 }
 
 

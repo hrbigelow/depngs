@@ -11,6 +11,7 @@ int usage()
             "Usage:\n\n"
             "dep comp       Estimate per-locus base composition with confidence intervals\n"
             "dep dist       Estimate sample-pairwise base composition distance with confidence intervals\n"
+            "dep diststats  Compute a table of pairwise 4D Dirichlet distance classifications\n"
             // "dep simp       Simulate pileup file\n"
             // "dep simc       Simulate loci compositions\n"
             // "dep bqslocus   Tally {basecall, quality score, strand} counts per locus\n"
@@ -32,6 +33,9 @@ int main(int argc, char **argv)
 
     else if (strcmp(argv[1], "dist") == 0)
         return main_dist(argc - 1, argv + 1);
+
+    else if (strcmp(argv[1], "diststats") == 0)
+        return main_diststats(argc - 1, argv + 1);
 
     // else if (strcmp(argv[1], "simp") == 0)
     //     return main_simp(argc - 1, argv + 1);

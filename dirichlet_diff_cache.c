@@ -18,8 +18,6 @@
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
-enum init_phase { UNSET, PENDING, SET };
-
 pthread_mutex_t set_flag_mtx;
 
 void dirichlet_diff_init()
@@ -30,6 +28,33 @@ void dirichlet_diff_init()
 void dirichlet_diff_free()
 {
     pthread_mutex_destroy(&set_flag_mtx);
+}
+
+
+void alloc_distrib_points(struct distrib_points *dpts,
+                          unsigned max_sample_points)
+{
+    unsigned msp = max_sample_points;
+    dpts->pgen = (struct points_gen){ 
+        malloc(sizeof(struct dir_points_par)),
+        gen_dirichlet_points_wrapper, 
+        malloc(sizeof(struct calc_post_to_dir_par)),
+        calc_post_to_dir_ratio
+    };
+    ((struct dir_points_par *)dpts->pgen.point_par)->randgen = 
+        gsl_rng_alloc(gsl_rng_taus);
+    dpts->points = (struct points_buf){ (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
+    dpts->weights = (struct weights_buf){ (double *)malloc(sizeof(double) * msp), 0, msp };
+}
+
+
+void free_distrib_points(struct distrib_points *dpts)
+{
+    free((struct dir_points_par *)dpts->pgen.point_par);
+    free((struct calc_post_to_dir_par *)dpts->pgen.weight_par);
+    free(dpts->points.buf);
+    free(dpts->weights.buf);
+    gsl_rng_free(((struct dir_points_par *)dpts->pgen.point_par)->randgen);
 }
 
 
@@ -220,25 +245,6 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
 }
 
 
-/* Describes estimated distance between two Dirichlets with alphas equal to:
-   { A1 + p, A2 + p, p, p }
-   { B1 + p, B2 + p, p, p }
-
-   Where A1, A2, B1, B2 are integral values.  [unchanged[0],
-   unchanged[1]) represents the range of values of A1 where it is
-   deemed UNCHANGED.  [ambiguous[0], ambiguous[1]) are the values of
-   A1 for which it is deemed AMBIGUOUS (or UNCHANGED, where this
-   interval overlaps the unchanged interval).  By construction: 
-   0 <= A[0] <= U[0] <= U[1] <= A[1] <= MAX_COUNT1
-   
-*/
-struct binomial_est_bounds {
-    enum init_phase state;
-    int16_t ambiguous[2];
-    int16_t unchanged[2];
-};
-
-
 /* bounds_cache[a2][b2][b1] = a description of the matrix of distance
    categories.  */
 struct binomial_est_bounds bounds_cache[MAX_COUNT2][MAX_COUNT2][MAX_COUNT1];
@@ -361,9 +367,9 @@ void print_beb_bounds(struct binomial_est_params *bpar)
     unsigned a1, a2, b1, b2;
     char states[] = "CRAFU";
     struct binomial_est_bounds beb;
-    struct binomial_est_state est;
-    struct posterior_settings *ps = bpar->pset;
-    double alpha[NUM_NUCS];
+    // struct binomial_est_state est;
+    // struct posterior_settings *ps = bpar->pset;
+    // double alpha[NUM_NUCS];
 
     /* a1 >= a2, b1 >= b2*/
     for (b1 = 0; b1 != MAX_COUNT1; ++b1)

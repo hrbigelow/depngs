@@ -198,7 +198,7 @@ binomial_quantile_est(unsigned max_points, float min_dist,
     
     unsigned p;
     while (n != max_points 
-           && (lo_tag != hi_tag || (est.beta_qval_hi - est.beta_qval_lo) > 0.001))
+           && (lo_tag != hi_tag || (est.beta_qval_hi - est.beta_qval_lo) > 1e-4))
     {
         /* process another batch of samples, generating sample
            points as needed. */

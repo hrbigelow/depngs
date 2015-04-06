@@ -8,7 +8,6 @@
 
 #include <gsl/gsl_rng.h>
 
-#include "locus_comp.h"
 #include "defs.h"
 #include "pileup_tools.h"
 
