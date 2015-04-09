@@ -4,6 +4,8 @@
 #include "binomial_est.h"
 #include "metropolis_sampling.h"
 
+#include <stdio.h>
+
 struct distrib_points {
     struct points_gen pgen;
     struct points_buf points;
@@ -24,8 +26,15 @@ struct binomial_est_params {
     double query_beta;
     struct posterior_settings *pset;
     struct distrib_points *dist[2];
+    unsigned max1, max2;
     size_t batch_size;
 };
+
+
+struct alpha_triplet {
+    unsigned a2, b1, b2;
+};
+
 
 enum init_phase { UNSET, PENDING, SET };
 
@@ -48,13 +57,33 @@ struct binomial_est_bounds {
 };
 
 
-void dirichlet_diff_init();
+void dirichlet_diff_init(unsigned max1, unsigned max2);
 void dirichlet_diff_free();
 
 
 void print_beb_bounds(struct binomial_est_params *bpar);
 
 void print_bounds(struct binomial_est_params *bpar);
+
+
+/* parse diststats header, initializing fields of pset and max1 and max2  */
+void parse_diststats_header(FILE *diststats_fh, 
+                            struct posterior_settings *pset,
+                            unsigned *max1, 
+                            unsigned *max2);
+
+void write_diststats_header(FILE *diststats_fh,
+                            struct posterior_settings pset,
+                            unsigned max1,
+                            unsigned max2);
+
+void write_diststats_line(FILE *fh,
+                          struct alpha_triplet *t,
+                          struct binomial_est_bounds *beb);
+
+
+/* initialize internal bounds_cache */
+void parse_diststats_body(FILE *diststats_fh, unsigned max1, unsigned max2);
 
 
 /* For two dirichlet distributions A = { x+p, a2+p, p, p } and B = {

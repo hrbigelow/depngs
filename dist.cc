@@ -17,19 +17,19 @@ extern "C" {
 int dist_usage()
 {
     fprintf(stderr, 
-            "\nUsage: dep dist [options] samples.rdb contig_order.rdb\n" 
+            "\nUsage: dep dist [options] samples.rdb diststats.rdb contig_order.rdb\n" 
             "Options:\n\n"
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
             "-i STRING   (optional) name of output indel distance file.  If absent, do not perform indel distance calculation.\n"
             "-s STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
             "-r STRING   range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
-            "-y FLOAT    min mutation distance (0-1 scale) from ref to call as changed locus [0.2]\n"
+            // "-y FLOAT    min mutation distance (0-1 scale) from ref to call as changed locus [0.2]\n"
             // "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
             // "-x INT      number of sample points used for first-pass distance checking [100]\n"
-            "-X FLOAT    confidence for -y [0.99]\n"
-            "-Z FLOAT    confidence for binomial estimation [same as -X]\n"
-            "-f INT      number of sample points used for final quantiles estimation [1000]\n"
+            // "-X FLOAT    confidence for -y [0.99]\n"
+            // "-Z FLOAT    confidence for binomial estimation [same as -X]\n"
+            // "-f INT      number of sample points used for final quantiles estimation [1000]\n"
             "-q INT      minimum quality score to include bases as evidence [%s]\n"
             "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
             "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
@@ -46,12 +46,15 @@ int dist_usage()
             // "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
             // "-I INT      maximum number of proposal tuning iterations [10]\n"
             // "-M REAL     autocorrelation maximum value [0.2]\n"
-            "-p FLOAT    alpha value for dirichlet prior [0.1]\n"
+            // "-p FLOAT    alpha value for dirichlet prior [0.1]\n"
             "\n"
             "samples.rdb has lines of <sample_id><tab></path/to/sample.jpd><tab></path/to/sample.pileup>\n"
             "sample_pairings.rdb has lines of <sample_id><tab><sample_id>\n"
             "defining which pairs of samples are to be compared.  <sample_id> correspond\n"
             "with those in samples.rdb\n"
+            "\n"
+            "diststats.rdb is a file of pre-computed pairwise dirichlet distribution distances, generated\n"
+            "by dep diststats\n"
             "\n"
             "contig_order.rdb has lines of <contig><tab><ordering>\n"
             "It must be consistent and complete with the orderings of the contigs mentioned in\n"
@@ -71,15 +74,8 @@ int main_dist(int argc, char **argv)
     size_t n_threads = 1;
     size_t max_mem = 1024l * 1024l * 1024l * 4l;
 
-    float prior_alpha = 0.1;
-    struct posterior_settings pset = {
-        { prior_alpha, prior_alpha, prior_alpha, prior_alpha },
-        1000,
-        0.2,
-        0.99,
-        0.99,
-        5
-    };
+    struct posterior_settings pset;
+    pset.min_quality_score = 5;
 
     int print_pileup_fields = 0;
 
@@ -94,7 +90,7 @@ int main_dist(int argc, char **argv)
     const char *query_range_file = NULL;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:i:s:r:y:t:m:f:y:X:Z:p:q:F:D:C:g")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:i:s:r:y:t:m:q:F:D:C:g")) >= 0)
     {
         switch(c)
         {
@@ -105,17 +101,11 @@ int main_dist(int argc, char **argv)
         case 'r': query_range_file = optarg; break;
         case 't': n_threads = (size_t)atof(optarg); break;
         case 'm': max_mem = (size_t)atof(optarg); break;
-        // case 'T': pset.tuning_n_points = (size_t)atof(optarg); break;
-        // case 'x': prelim_n_points = (size_t)atof(optarg); break;
-        case 'f': pset.max_sample_points = (size_t)atof(optarg); break;
-        case 'y': pset.min_dist = atof(optarg); break;
-        case 'X': pset.post_confidence = atof(optarg); break;
-        case 'Z': pset.beta_confidence = atof(optarg); break;
-        // case 'P': n_sample_point_pairs = (size_t)atof(optarg); break;
-        // case 'a': pset.target_autocor_offset = (size_t)atof(optarg); break;
-        // case 'I': pset.max_tuning_iterations = (size_t)atof(optarg); break;
-        // case 'M': pset.autocor_max_value = atof(optarg); break;
-        case 'p': prior_alpha = atof(optarg); break;
+        // case 'f': pset.max_sample_points = (size_t)atof(optarg); break;
+        // case 'y': pset.min_dist = atof(optarg); break;
+        // case 'X': pset.post_confidence = atof(optarg); break;
+        // case 'Z': pset.beta_confidence = atof(optarg); break;
+        // case 'p': prior_alpha = atof(optarg); break;
         case 'q': pset.min_quality_score = (size_t)atoi(optarg); break;
         case 'F': fastq_type = optarg; break;
         // case 'v': verbose = true; break;
@@ -125,10 +115,12 @@ int main_dist(int argc, char **argv)
         default: return dist_usage(); break;
         }
     }
-    if (argc - optind != 2) return dist_usage();
+    if (argc - optind != 3) return dist_usage();
 
     const char *samples_file = argv[optind];
-    const char *contig_order_file = argv[optind + 1];
+    const char *diststats_file = argv[optind + 1];
+    const char *contig_order_file = argv[optind + 2];
+
 
     // consistency checks
     if (! sample_pairings_file && (dist_file || indel_dist_file))
@@ -146,6 +138,18 @@ int main_dist(int argc, char **argv)
     }
 
     gsl_set_error_handler_off();
+
+    FILE *diststats_fh = fopen(diststats_file, "r");
+    if (! diststats_fh)
+    {
+        fprintf(stderr, "Error: couldn't open diststats file %s for reading.\n", diststats_file);
+        exit(1);
+    }
+    unsigned max1_alpha, max2_alpha;
+    parse_diststats_header(diststats_fh, &pset, &max1_alpha, &max2_alpha);
+    dirichlet_diff_init(max1_alpha, max2_alpha);
+    parse_diststats_body(diststats_fh, max1_alpha, max2_alpha);
+    fclose(diststats_fh);
 
     FILE *samples_fh = open_if_present(samples_file, "r");
     char jpd[1000], pileup[1000], label[1000];
@@ -228,9 +232,6 @@ int main_dist(int argc, char **argv)
             exit(1);
         }
     }
-
-    for (i = 0; i != NUM_NUCS; ++i)
-        pset.prior_alpha[i] = prior_alpha;
 
     // parse pairings file
     size_t n_pairings, *pair_sample1, *pair_sample2;
@@ -317,6 +318,8 @@ int main_dist(int argc, char **argv)
     for (t = 0; t != n_threads; ++t)
     {
         worker_buf[t].sample_atts = sample_attrs;
+        worker_buf[t].bep.max1 = max1_alpha;
+        worker_buf[t].bep.max2 = max2_alpha;
         worker_buf[t].bep.batch_size = GEN_POINTS_BATCH;
         worker_buf[t].bep.pset = &pset; 
         worker_buf[t].thread_num = t;
@@ -327,6 +330,8 @@ int main_dist(int argc, char **argv)
             (double *)malloc(sizeof(double) * pset.max_sample_points);
         worker_buf[t].weights_buf =
             (double *)malloc(sizeof(double) * pset.max_sample_points);
+        worker_buf[t].pair_stats = 
+            (struct pair_dist_stats *)calloc(n_pairings, sizeof(struct pair_dist_stats));
         worker_buf[t].print_pileup_fields = print_pileup_fields;
         worker_buf[t].do_dist = (dist_fh != NULL);
         worker_buf[t].do_comp = (comp_fh != NULL);
@@ -380,7 +385,7 @@ int main_dist(int argc, char **argv)
     /* initialize beta quantile estimation procedure */
     init_beta(pset.beta_confidence);
 
-    dirichlet_diff_init();
+    // dirichlet_diff_init();
 
     /* this should be revisited if it turns out that threads are
        stalling */
@@ -401,14 +406,43 @@ int main_dist(int argc, char **argv)
     thread_queue_run(tqueue);
     thread_queue_free(tqueue);
 
+    /* Aggregate total pair statistics */
+    struct pair_dist_stats *all_pair_stats = 
+        (struct pair_dist_stats *)calloc(n_pairings, sizeof(struct pair_dist_stats));
+
+    unsigned n_states = sizeof(all_pair_stats[0].dist_count) / sizeof(all_pair_stats[0].dist_count[0]);
+
+    unsigned p;
+    for (p = 0; p != n_pairings; ++p)
+    {
+        for (t = 0; t != n_threads; ++t)
+        {
+            all_pair_stats[p].confirmed_changed 
+                += worker_buf[t].pair_stats[p].confirmed_changed;
+            for (s = 0; s != n_states; ++s)
+                all_pair_stats[p].dist_count[s] 
+                    += worker_buf[t].pair_stats[p].dist_count[s];
+        }
+
+        /* Print out statistics */
+        fprintf(stderr, "%s\t%s", 
+                sample_attrs[pair_sample1[p]].label_string,
+                sample_attrs[pair_sample2[p]].label_string);
+        for (s = 0; s != n_states; ++s)
+            fprintf(stderr, "\t%zu", all_pair_stats[p].dist_count[s]);
+        fprintf(stderr, "\t%zu\n", all_pair_stats[p].confirmed_changed);
+    }
+
     free(ix);
     for (t = 0; t != n_threads; ++t)
     {
         gsl_rng_free(worker_buf[t].randgen);
+        free(worker_buf[t].pair_stats);
         free(worker_buf[t].square_dist_buf);
         free(worker_buf[t].weights_buf);
     }
 
+    free(all_pair_stats);
     free(worker_buf);
     free(worker_inputs);
 

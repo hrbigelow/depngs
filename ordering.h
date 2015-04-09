@@ -20,7 +20,7 @@ int cmp_pair_ordering(const void *pa, const void *pb);
 int cmp_pair_ordering_range(const void *pa, const void *pb);
 
 
-static const struct pair_ordering min_pair_ord = { 0, 0 };
-static const struct pair_ordering max_pair_ord = { SIZE_MAX, SIZE_MAX };
+// static const struct pair_ordering min_pair_ord = { 0, 0 };
+// static const struct pair_ordering max_pair_ord = { SIZE_MAX, SIZE_MAX };
 
 #endif /* _ORDERING_H */

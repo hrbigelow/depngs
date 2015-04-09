@@ -216,7 +216,8 @@ binomial_quantile_est(unsigned max_points, float min_dist,
             pend2 += batch_size;
         }
         
-        /* measure distances, threshold, and classify successes */
+        /* measure distances, threshold, and classify successes.
+           success means non-change */
         for (p = 0; p != batch_size; ++p)
         {
             dist_squared = 0;

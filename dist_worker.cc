@@ -213,7 +213,7 @@ void alloc_pileup_locus(struct locus_sampling *ls,
     ls->is_next = false;
     ls->dist_printed = 0;
     alloc_distrib_points(&ls->distp, msp);
-    ls->locus_ord = min_pair_ord;
+    ls->locus_ord = (struct pair_ordering){ 0, 0 };
 }
 
 
@@ -341,17 +341,12 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
     unsigned counts1[NUM_NUCS], counts2[NUM_NUCS];
     enum fuzzy_state diff_state = AMBIGUOUS;
 
-
     for (pi = 0; pi != dw->n_sample_pairs; ++pi)
     {
         dw->bep.dist[0] = &lslist[dw->pair_sample1[pi]].distp;
         dw->bep.dist[1] = &lslist[dw->pair_sample2[pi]].distp;
         lsp[0] = &lslist[dw->pair_sample1[pi]];
         lsp[1] = &lslist[dw->pair_sample2[pi]];
-
-        /* TEMPORARY */
-        print_beb_bounds(&dw->bep);
-        exit(1);
 
         for (i = 0; i != NUM_NUCS; ++i)
         {
@@ -364,7 +359,9 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
 
         else
             diff_state = cached_dirichlet_diff(counts1, counts2, &dw->bep);
-        
+
+        ++dw->pair_stats[pi].dist_count[diff_state];
+
         if (diff_state == CHANGED)
         {
             /* Finish sampling and do full distance marginal estimation */
@@ -409,6 +406,8 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
             test_quantile_value = sqrt(test_quantile_value);
             if (test_quantile_value > dw->bep.pset->min_dist)
             {
+                ++dw->pair_stats[pi].confirmed_changed;
+
                 compute_dist_wquantiles(dw->square_dist_buf,
                                         dw->weights_buf,
                                         dw->bep.pset->max_sample_points,

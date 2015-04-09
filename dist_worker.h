@@ -45,6 +45,11 @@ void init_sample_attributes(const char *jpd_file,
                             const char *pileup_file,
                             struct sample_attributes *s);
 
+struct pair_dist_stats {
+    size_t dist_count[5]; /* number of enum fuzzy_state choices */
+    size_t confirmed_changed;
+};
+
 
 /* there will be one of these instantiated for each thread.  Each of
    these holds the parameters needed by the thread that can be shared
@@ -69,6 +74,8 @@ struct dist_worker_input
     double *weights_buf; /* holds weights from those square distances
                             (product of weights on individual
                             points) */
+
+    struct pair_dist_stats *pair_stats;
 
     int print_pileup_fields; // if 0, do not print extra pileup fields
 

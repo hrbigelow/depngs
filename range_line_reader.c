@@ -35,7 +35,7 @@ void range_line_reader(void *par, struct managed_buf *bufs)
         write_end[i] = bufs[i].buf + bufs[i].alloc;
     }
     ptrdiff_t space_left = write_end[0] - write_ptr[0], space_tmp;
-    struct pair_ordering tmp_pos, trunc_pos = max_pair_ord;
+    struct pair_ordering tmp_pos, trunc_pos = (struct pair_ordering){ SIZE_MAX, SIZE_MAX };
 
     /* must re-set on each call */
     rr->new_query = 1;
@@ -96,12 +96,12 @@ void range_line_reader(void *par, struct managed_buf *bufs)
         bufs[i].size = write_ptr[i] - bufs[i].buf;
 
     /* free resources.  use max_minus_one to avoid freeing the root */
-    struct pair_ordering max_minus_one = max_pair_ord;
+    struct pair_ordering max_minus_one = (struct pair_ordering){ SIZE_MAX, SIZE_MAX };
     max_minus_one.lo--;
     
     for (i = 0; i != n_ix; ++i)
         (void)file_bsearch_range_free(&rr->ix[i],
-                                      min_pair_ord,
+                                      (struct pair_ordering){ 0, 0 },
                                       rr->q == rr->qend ? max_minus_one : rr->q->beg);
 
     free(span);

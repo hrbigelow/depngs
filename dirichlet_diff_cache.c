@@ -11,6 +11,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <float.h>
+#include <inttypes.h>
 
 #define MAX_COUNT1 50
 #define MAX_COUNT2 10
@@ -19,14 +20,31 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
 pthread_mutex_t set_flag_mtx;
+struct binomial_est_bounds ***bounds_cache, **bounds_cache_buf2, *bounds_cache_buf;
 
-void dirichlet_diff_init()
+/* bounds_cache[a2][b2][b1] */
+void dirichlet_diff_init(unsigned max1, unsigned max2)
 {
     pthread_mutex_init(&set_flag_mtx, NULL);
+    bounds_cache_buf = malloc(max2 * max2 * max1 * sizeof(struct binomial_est_bounds));
+    bounds_cache_buf2 = malloc(max2 * max2 * sizeof(struct binomial_est_bounds *));
+    bounds_cache = malloc(max2 * sizeof(struct binomial_est_bounds **));
+
+    unsigned i, j, k, l;
+    unsigned M = max2 * max2;
+    for (i = 0, j = 0; i != M; ++i, j += max1)
+        bounds_cache_buf2[i] = bounds_cache_buf + j;
+
+    for (k = 0, l = 0; k != max2; ++k, l += max2)
+        bounds_cache[k] = bounds_cache_buf2 + l;
 }
+
 
 void dirichlet_diff_free()
 {
+    free(bounds_cache);
+    free(bounds_cache_buf);
+    free(bounds_cache_buf2);
     pthread_mutex_destroy(&set_flag_mtx);
 }
 
@@ -50,11 +68,11 @@ void alloc_distrib_points(struct distrib_points *dpts,
 
 void free_distrib_points(struct distrib_points *dpts)
 {
+    gsl_rng_free(((struct dir_points_par *)dpts->pgen.point_par)->randgen);
     free((struct dir_points_par *)dpts->pgen.point_par);
     free((struct calc_post_to_dir_par *)dpts->pgen.weight_par);
     free(dpts->points.buf);
     free(dpts->weights.buf);
-    gsl_rng_free(((struct dir_points_par *)dpts->pgen.point_par)->randgen);
 }
 
 
@@ -92,6 +110,114 @@ struct binomial_est_state pair_dist_aux(unsigned a1, void *par)
                                 &b->dist[1]->points,
                                 b->batch_size);
     return est;
+}
+
+
+void read_diststats_line(FILE *fh, 
+                         struct alpha_triplet *t,
+                         struct binomial_est_bounds *beb)
+{
+    int n;
+    n = fscanf(fh, 
+               "%i\t%i\t%i\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\n", 
+               &t->a2, &t->b2, &t->b1,
+               &beb->ambiguous[0],
+               &beb->unchanged[0],
+               &beb->unchanged[1],
+               &beb->ambiguous[1]);
+    if (n != 7)
+    {
+        fprintf(stderr, "error reading diststats line at %s: %u\n", __FILE__, __LINE__);
+        exit(1);
+    }
+}
+
+
+void write_diststats_line(FILE *fh,
+                          struct alpha_triplet *t,
+                          struct binomial_est_bounds *beb)
+{
+    fprintf(fh,
+            "%i\t%i\t%i\t%i\t%i\t%i\t%i\n", 
+            t->a2, t->b2, t->b1,
+            beb->ambiguous[0], beb->unchanged[0], 
+            beb->unchanged[1], beb->ambiguous[1]);
+}
+
+/* parse diststats header, initializing fields of pset and max1 and max2  */
+void parse_diststats_header(FILE *diststats_fh, 
+                            struct posterior_settings *pset,
+                            unsigned *max1, 
+                            unsigned *max2)
+{
+    int n;
+    float prior_alpha;
+    n = fscanf(diststats_fh, 
+               "# max1: %u\n"
+               "# max2: %u\n"
+               "# max_sample_points: %zu\n"
+               "# min_dist: %lf\n"
+               "# post_confidence: %lf\n"
+               "# beta_confidence: %lf\n"
+               "# prior_alpha: %f\n",
+               max1, max2, 
+               &pset->max_sample_points,
+               &pset->min_dist,
+               &pset->post_confidence,
+               &pset->beta_confidence,
+               &prior_alpha);
+    if (n != 7)
+    {
+        fprintf(stderr, "error parsing diststats header at %s: %ul\n", __FILE__, __LINE__);
+        exit(1);
+    }
+    unsigned i;
+    for (i = 0; i != NUM_NUCS; ++i)
+        pset->prior_alpha[i] = prior_alpha;
+}
+
+void write_diststats_header(FILE *diststats_fh,
+                            struct posterior_settings pset,
+                            unsigned max1,
+                            unsigned max2)
+{
+    fprintf(diststats_fh, 
+            "# max1: %u\n"
+            "# max2: %u\n"
+            "# max_sample_points: %zu\n"
+            "# min_dist: %lf\n"
+            "# post_confidence: %lf\n"
+            "# beta_confidence: %lf\n"
+            "# prior_alpha: %f\n",
+            max1, max2, 
+            pset.max_sample_points,
+            pset.min_dist,
+            pset.post_confidence,
+            pset.beta_confidence,
+            pset.prior_alpha[0]);
+}
+
+
+/* initialize internal bounds_cache */
+void parse_diststats_body(FILE *diststats_fh, unsigned max1, unsigned max2)
+{
+    struct binomial_est_bounds beb;
+    struct alpha_triplet t;
+    while (! feof(diststats_fh))
+    {
+        read_diststats_line(diststats_fh, &t, &beb);
+        if (t.a2 < max2 && t.b2 < max2 && t.b1 < max1)
+            bounds_cache[t.a2][t.b2][t.b1] = beb;
+        else
+        {
+            fprintf(stderr, 
+                    "Error at %s: %u\n"
+                    "Indices exceed limits.  A2 = %u, B2 = %u, B1 = %u, MAX1 = %u, MAX2 = %u\n",
+                    __FILE__, __LINE__,
+                    t.a2, t.b2, t.b1, max1, max2);
+            exit(1);
+        }
+    }
 }
 
 
@@ -247,7 +373,7 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
 
 /* bounds_cache[a2][b2][b1] = a description of the matrix of distance
    categories.  */
-struct binomial_est_bounds bounds_cache[MAX_COUNT2][MAX_COUNT2][MAX_COUNT1];
+// struct binomial_est_bounds bounds_cache[MAX_COUNT2][MAX_COUNT2][MAX_COUNT1];
 
 
 
@@ -268,6 +394,7 @@ struct pair_point_gen {
     struct points_buf pts1, pts2;
 };
 
+
 /* find top 2 components in el, store their indices in i1 and i2.
    Count the number of occurrences of min_val in z */
 void find_top2_aux(unsigned *el, int *i1, int *i2, unsigned *z)
@@ -281,6 +408,9 @@ void find_top2_aux(unsigned *el, int *i1, int *i2, unsigned *z)
         if (m1 < el[i]) *i1 = i, m1 = el[i];
         if (el[i] == 0) ++*z;
     }
+    /* set i2 to an arbitrary value that is unequal to i1 */
+    *i2 = (NUM_NUCS - 1) - *i1;
+    m2 = el[*i2];
     for (i = 0; i != NUM_NUCS; ++i)
         if (i != *i1 && m2 < el[i])
             *i2 = i, m2 = el[i];
@@ -343,14 +473,14 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
     alpha[1] += b2;
     set_dirichlet_alpha(bpar->dist[1], alpha);
 
-    /* Find Mode.  (consider [0, xmode) and [xmode, MAX_COUNT1) as the
+    /* Find Mode.  (consider [0, xmode) and [xmode, bpar->max1) as the
        upward and downward phase intervals */
-    unsigned xmode = noisy_mode(0, MAX_COUNT1, bpar);
+    unsigned xmode = noisy_mode(0, bpar->max1, bpar);
 
     bpar->use_low_beta = 0;
     bpar->query_beta = 1.0 - ps->post_confidence;
     beb->ambiguous[0] = virtual_lower_bound(0, xmode, elem_is_less, bpar);
-    beb->ambiguous[1] = virtual_upper_bound(xmode, MAX_COUNT1, elem_is_less, bpar);
+    beb->ambiguous[1] = virtual_upper_bound(xmode, bpar->max1, elem_is_less, bpar);
 
     bpar->use_low_beta = 1;
     bpar->query_beta = ps->post_confidence;
@@ -372,17 +502,17 @@ void print_beb_bounds(struct binomial_est_params *bpar)
     // double alpha[NUM_NUCS];
 
     /* a1 >= a2, b1 >= b2*/
-    for (b1 = 0; b1 != MAX_COUNT1; ++b1)
+    for (b1 = 0; b1 != bpar->max1; ++b1)
     // for (b1 = 30; b1 != 40; ++b1)
     {
-        for (a2 = 0; a2 != MAX_COUNT2 && a2 <= a1; ++a2)
+        for (a2 = 0; a2 != bpar->max2 && a2 <= a1; ++a2)
             // for (a2 = 0; a2 != 1; ++a2)
         {
-            for (b2 = 0; b2 != MAX_COUNT2 && b2 <= b1; ++b2)
+            for (b2 = 0; b2 != bpar->max2 && b2 <= b1; ++b2)
                 // for (b2 = 0; b2 != 5 && b2 <= b1; ++b2)
             {
                 initialize_est_bounds(a2, b1, b2, bpar, &beb);
-                for (a1 = a2; a1 != MAX_COUNT1; ++a1)
+                for (a1 = a2; a1 != bpar->max1; ++a1)
                     fprintf(stdout, "PBB\t%i\t%i\t%i\t%i\t0.0\t0.0\t%c\n", a1, a2, b1, b2,
                             a1 < beb.ambiguous[0] ? states[CHANGED]
                             : (a1 < beb.unchanged[0] ? states[AMBIGUOUS]
@@ -390,7 +520,7 @@ void print_beb_bounds(struct binomial_est_params *bpar)
                                   : (a1 < beb.ambiguous[1] ? states[AMBIGUOUS]
                                      : states[CHANGED]))));
 #if 0                
-                for (a1 = a2; a1 != MAX_COUNT1; ++a1)
+                for (a1 = a2; a1 != bpar->max1; ++a1)
                 {
                     memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
                     alpha[0] += a1;
@@ -431,15 +561,15 @@ void print_bounds(struct binomial_est_params *bpar)
     double alpha[NUM_NUCS];
     /* a1 >= a2, b1 >= b2*/
     
-    for (a1 = 0; a1 != MAX_COUNT1; ++a1)
+    for (a1 = 0; a1 != bpar->max1; ++a1)
     {
-        for (b1 = 0; b1 != MAX_COUNT1; ++b1)
+        for (b1 = 0; b1 != bpar->max1; ++b1)
         // for (b1 = 17; b1 != 18; ++b1)
         {
             for (a2 = 0; a2 != 2 && a2 <= a1; ++a2)
                 // for (a2 = 8; a2 != 9; ++a2)
             {
-                for (b2 = 0; b2 != MAX_COUNT2 && b2 <= b1; ++b2)
+                for (b2 = 0; b2 != bpar->max2 && b2 <= b1; ++b2)
                     // for (b2 = 8; b2 != 9; ++b2)
                 {
                     memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
@@ -477,65 +607,66 @@ enum fuzzy_state cached_dirichlet_diff(unsigned *a_counts,
                                        unsigned *b_counts,
                                        struct binomial_est_params *bpar)
 {
+    /* Given a_counts and b_counts, virtually construct the paired
+       array S = { (a[0], b[0]), (a[1], b[1]), (a[2], b[2]), (a[3], b[3]) }, 
+       and, if exists, find a permutation of S such that:
+          S[0].a < max1 && S[0].b < max1
+       && S[1].a < max2 && S[1].b < max2
+       && S[2].a == 0 && S[2].b == 0
+       && S[3].a == 0 && S[3].b == 0
+
+       If such permutation exists, provide the indices into a_counts
+       (equivalently b_counts) corresponding to S[0] and S[1].
+    */
     int a1, a2, b1, b2;
-    unsigned za, zb;
-    find_top2_aux(a_counts, &a1, &a2, &za);
-    find_top2_aux(b_counts, &b1, &b2, &zb);
-    if (za >= 2 && zb >= 2
-        && a_counts[a1] < MAX_COUNT1
-        && a_counts[a2] < MAX_COUNT2
-        && b_counts[b1] < MAX_COUNT1
-        && b_counts[b2] < MAX_COUNT2)
+    unsigned n_zero_a, n_zero_b;
+    find_top2_aux(a_counts, &a1, &a2, &n_zero_a);
+    find_top2_aux(b_counts, &b1, &b2, &n_zero_b);
+    unsigned do_cache = 0;
+
+    
+    if (n_zero_a >= 2
+        && n_zero_b >= 2
+        && a_counts[a1] < bpar->max1
+        && a_counts[a2] < bpar->max2
+        && b_counts[b1] < bpar->max1
+        && b_counts[b2] < bpar->max2)
+    {
+        if (n_zero_a > 2 || n_zero_b > 2)
+        {
+            /* we only need to compare the top single component */
+
+        if (a1 == b1 && a2 == b2) do_cache = 1;
+        else if (a1 == b2 && a2 == b1)
+        {
+            /* attempt one of the two reversal scenarios */
+        }
+    }
+
+    if (do_cache)
     {
         /* this qualifies for caching */
         struct binomial_est_bounds *beb = 
             &bounds_cache[a_counts[a2]][b_counts[b2]][b_counts[b1]];
         
-        while (1)
-        {
-            while (beb->state == PENDING) ;
-            if (beb->state == SET) return locate_cell(beb, a_counts[a1]);
-            else
-            {
-                /* UNSET */
-                pthread_mutex_lock(&set_flag_mtx);
-                if (beb->state == PENDING)
-                {
-                    pthread_mutex_unlock(&set_flag_mtx);
-                    continue;
-                }
-                else if (beb->state == SET)
-                {
-                    pthread_mutex_unlock(&set_flag_mtx);
-                    return locate_cell(beb, a_counts[a1]);
-                }
-                else
-                {
-                    /* still UNSET */
-                    beb->state = PENDING;
-                    pthread_mutex_unlock(&set_flag_mtx);
-                    initialize_est_bounds(a_counts[a2], b_counts[b1], b_counts[b2], bpar, beb);
-                    pthread_mutex_lock(&set_flag_mtx);
-                    beb->state = SET;
-                    pthread_mutex_unlock(&set_flag_mtx);
-                    return locate_cell(beb, a_counts[a1]);
-                }
-            }
-        }            
+        return locate_cell(beb, a_counts[a1]);
     }
     else
     {
+        fprintf(stderr, "Noncached: %u,%u,%u,%u\t%u,%u,%u,%u\n",
+                a_counts[0], a_counts[1], a_counts[2], a_counts[3],
+                b_counts[0], b_counts[1], b_counts[2], b_counts[3]);
+
         /* need to test the bounds organically, with no caching */
         struct posterior_settings *ps = bpar->pset;
         double alpha[NUM_NUCS];
         memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-        alpha[0] += a1;
-        alpha[1] += a2;
+        unsigned i;
+        for (i = 0; i != NUM_NUCS; ++i) alpha[i] += a_counts[i];
         set_dirichlet_alpha(bpar->dist[0], alpha);
-
+        
         memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-        alpha[0] += b1;
-        alpha[1] += b2;
+        for (i = 0; i != NUM_NUCS; ++i) alpha[i] += b_counts[i];
         set_dirichlet_alpha(bpar->dist[1], alpha);
 
         struct binomial_est_state est = 

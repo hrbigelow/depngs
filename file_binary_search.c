@@ -72,8 +72,8 @@ struct file_bsearch_index file_bsearch_make_index(FILE *fh)
         fprintf(stderr, "file_binary_search: error, you didn't call file_besearch_init()\n");
         exit(1);
     }
-    root->span_beg = min_pair_ord;
-    root->span_end = max_pair_ord;
+    root->span_beg = (struct pair_ordering){ 0, 0 };
+    root->span_end = (struct pair_ordering){ SIZE_MAX, SIZE_MAX };
     root->start_offset = 0;
     fseeko(fh, 0, SEEK_END);
     root->end_offset = ftello(fh);
@@ -269,7 +269,7 @@ struct pair_ordering size_to_range(struct file_bsearch_index *ix,
         off_cur = off_lower_bound(ix, beg) + (off_t)size;
 
     if (off_cur > ix->root->end_offset)
-        return max_pair_ord;
+        return (struct pair_ordering){ SIZE_MAX, SIZE_MAX };
 
     fseeko(ix->fh, off_cur, SEEK_SET);
     off_t off = MIN(1000, size); /* reasonable initial estimate for a line length */

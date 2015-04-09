@@ -55,21 +55,17 @@ struct alpha_limits {
     unsigned max1, max2;
 };
 
-struct triplet {
-    unsigned a2, b1, b2;
-};
-
 /* reader function.  simply return the next quartet of values, encoded
    in the buf. signal end of input by settings buf[0].size = 0 */
 void diststats_reader(void *par, struct managed_buf *buf)
 {
-    ALLOC_GROW(buf[0].buf, sizeof(struct triplet), buf[0].alloc);
-    static struct triplet alpha = { 0, 0, 0 };
+    ALLOC_GROW(buf[0].buf, sizeof(struct alpha_triplet), buf[0].alloc);
+    static struct alpha_triplet alpha = { 0, 0, 0 };
     struct alpha_limits *lim = par;
     if (alpha.a2 < lim->max2)
     {
         memcpy(buf[0].buf, &alpha, sizeof(alpha));
-        buf[0].size = sizeof(struct triplet);
+        buf[0].size = sizeof(struct alpha_triplet);
         ++alpha.b2;
         if (alpha.b2 == lim->max2) alpha.b2 = 0, ++alpha.b1;
         if (alpha.b1 == lim->max1) alpha.b1 = 0, ++alpha.a2;
@@ -84,13 +80,13 @@ void diststats_worker(void *par,
 {
     struct binomial_est_params *bep = par;
     struct binomial_est_bounds beb;
-    struct triplet t;
+    struct alpha_triplet t;
 
     ALLOC_GROW(out_bufs[0].buf, 
                sizeof(beb) + sizeof(t),
                out_bufs[0].alloc);
 
-    memcpy(&t, in_bufs[0].buf, sizeof(struct triplet));
+    memcpy(&t, in_bufs[0].buf, sizeof(struct alpha_triplet));
     initialize_est_bounds(t.a2, t.b1, t.b2, bep, &beb);
     memcpy(out_bufs[0].buf, &t, sizeof(t));
     memcpy(out_bufs[0].buf + sizeof(t), &beb, sizeof(beb));
@@ -103,13 +99,10 @@ void diststats_offload(void *par,
 {
     FILE *out_fh = par;
     struct binomial_est_bounds beb;
-    struct triplet t;
+    struct alpha_triplet t;
     memcpy(&t, bufs[0].buf, sizeof(t));
     memcpy(&beb, bufs[0].buf + sizeof(t), sizeof(beb));
-    fprintf(out_fh,
-            "%i\t%i\t%i\t%i\t%i\t%i\t%i\n", 
-            t.a2, t.b1, t.b2,
-            beb.ambiguous[0], beb.unchanged[0], beb.unchanged[1], beb.ambiguous[1]);
+    write_diststats_line(out_fh, &t, &beb);
 }
 
 
@@ -161,22 +154,35 @@ int main_diststats(int argc, char **argv)
     gsl_set_error_handler_off();
 
     init_beta(pset.beta_confidence);
-    dirichlet_diff_init();
+    dirichlet_diff_init(reader_par.max1, reader_par.max2);
 
-    struct binomial_est_params worker_par;
-    worker_par.pset = &pset;
-    worker_par.dist[0] = malloc(sizeof(struct distrib_points));
-    worker_par.dist[1] = malloc(sizeof(struct distrib_points));
-    alloc_distrib_points(worker_par.dist[0], pset.max_sample_points);
-    alloc_distrib_points(worker_par.dist[1], pset.max_sample_points);
-    worker_par.batch_size = GEN_POINTS_BATCH;
+    pset.max_sample_points += GEN_POINTS_BATCH - (pset.max_sample_points % GEN_POINTS_BATCH);
 
-    void *worker_par_ary[] = { &worker_par };
-    
+    struct binomial_est_params *worker_par = malloc(n_threads * sizeof(struct binomial_est_params));
+    void **worker_par_ptrs = malloc(n_threads * sizeof(void *));
+
+    unsigned t;
+    for (t = 0; t != n_threads; ++t)
+    {
+        worker_par_ptrs[t] = &worker_par[t];
+        worker_par[t] = (struct binomial_est_params){ 
+            .pset = &pset,
+            .dist = { malloc(sizeof(struct distrib_points)),
+                      malloc(sizeof(struct distrib_points)) },
+            .max1 = reader_par.max1,
+            .max2 = reader_par.max2,
+            .batch_size = GEN_POINTS_BATCH
+        };
+        alloc_distrib_points(worker_par[t].dist[0], pset.max_sample_points);
+        alloc_distrib_points(worker_par[t].dist[1], pset.max_sample_points);
+    }
+
+    write_diststats_header(out_fh, pset, reader_par.max1, reader_par.max2);
+
     size_t n_extra = n_threads;
     struct thread_queue *tqueue =
         thread_queue_init(diststats_reader, &reader_par,
-                          diststats_worker, worker_par_ary,
+                          diststats_worker, worker_par_ptrs,
                           diststats_offload, out_fh,
                           n_threads,
                           n_extra,
@@ -190,9 +196,12 @@ int main_diststats(int argc, char **argv)
     thread_queue_run(tqueue);
     thread_queue_free(tqueue);
     dirichlet_diff_free();
-    free_distrib_points(worker_par.dist[0]);
-    free_distrib_points(worker_par.dist[1]);
-    free(worker_par.dist[0]);
-    free(worker_par.dist[1]);
+    for (t = 0; t != n_threads; ++t)
+    {
+        free_distrib_points(worker_par[t].dist[0]);
+        free_distrib_points(worker_par[t].dist[1]);
+    }
+    free(worker_par);
+    free(worker_par_ptrs);
     return 0;
 }
