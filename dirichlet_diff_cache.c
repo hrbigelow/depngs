@@ -395,6 +395,54 @@ struct pair_point_gen {
 };
 
 
+/* Given a[4], b[4], and lim[4], find a permutation of {(a[p_1],
+   b[p_1]), (a[p_2], b[p_2]), (a[p_3], b[p_e]), (a[p_4], b[p_4]) }
+   such that both a[p_i] and b[p_i] are less than lim[p_i], if such
+   permutation exists. 
+
+   Modification: Given lim[2] == 1 and lim[3] == 1, The permutation of
+   the last two elements does not matter.  So, we only need to specify
+   p_1 and p_2 in this case.
+
+   Also, if there is no permutation that suffices, set a flag
+   appropriately.
+*/
+void find_cacheable_permutation(const unsigned *a, const unsigned *b, 
+                                const unsigned *lim,
+                                unsigned *permutation, 
+                                unsigned *perm_found)
+{
+    *perm_found = 1;
+    unsigned i, j;
+
+    /* mpi[i] (max permutation index) is the maximum position in the
+       permutation (described above) that the (a, b) pair may attain
+       and still stay below the limits. */
+    int mpi[] = { -1, -1, -1, -1 };
+    for (i = 0, j = 0; i != 4; ++i)
+        while (a[i] < lim[j] && b[i] < lim[j])
+            mpi[i] = j++;
+
+    /* p[i], (the permutation of mpi), s.t. mpi[p[i]] <= mpi[p[i+1]] */
+    int p[] = { -1, -1, -1, -1 };
+    unsigned mv, mi; /* min value, min index */
+    for (i = 0; i != 4; ++i)
+    {
+        mv = 5;
+        for (j = 0; j != 4; ++j)
+            if (p[j] == -1 && mpi[j] < mv)
+                mv = mpi[j], mi = j;
+        p[mi] = mpi[mi];
+    }
+    for (i = 0; i != 4; ++i)
+        if (p[i] < i) *perm_found = 0;
+
+    permutation[0] = p[0];
+    permutation[1] = p[1];
+}
+
+                                
+
 /* find top 2 components in el, store their indices in i1 and i2.
    Count the number of occurrences of min_val in z */
 void find_top2_aux(unsigned *el, int *i1, int *i2, unsigned *z)
@@ -607,47 +655,18 @@ enum fuzzy_state cached_dirichlet_diff(unsigned *a_counts,
                                        unsigned *b_counts,
                                        struct binomial_est_params *bpar)
 {
-    /* Given a_counts and b_counts, virtually construct the paired
-       array S = { (a[0], b[0]), (a[1], b[1]), (a[2], b[2]), (a[3], b[3]) }, 
-       and, if exists, find a permutation of S such that:
-          S[0].a < max1 && S[0].b < max1
-       && S[1].a < max2 && S[1].b < max2
-       && S[2].a == 0 && S[2].b == 0
-       && S[3].a == 0 && S[3].b == 0
-
-       If such permutation exists, provide the indices into a_counts
-       (equivalently b_counts) corresponding to S[0] and S[1].
-    */
-    int a1, a2, b1, b2;
-    unsigned n_zero_a, n_zero_b;
-    find_top2_aux(a_counts, &a1, &a2, &n_zero_a);
-    find_top2_aux(b_counts, &b1, &b2, &n_zero_b);
     unsigned do_cache = 0;
-
+    unsigned lim[] = { bpar->max1, bpar->max2, 0, 0 };
+    unsigned perm[2];
     
-    if (n_zero_a >= 2
-        && n_zero_b >= 2
-        && a_counts[a1] < bpar->max1
-        && a_counts[a2] < bpar->max2
-        && b_counts[b1] < bpar->max1
-        && b_counts[b2] < bpar->max2)
-    {
-        if (n_zero_a > 2 || n_zero_b > 2)
-        {
-            /* we only need to compare the top single component */
-
-        if (a1 == b1 && a2 == b2) do_cache = 1;
-        else if (a1 == b2 && a2 == b1)
-        {
-            /* attempt one of the two reversal scenarios */
-        }
-    }
-
+    find_cacheable_permutation(a_counts, b_counts, lim, perm, &do_cache);
+    
     if (do_cache)
     {
-        /* this qualifies for caching */
+        unsigned i1 = perm[0], i2 = perm[1];
+
         struct binomial_est_bounds *beb = 
-            &bounds_cache[a_counts[a2]][b_counts[b2]][b_counts[b1]];
+            &bounds_cache[a_counts[i2]][b_counts[i2]][b_counts[i1]];
         
         return locate_cell(beb, a_counts[a1]);
     }
