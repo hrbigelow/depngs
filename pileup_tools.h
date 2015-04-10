@@ -53,8 +53,7 @@ public:
        threshold quality score */
     size_t read_depth_high_qual; 
 
-    int base_counts[NUM_BASE_SYMBOLS]; //ACGTN
-    int sum_of_counts;
+    int base_counts_high_qual[NUM_BASE_SYMBOLS]; //ACGTN
     struct managed_buf bases, bases_upper, bases_raw, quality_codes;
 
     packed_counts counts;

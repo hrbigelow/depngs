@@ -29,9 +29,7 @@ PileupSummary::PileupSummary(void)
     bases.buf = bases_upper.buf = bases_raw.buf = quality_codes.buf = NULL;
     bases.alloc = bases_upper.alloc = bases_raw.alloc = quality_codes.alloc = 0;
     counts.num_data = 0;
-    memset(base_counts, 0, sizeof(base_counts[0]) * NUM_BASE_SYMBOLS);
-    // memset(base_qual_sums, 0, sizeof(base_counts[0]) * num_base_symbols);
-    sum_of_counts = 0;
+    memset(base_counts_high_qual, 0, sizeof(base_counts_high_qual));
     insertions = CHAR_MAP();
     deletions = CHAR_MAP();
 }
@@ -110,11 +108,10 @@ void PileupSummary::load_line(const char *read_ptr)
     char indel_sequence[max_indel_size + 1];
 
     char pileup_ccode;
-    int indel_size, pileup_value, current_read = 0;
+    int indel_size, current_read = 0;
     //int deletion_read = 0;
 
-    memset(this->base_counts, 0, sizeof(this->base_counts));
-    this->sum_of_counts = 0;
+    memset(this->base_counts_high_qual, 0, sizeof(this->base_counts_high_qual));
 
     this->counts.num_data = 0;
     this->insertions.clear();
@@ -126,12 +123,10 @@ void PileupSummary::load_line(const char *read_ptr)
         ++read_ptr;
 
         //reduce the pileup code
-        int pileup_code = pileup_ccode;
         char pileup_redux = pileup_code_to_redux(pileup_ccode);
 
         indel_size = 0;
-        pileup_value = base_to_index(pileup_code);
-            
+
         if (strchr("N+-", pileup_redux))
         // if (pileup_redux == 'N' || pileup_redux == '+' || pileup_redux == '-')
         {
@@ -147,10 +142,6 @@ void PileupSummary::load_line(const char *read_ptr)
                 default : real_base = pileup_ccode; break;
                 }
 
-                pileup_value = base_to_index(real_base);
-
-                this->base_counts[pileup_value]++;
-                this->sum_of_counts++;
                 this->bases_upper.buf[current_read] = toupper(real_base);
                 this->bases.buf[current_read] = real_base;
 
@@ -280,6 +271,7 @@ void PileupSummary::parse(size_t min_quality_score)
         size_t strand = isupper(basecall) ? NUC_PLUS_STRAND : NUC_MINUS_STRAND;
         fi = encode_nucleotide(basecall, quality, strand);
         raw_counts_flat[fi]++;
+        this->base_counts_high_qual[basecall_index]++;
     }
     for (fi = 0; fi != NUC_NUM_BQS; ++fi)
     {

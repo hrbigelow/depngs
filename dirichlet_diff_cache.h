@@ -31,8 +31,8 @@ struct binomial_est_params {
 };
 
 
-struct alpha_triplet {
-    unsigned a2, b1, b2;
+struct alpha_pair {
+    unsigned b1, b2;
 };
 
 
@@ -51,7 +51,7 @@ enum init_phase { UNSET, PENDING, SET };
    
 */
 struct binomial_est_bounds {
-    enum init_phase state;
+    /* enum init_phase state; */
     int16_t ambiguous[2];
     int16_t unchanged[2];
 };
@@ -78,7 +78,9 @@ void write_diststats_header(FILE *diststats_fh,
                             unsigned max2);
 
 void write_diststats_line(FILE *fh,
-                          struct alpha_triplet *t,
+                          unsigned a2,
+                          unsigned b1,
+                          unsigned b2,
                           struct binomial_est_bounds *beb);
 
 

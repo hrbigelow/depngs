@@ -8,8 +8,18 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>
+#include <pthread.h>
 
 #include "cache.h"
+
+
+const char *fuzzy_state_strings[] = {
+    "changed",
+    "ambiguous_or_changed",
+    "ambiguous",
+    "ambiguous_or_unchanged",
+    "unchanged"
+};
 
 /*
 Consider generating the distance distribution between a real
@@ -97,7 +107,7 @@ double beta_Qinv(double Q, double a, double b)
 
 
 /* Maximum N of precalculated Beta values. */
-#define NUM_BETA_PRECALC 1000
+#define NUM_BETA_PRECALC 11000
 
 /* beta_lo[f][n] = gsl_cdf_beta_Pinv(beta_conf, s + 1/2, n - s + 1/2), where
    s: # of successes
@@ -105,27 +115,70 @@ double beta_Qinv(double Q, double a, double b)
    n: # of trials
    This is the low bound of the Jeffrey's posterior for binomial
    confidence intervals. */
-double beta_lo[NUM_BETA_PRECALC][NUM_BETA_PRECALC];
+float beta_lo[NUM_BETA_PRECALC][NUM_BETA_PRECALC];
 
 
 /* beta_hi[f][n] = gsl_cdf_beta_Qinv(beta_conf, s + 1/2, n - s + 1/2).
    This is the high bound of the Jeffrey's posterior for binomial
    confidence intervals. */
-double beta_hi[NUM_BETA_PRECALC][NUM_BETA_PRECALC];
+float beta_hi[NUM_BETA_PRECALC][NUM_BETA_PRECALC];
 
 
-void init_beta(double beta_conf)
+struct beta_input {
+    unsigned start, jump;
+    double beta_conf;
+};
+
+void *init_beta_func(void *args)
 {
-    int f, n;
-    double ds, dn, beta_conf_inv = 1.0 - beta_conf;
-    for (n = 0; n != NUM_BETA_PRECALC; ++n)
+    struct beta_input *input = args;
+    double Q = 1.0 - input->beta_conf;
+    assert(Q < 0.5);
+    unsigned f, n;
+    
+    for (n = input->start; n < NUM_BETA_PRECALC; n += input->jump)
+    {
         for (f = 0; f <= n; ++f)
-        {
-            ds = (double)(n - f);
-            dn = (double)n;
-            beta_lo[f][n] = beta_Pinv(beta_conf_inv, ds + 0.5, dn - ds + 0.5);
-            beta_hi[f][n] = beta_Qinv(beta_conf_inv, ds + 0.5, dn - ds + 0.5);
-        }
+            beta_lo[f][n] = beta_Pinv(Q, 
+                                      (double)(n - f) + 0.5, 
+                                      (double)f + 0.5);
+        
+        for (f = 0; f <= n; ++f)
+            beta_hi[f][n] = 1.0 - beta_lo[n - f][n];
+        
+    }
+    pthread_exit(NULL);
+}
+
+#define CHECK_THREAD(t, rc)                                             \
+    if (rc)                                                             \
+    {                                                                   \
+        fprintf(stderr,                                                 \
+                "Couldn't create thread %u at %s:%u with return code %i\n", \
+                t, __FILE__, __LINE__, rc);                             \
+        exit(1);                                                        \
+    }                                                                   \
+    
+void init_beta(double beta_conf, size_t n_threads)
+{
+    pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
+    struct beta_input *inputs = malloc(n_threads * sizeof(struct beta_input));
+
+    unsigned t;
+    int rc;
+    for (t = 0; t != n_threads; ++t)
+    {
+        inputs[t] = (struct beta_input){ t, n_threads, beta_conf };
+        rc = pthread_create(&threads[t], NULL, init_beta_func, &inputs[t]);
+        CHECK_THREAD(t, rc);
+    }
+    for (t = 0; t != n_threads; ++t) {
+        rc = pthread_join(threads[t], NULL);
+        CHECK_THREAD(t, rc);
+    }
+
+    free(threads);
+    free(inputs);
 }
 
 

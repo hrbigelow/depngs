@@ -13,6 +13,8 @@ enum fuzzy_state {
 };
 
 
+extern const char *fuzzy_state_strings[];
+
 struct binomial_est_state {
     enum fuzzy_state state;
     double beta_qval_lo, beta_qval_hi;
@@ -42,7 +44,7 @@ struct points_gen
 };
 
 
-void init_beta(double beta_conf);
+void init_beta(double beta_conf, size_t n_threads);
 
 
 /* Sample pairs of points from dist_pair up to max_points, classifying

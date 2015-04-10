@@ -76,22 +76,35 @@ void free_distrib_points(struct distrib_points *dpts)
 }
 
 
+/* update dpts parameters and discard existing points.  if alpha is
+   identical to existing parameters, do nothing. */
 void set_dirichlet_alpha(struct distrib_points *dpts, double *alpha)
 {
     struct dir_points_par *dp = dpts->pgen.point_par;
-    memcpy(dp->alpha, alpha, sizeof(dp->alpha));
-    dpts->points.size = 0;
+    unsigned i, change = 0;
+    for (i = 0; i != NUM_NUCS; ++i)
+        if (dp->alpha[i] != alpha[i]) change = 1;
+
+    if (change)
+    {
+        memcpy(dp->alpha, alpha, sizeof(dp->alpha));
+        dpts->points.size = 0;
+    }
 }
 
-/* set a single alpha */
+/* set a single alpha, and discard points if there is a change */
 void set_dirichlet_alpha_single(struct distrib_points *dpts, unsigned i, double v)
 {
     struct dir_points_par *dp = dpts->pgen.point_par;
-    dp->alpha[i] = v;
-    dpts->points.size = 0;
+    if (dp->alpha[i] != v)
+    {
+        dp->alpha[i] = v;
+        dpts->points.size = 0;
+    }
 }
 
-/* The main distance function */
+/* The main distance function.  This will modify dist[0]'s alpha
+   parameters and thus discard its points. */
 struct binomial_est_state pair_dist_aux(unsigned a1, void *par)
 {
     struct binomial_est_params *b = par;
@@ -114,13 +127,15 @@ struct binomial_est_state pair_dist_aux(unsigned a1, void *par)
 
 
 void read_diststats_line(FILE *fh, 
-                         struct alpha_triplet *t,
+                         unsigned *a2,
+                         unsigned *b1,
+                         unsigned *b2,
                          struct binomial_est_bounds *beb)
 {
     int n;
     n = fscanf(fh, 
-               "%i\t%i\t%i\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\n", 
-               &t->a2, &t->b2, &t->b1,
+               "%u\t%u\t%u\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\n", 
+               a2, b2, b1,
                &beb->ambiguous[0],
                &beb->unchanged[0],
                &beb->unchanged[1],
@@ -134,12 +149,14 @@ void read_diststats_line(FILE *fh,
 
 
 void write_diststats_line(FILE *fh,
-                          struct alpha_triplet *t,
+                          unsigned a2,
+                          unsigned b1,
+                          unsigned b2,
                           struct binomial_est_bounds *beb)
 {
     fprintf(fh,
             "%i\t%i\t%i\t%i\t%i\t%i\t%i\n", 
-            t->a2, t->b2, t->b1,
+            a2, b2, b1,
             beb->ambiguous[0], beb->unchanged[0], 
             beb->unchanged[1], beb->ambiguous[1]);
 }
@@ -202,19 +219,19 @@ void write_diststats_header(FILE *diststats_fh,
 void parse_diststats_body(FILE *diststats_fh, unsigned max1, unsigned max2)
 {
     struct binomial_est_bounds beb;
-    struct alpha_triplet t;
+    unsigned a2, b1, b2;
     while (! feof(diststats_fh))
     {
-        read_diststats_line(diststats_fh, &t, &beb);
-        if (t.a2 < max2 && t.b2 < max2 && t.b1 < max1)
-            bounds_cache[t.a2][t.b2][t.b1] = beb;
+        read_diststats_line(diststats_fh, &a2, &b1, &b2, &beb);
+        if (a2 < max2 && b2 < max2 && b1 < max1)
+            bounds_cache[a2][b2][b1] = beb;
         else
         {
             fprintf(stderr, 
                     "Error at %s: %u\n"
                     "Indices exceed limits.  A2 = %u, B2 = %u, B1 = %u, MAX1 = %u, MAX2 = %u\n",
                     __FILE__, __LINE__,
-                    t.a2, t.b2, t.b1, max1, max2);
+                    a2, b2, b1, max1, max2);
             exit(1);
         }
     }
@@ -350,14 +367,15 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
         if (lx == 1 && rx == 1) break;
     }
     unsigned topx = hd->x;
-    struct binomial_est_params *bb = bpar;
-    struct dir_points_par 
-        *d0 = bb->dist[0]->pgen.point_par,
-        *d1 = bb->dist[1]->pgen.point_par;
 
-    fprintf(stderr, "MODE: %5.3g\t%5.3g\t%5.3g\t%5.3g\t%i\t%7.4g\n", 
-            d0->alpha[0], d0->alpha[1], d1->alpha[0], d1->alpha[1],
-            hd->x, hd->y);
+    /* struct binomial_est_params *bb = bpar; */
+    /* struct dir_points_par  */
+    /*     *d0 = bb->dist[0]->pgen.point_par, */
+    /*     *d1 = bb->dist[1]->pgen.point_par; */
+
+    /* fprintf(stderr, "MODE: %5.3g\t%5.3g\t%5.3g\t%5.3g\t%i\t%7.4g\n",  */
+    /*         d0->alpha[0], d0->alpha[1], d1->alpha[0], d1->alpha[1], */
+    /*         hd->x, hd->y); */
 
     /* clean up */
     struct ipoint *p;
@@ -406,36 +424,46 @@ struct pair_point_gen {
 
    Also, if there is no permutation that suffices, set a flag
    appropriately.
+
+   Assumes that lim is descending.  lim[i] >= lim[i+1]
 */
 void find_cacheable_permutation(const unsigned *a, const unsigned *b, 
                                 const unsigned *lim,
-                                unsigned *permutation, 
-                                unsigned *perm_found)
+                                unsigned char *permutation, 
+                                unsigned char *perm_found)
 {
     *perm_found = 1;
-    unsigned i, j;
-
     /* mpi[i] (max permutation index) is the maximum position in the
        permutation (described above) that the (a, b) pair may attain
        and still stay below the limits. */
-    int mpi[] = { -1, -1, -1, -1 };
-    for (i = 0, j = 0; i != 4; ++i)
-        while (a[i] < lim[j] && b[i] < lim[j])
-            mpi[i] = j++;
+    int mpi[] = { -1, -1, -1, -1 },
+        i, j,
+        mv = 0, mi = 0; /* min value, min_index */
+
+    for (i = 0; i != 4; ++i)
+        for (j = 0; j != 4; ++j)
+        {
+            if (a[i] >= lim[j] || b[i] >= lim[j]) break;
+            mpi[i] = j;
+        }
 
     /* p[i], (the permutation of mpi), s.t. mpi[p[i]] <= mpi[p[i+1]] */
-    int p[] = { -1, -1, -1, -1 };
-    unsigned mv, mi; /* min value, min index */
+    unsigned p[4];
+
+    /* flag[j] = 1 means the value j has been placed in the permutation */
+    unsigned char flag[] = { 0, 0, 0, 0 };
+
     for (i = 0; i != 4; ++i)
     {
         mv = 5;
         for (j = 0; j != 4; ++j)
-            if (p[j] == -1 && mpi[j] < mv)
+            if (! flag[j] && mpi[j] < mv)
                 mv = mpi[j], mi = j;
-        p[mi] = mpi[mi];
+        p[i] = mi;
+        flag[mi] = 1;
     }
     for (i = 0; i != 4; ++i)
-        if (p[i] < i) *perm_found = 0;
+        if (mpi[p[i]] < i) { *perm_found = 0; break; }
 
     permutation[0] = p[0];
     permutation[1] = p[1];
@@ -537,7 +565,7 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
     
 }
 
-
+#if 0
 /* Does the same as print_bounds, but calculates the bounds using
    binary search. */
 void print_beb_bounds(struct binomial_est_params *bpar)
@@ -598,6 +626,7 @@ void print_beb_bounds(struct binomial_est_params *bpar)
     }
     fflush(stdout);
 }
+#endif
 
 #if 0
 void print_bounds(struct binomial_est_params *bpar)
@@ -655,27 +684,31 @@ enum fuzzy_state cached_dirichlet_diff(unsigned *a_counts,
                                        unsigned *b_counts,
                                        struct binomial_est_params *bpar)
 {
-    unsigned do_cache = 0;
-    unsigned lim[] = { bpar->max1, bpar->max2, 0, 0 };
-    unsigned perm[2];
+    unsigned lim[] = { bpar->max1, bpar->max2, 1, 1 };
+    unsigned char perm[2], do_cache;
     
     find_cacheable_permutation(a_counts, b_counts, lim, perm, &do_cache);
     
+    enum fuzzy_state state;
     if (do_cache)
     {
+        /* fprintf(stderr, "C***: %u,%u,%u,%u\t%u,%u,%u,%u\n", */
+        /*         a_counts[0], a_counts[1], a_counts[2], a_counts[3], */
+        /*         b_counts[0], b_counts[1], b_counts[2], b_counts[3]); */
+        
         unsigned i1 = perm[0], i2 = perm[1];
 
         struct binomial_est_bounds *beb = 
             &bounds_cache[a_counts[i2]][b_counts[i2]][b_counts[i1]];
         
-        return locate_cell(beb, a_counts[a1]);
+        state = locate_cell(beb, a_counts[i1]);
     }
     else
     {
-        fprintf(stderr, "Noncached: %u,%u,%u,%u\t%u,%u,%u,%u\n",
-                a_counts[0], a_counts[1], a_counts[2], a_counts[3],
-                b_counts[0], b_counts[1], b_counts[2], b_counts[3]);
-
+        /* fprintf(stderr, "N---: %u,%u,%u,%u\t%u,%u,%u,%u\n", */
+        /*         a_counts[0], a_counts[1], a_counts[2], a_counts[3], */
+        /*         b_counts[0], b_counts[1], b_counts[2], b_counts[3]); */
+        
         /* need to test the bounds organically, with no caching */
         struct posterior_settings *ps = bpar->pset;
         double alpha[NUM_NUCS];
@@ -698,6 +731,7 @@ enum fuzzy_state cached_dirichlet_diff(unsigned *a_counts,
                                   bpar->dist[1]->pgen,
                                   &bpar->dist[1]->points,
                                   bpar->batch_size);
-        return est.state;
+        state = est.state;
     }
+    return state;
 }

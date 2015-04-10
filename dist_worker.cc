@@ -350,8 +350,8 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
 
         for (i = 0; i != NUM_NUCS; ++i)
         {
-            counts1[i] = lsp[0]->locus.base_counts[i];
-            counts2[i] = lsp[1]->locus.base_counts[i];
+            counts1[i] = lsp[0]->locus.base_counts_high_qual[i];
+            counts2[i] = lsp[1]->locus.base_counts_high_qual[i];
         }
 
         if (! (lsp[0]->is_next && lsp[1]->is_next))

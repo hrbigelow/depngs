@@ -23,17 +23,11 @@ int dist_usage()
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
             "-i STRING   (optional) name of output indel distance file.  If absent, do not perform indel distance calculation.\n"
             "-s STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
-            "-r STRING   range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
-            // "-y FLOAT    min mutation distance (0-1 scale) from ref to call as changed locus [0.2]\n"
-            // "-T INT      number of sample points used for tuning proposal distribution [1000]\n"
-            // "-x INT      number of sample points used for first-pass distance checking [100]\n"
-            // "-X FLOAT    confidence for -y [0.99]\n"
-            // "-Z FLOAT    confidence for binomial estimation [same as -X]\n"
-            // "-f INT      number of sample points used for final quantiles estimation [1000]\n"
+            "-r STRING   input range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
+            "-x STRING   (optional) name of output summary statistics file of differing loci.\n"
             "-q INT      minimum quality score to include bases as evidence [%s]\n"
             "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
             "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
-
             "-t INT      number of threads to use [1]\n"
             "-m INT      number bytes of memory to use [%Zu]\n"
             // "-v <empty>  if present, be verbose [absent]\n"
@@ -42,11 +36,6 @@ int dist_usage()
             "\n"
             "-D STRING   distance quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
             "-C STRING   composition quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
-            // "-P INT      number of random sample point pairings to estimate Sampling/Sampling distance distribution [10000]\n"
-            // "-a INT      target autocorrelation offset.  once reached, proposal tuning halts [6]\n"
-            // "-I INT      maximum number of proposal tuning iterations [10]\n"
-            // "-M REAL     autocorrelation maximum value [0.2]\n"
-            // "-p FLOAT    alpha value for dirichlet prior [0.1]\n"
             "\n"
             "samples.rdb has lines of <sample_id><tab></path/to/sample.jpd><tab></path/to/sample.pileup>\n"
             "sample_pairings.rdb has lines of <sample_id><tab><sample_id>\n"
@@ -87,10 +76,11 @@ int main_dist(int argc, char **argv)
     const char *indel_dist_file = NULL;
     const char *fastq_type = NULL;
     const char *sample_pairings_file = NULL;
+    const char *summary_stats_file = NULL;
     const char *query_range_file = NULL;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:i:s:r:y:t:m:q:F:D:C:g")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:i:s:x:r:t:m:q:F:D:C:g")) >= 0)
     {
         switch(c)
         {
@@ -98,14 +88,10 @@ int main_dist(int argc, char **argv)
         case 'c': comp_file = optarg; break;
         case 'i': indel_dist_file = optarg; break;
         case 's': sample_pairings_file = optarg; break;
+        case 'x': summary_stats_file = optarg; break;
         case 'r': query_range_file = optarg; break;
         case 't': n_threads = (size_t)atof(optarg); break;
         case 'm': max_mem = (size_t)atof(optarg); break;
-        // case 'f': pset.max_sample_points = (size_t)atof(optarg); break;
-        // case 'y': pset.min_dist = atof(optarg); break;
-        // case 'X': pset.post_confidence = atof(optarg); break;
-        // case 'Z': pset.beta_confidence = atof(optarg); break;
-        // case 'p': prior_alpha = atof(optarg); break;
         case 'q': pset.min_quality_score = (size_t)atoi(optarg); break;
         case 'F': fastq_type = optarg; break;
         // case 'v': verbose = true; break;
@@ -121,6 +107,8 @@ int main_dist(int argc, char **argv)
     const char *diststats_file = argv[optind + 1];
     const char *contig_order_file = argv[optind + 2];
 
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("\n"); /* So progress messages don't interfere with shell prompt. */
 
     // consistency checks
     if (! sample_pairings_file && (dist_file || indel_dist_file))
@@ -137,6 +125,8 @@ int main_dist(int argc, char **argv)
         exit(5);
     }
 
+    FILE *summary_stats_fh = open_if_present(summary_stats_file, "w");
+    
     gsl_set_error_handler_off();
 
     FILE *diststats_fh = fopen(diststats_file, "r");
@@ -145,11 +135,14 @@ int main_dist(int argc, char **argv)
         fprintf(stderr, "Error: couldn't open diststats file %s for reading.\n", diststats_file);
         exit(1);
     }
+
+    printf("Parsing diststats...");
     unsigned max1_alpha, max2_alpha;
     parse_diststats_header(diststats_fh, &pset, &max1_alpha, &max2_alpha);
     dirichlet_diff_init(max1_alpha, max2_alpha);
     parse_diststats_body(diststats_fh, max1_alpha, max2_alpha);
     fclose(diststats_fh);
+    printf("done.\n");
 
     FILE *samples_fh = open_if_present(samples_file, "r");
     char jpd[1000], pileup[1000], label[1000];
@@ -204,8 +197,8 @@ int main_dist(int argc, char **argv)
         double *quant;
         size_t *n_quant;
     } Q[] = { 
-        dist_quantiles_string, pset.dist_quantiles, &pset.n_dist_quantiles, 
-        comp_quantiles_string, pset.comp_quantiles, &pset.n_comp_quantiles
+        { dist_quantiles_string, pset.dist_quantiles, &pset.n_dist_quantiles }, 
+        { comp_quantiles_string, pset.comp_quantiles, &pset.n_comp_quantiles }
     };
 
     size_t rval = 0;
@@ -343,6 +336,7 @@ int main_dist(int argc, char **argv)
     for (t = 0; t != n_threads; ++t)
         worker_inputs[t] = &worker_buf[t];
 
+    printf("Creating in-memory index of input files...");
     size_t scan_thresh_size = 1e6;
     file_bsearch_init(init_locus, scan_thresh_size);
     struct file_bsearch_index *ix = (struct file_bsearch_index *)
@@ -350,6 +344,7 @@ int main_dist(int argc, char **argv)
 
     for (s = 0; s != n_samples; ++s)
         ix[s] = file_bsearch_make_index(sample_attrs[s].fh);
+    printf("done.\n");
 
     /* initialize queries */
     struct pair_ordering_range *queries, *q, *qend;
@@ -383,9 +378,9 @@ int main_dist(int argc, char **argv)
         + (indel_fh ? 1 : 0);
 
     /* initialize beta quantile estimation procedure */
-    init_beta(pset.beta_confidence);
-
-    // dirichlet_diff_init();
+    printf("Precomputing confidence interval statistics...");
+    init_beta(pset.beta_confidence, n_threads);
+    printf("done.\n");
 
     /* this should be revisited if it turns out that threads are
        stalling */
@@ -403,6 +398,7 @@ int main_dist(int argc, char **argv)
     enum YepStatus status = yepLibrary_Init();
     assert(status == YepStatusOk);
 
+    printf("Starting input processing.\n");
     thread_queue_run(tqueue);
     thread_queue_free(tqueue);
 
@@ -412,25 +408,37 @@ int main_dist(int argc, char **argv)
 
     unsigned n_states = sizeof(all_pair_stats[0].dist_count) / sizeof(all_pair_stats[0].dist_count[0]);
 
-    unsigned p;
-    for (p = 0; p != n_pairings; ++p)
+    if (summary_stats_fh)
     {
-        for (t = 0; t != n_threads; ++t)
-        {
-            all_pair_stats[p].confirmed_changed 
-                += worker_buf[t].pair_stats[p].confirmed_changed;
-            for (s = 0; s != n_states; ++s)
-                all_pair_stats[p].dist_count[s] 
-                    += worker_buf[t].pair_stats[p].dist_count[s];
-        }
-
-        /* Print out statistics */
-        fprintf(stderr, "%s\t%s", 
-                sample_attrs[pair_sample1[p]].label_string,
-                sample_attrs[pair_sample2[p]].label_string);
+        unsigned p;
+        fprintf(summary_stats_fh, "sample1\tsample2");
+        fprintf(summary_stats_fh, "\t%s", "confirmed_changed");
         for (s = 0; s != n_states; ++s)
-            fprintf(stderr, "\t%zu", all_pair_stats[p].dist_count[s]);
-        fprintf(stderr, "\t%zu\n", all_pair_stats[p].confirmed_changed);
+            fprintf(summary_stats_fh, "\t%s", fuzzy_state_strings[s]);
+        fprintf(summary_stats_fh, "\n");
+
+        for (p = 0; p != n_pairings; ++p)
+        {
+            for (t = 0; t != n_threads; ++t)
+            {
+                all_pair_stats[p].confirmed_changed 
+                    += worker_buf[t].pair_stats[p].confirmed_changed;
+                for (s = 0; s != n_states; ++s)
+                    all_pair_stats[p].dist_count[s] 
+                        += worker_buf[t].pair_stats[p].dist_count[s];
+            }
+
+            /* Print out statistics */
+            fprintf(summary_stats_fh, "%s\t%s", 
+                    sample_attrs[pair_sample1[p]].label_string,
+                    sample_attrs[pair_sample2[p]].label_string);
+            fprintf(summary_stats_fh, "\t%zu", all_pair_stats[p].confirmed_changed);
+            for (s = 0; s != n_states; ++s)
+                fprintf(summary_stats_fh, "\t%zu", all_pair_stats[p].dist_count[s]);
+            fprintf(summary_stats_fh, "\n");
+
+        }
+        fclose(summary_stats_fh);
     }
 
     free(ix);
@@ -456,5 +464,7 @@ int main_dist(int argc, char **argv)
     free(pair_sample2);
     free(sample_attrs);
     dirichlet_diff_free();
+    printf("Finished.\n");
+
     return 0;
 }

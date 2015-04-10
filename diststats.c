@@ -55,24 +55,31 @@ struct alpha_limits {
     unsigned max1, max2;
 };
 
-/* reader function.  simply return the next quartet of values, encoded
-   in the buf. signal end of input by settings buf[0].size = 0 */
+/* reader function.  simply return the next triplet of values, encoded
+   in the buf. signal end of input by settings buf[0].size = 0
+   space over a2:[0, max2), b1:[0, max1), b2:[0, max2)
+ */
 void diststats_reader(void *par, struct managed_buf *buf)
 {
-    ALLOC_GROW(buf[0].buf, sizeof(struct alpha_triplet), buf[0].alloc);
-    static struct alpha_triplet alpha = { 0, 0, 0 };
+    ALLOC_GROW(buf[0].buf, sizeof(struct alpha_pair), buf[0].alloc);
+    static struct alpha_pair alpha = { 0, 0 };
     struct alpha_limits *lim = par;
-    if (alpha.a2 < lim->max2)
+    if (alpha.b1 != lim->max1)
     {
         memcpy(buf[0].buf, &alpha, sizeof(alpha));
-        buf[0].size = sizeof(struct alpha_triplet);
+        buf[0].size = sizeof(struct alpha_pair);
         ++alpha.b2;
         if (alpha.b2 == lim->max2) alpha.b2 = 0, ++alpha.b1;
-        if (alpha.b1 == lim->max1) alpha.b1 = 0, ++alpha.a2;
     }
     else buf[0].size = 0;
 }
 
+
+struct work_unit {
+    unsigned a2;
+    struct alpha_pair p;
+    struct binomial_est_bounds beb;
+};
 
 void diststats_worker(void *par,
                       const struct managed_buf *in_bufs,
@@ -80,29 +87,48 @@ void diststats_worker(void *par,
 {
     struct binomial_est_params *bep = par;
     struct binomial_est_bounds beb;
-    struct alpha_triplet t;
+    struct alpha_pair bpair;
 
-    ALLOC_GROW(out_bufs[0].buf, 
-               sizeof(beb) + sizeof(t),
-               out_bufs[0].alloc);
+    size_t space = bep->max2 * sizeof(struct work_unit);
+    ALLOC_GROW(out_bufs[0].buf, space, out_bufs[0].alloc);
 
-    memcpy(&t, in_bufs[0].buf, sizeof(struct alpha_triplet));
-    initialize_est_bounds(t.a2, t.b1, t.b2, bep, &beb);
-    memcpy(out_bufs[0].buf, &t, sizeof(t));
-    memcpy(out_bufs[0].buf + sizeof(t), &beb, sizeof(beb));
-    out_bufs[0].size = sizeof(beb);
+    memcpy(&bpair, in_bufs[0].buf, sizeof(struct alpha_pair));
+    char *out = out_bufs[0].buf;
+    struct work_unit unit;
+
+    unsigned a2;
+    for (a2 = 0; a2 != bep->max2; ++a2)
+    {
+        initialize_est_bounds(a2, bpair.b1, bpair.b2, bep, &beb);
+        unit = (struct work_unit){ a2, bpair, beb };
+        memcpy(out, &unit, sizeof(unit));
+        out += sizeof(unit);
+    }
+    out_bufs[0].size = space;
+    printf("Finished bounds for (b1, b2) =  %u, %u\n", bpair.b1, bpair.b2);
 }
 
+
+struct offload_par {
+    FILE *out_fh;
+    unsigned max2;
+};
 
 void diststats_offload(void *par,
                        const struct managed_buf *bufs)
 {
-    FILE *out_fh = par;
-    struct binomial_est_bounds beb;
-    struct alpha_triplet t;
-    memcpy(&t, bufs[0].buf, sizeof(t));
-    memcpy(&beb, bufs[0].buf + sizeof(t), sizeof(beb));
-    write_diststats_line(out_fh, &t, &beb);
+    
+    struct offload_par *offpar = par;
+    struct work_unit unit;
+    unsigned a2;
+    char *in = bufs[0].buf;
+    for (a2 = 0; a2 != offpar->max2; ++a2)
+    {
+        memcpy(&unit, in, sizeof(unit));
+        in += sizeof(unit);
+        write_diststats_line(offpar->out_fh, a2, 
+                             unit.p.b1, unit.p.b2, &unit.beb);
+    }
 }
 
 
@@ -153,13 +179,21 @@ int main_diststats(int argc, char **argv)
 
     gsl_set_error_handler_off();
 
-    init_beta(pset.beta_confidence);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("\n"); /* So progress messages don't interfere with shell prompt. */
+    
+    printf("Precomputing confidence interval statistics...");
+    init_beta(pset.beta_confidence, n_threads);
+    printf("done.\n");
+
     dirichlet_diff_init(reader_par.max1, reader_par.max2);
 
     pset.max_sample_points += GEN_POINTS_BATCH - (pset.max_sample_points % GEN_POINTS_BATCH);
 
     struct binomial_est_params *worker_par = malloc(n_threads * sizeof(struct binomial_est_params));
     void **worker_par_ptrs = malloc(n_threads * sizeof(void *));
+
+    struct offload_par out_par = { out_fh, reader_par.max2 };
 
     unsigned t;
     for (t = 0; t != n_threads; ++t)
@@ -183,7 +217,7 @@ int main_diststats(int argc, char **argv)
     struct thread_queue *tqueue =
         thread_queue_init(diststats_reader, &reader_par,
                           diststats_worker, worker_par_ptrs,
-                          diststats_offload, out_fh,
+                          diststats_offload, &out_par,
                           n_threads,
                           n_extra,
                           1,
