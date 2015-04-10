@@ -24,6 +24,8 @@ int diststats_usage()
             "-f INT      MAX_POINTS, max # of sample point pairs for binomial test [10000]\n"
             "-t INT      number of threads to use [1]\n"
             "-p FLOAT    PRIOR_ALPHA, alpha value for dirichlet prior [0.1]\n"
+            "-s INT      RANGE_START, b1 start value [0]\n"
+            "-e INT      RANGE_END, b1 end value [MAX1]\n"
             "\n"
             "Computes a statistic over a space of pairs of 4D dirichlet\n"
             "distributions.  The first takes alpha values (p+a1, p+a2, p,\n"
@@ -46,6 +48,10 @@ int diststats_usage()
             "\n"
             "This table is then used in dep dist for rapid classification of\n"
             "pairs of loci.\n"
+            "\n"
+            "To help parallelize, the full range of b1 values [0, MAX1] may be\n"
+            "broken up into [RANGE_START, RANGE_END) half-open sub-intervals\n"
+            "and then merged.\n"
             );
     return 1;
 }
@@ -53,6 +59,8 @@ int diststats_usage()
 
 struct alpha_limits {
     unsigned max1, max2;
+    unsigned b1_beg, b1_end;
+    struct alpha_pair alpha;
 };
 
 /* reader function.  simply return the next triplet of values, encoded
@@ -62,14 +70,13 @@ struct alpha_limits {
 void diststats_reader(void *par, struct managed_buf *buf)
 {
     ALLOC_GROW(buf[0].buf, sizeof(struct alpha_pair), buf[0].alloc);
-    static struct alpha_pair alpha = { 0, 0 };
     struct alpha_limits *lim = par;
-    if (alpha.b1 != lim->max1)
+    if (lim->alpha.b1 != lim->b1_end)
     {
-        memcpy(buf[0].buf, &alpha, sizeof(alpha));
+        memcpy(buf[0].buf, &lim->alpha, sizeof(lim->alpha));
         buf[0].size = sizeof(struct alpha_pair);
-        ++alpha.b2;
-        if (alpha.b2 == lim->max2) alpha.b2 = 0, ++alpha.b1;
+        ++lim->alpha.b2;
+        if (lim->alpha.b2 == lim->max2) lim->alpha.b2 = 0, ++lim->alpha.b1;
     }
     else buf[0].size = 0;
 }
@@ -136,7 +143,12 @@ void diststats_offload(void *par,
 int main_diststats(int argc, char **argv)
 {
     size_t n_threads = 1;
-    struct alpha_limits reader_par = { 100, 10 };
+    struct alpha_limits reader_par = { 
+        .max1 = 100,
+        .max2 = 10, 
+        .b1_beg = 0, 
+        .b1_end = 100
+    };
 
     float prior_alpha = 0.1;
     struct posterior_settings pset = {
@@ -148,7 +160,7 @@ int main_diststats(int argc, char **argv)
     };
 
     char c;
-    while ((c = getopt(argc, argv, "1:2:t:f:y:X:Z:p:")) >= 0)
+    while ((c = getopt(argc, argv, "1:2:t:f:y:X:Z:p:s:e:")) >= 0)
     {
         switch(c)
         {
@@ -163,10 +175,15 @@ int main_diststats(int argc, char **argv)
                 pset.prior_alpha[1] = 
                 pset.prior_alpha[2] = 
                 pset.prior_alpha[3] = atof(optarg); break;
+        case 's': reader_par.b1_beg = (size_t)atof(optarg); break;
+        case 'e': reader_par.b1_end = (size_t)atof(optarg); break;
         default: return diststats_usage(); break;
         }
     }
     if (argc - optind != 1) return diststats_usage();
+
+    /* initialize the counter with the proper starting value */
+    reader_par.alpha = (struct alpha_pair){ .b1 = reader_par.b1_beg, .b2 = 0 };
 
     char *out_file = argv[optind];
     FILE *out_fh = fopen(out_file, "w");
