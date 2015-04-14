@@ -135,7 +135,7 @@ void read_diststats_line(FILE *fh,
     int n;
     n = fscanf(fh, 
                "%u\t%u\t%u\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\t%"SCNd16"\n", 
-               a2, b2, b1,
+               a2, b1, b2,
                &beb->ambiguous[0],
                &beb->unchanged[0],
                &beb->unchanged[1],
@@ -156,7 +156,7 @@ void write_diststats_line(FILE *fh,
 {
     fprintf(fh,
             "%i\t%i\t%i\t%i\t%i\t%i\t%i\n", 
-            a2, b2, b1,
+            a2, b1, b2,
             beb->ambiguous[0], beb->unchanged[0], 
             beb->unchanged[1], beb->ambiguous[1]);
 }
@@ -430,7 +430,7 @@ struct pair_point_gen {
 void find_cacheable_permutation(const unsigned *a, const unsigned *b, 
                                 const unsigned *lim,
                                 unsigned char *permutation, 
-                                unsigned char *perm_found)
+                                unsigned *perm_found)
 {
     *perm_found = 1;
     /* mpi[i] (max permutation index) is the maximum position in the
@@ -682,15 +682,16 @@ void print_bounds(struct binomial_est_params *bpar)
 /* test two dirichlets based on their counts. */
 enum fuzzy_state cached_dirichlet_diff(unsigned *a_counts,
                                        unsigned *b_counts,
-                                       struct binomial_est_params *bpar)
+                                       struct binomial_est_params *bpar,
+                                       unsigned *cache_hit)
 {
     unsigned lim[] = { bpar->max1, bpar->max2, 1, 1 };
-    unsigned char perm[2], do_cache;
+    unsigned char perm[2];
     
-    find_cacheable_permutation(a_counts, b_counts, lim, perm, &do_cache);
+    find_cacheable_permutation(a_counts, b_counts, lim, perm, cache_hit);
     
     enum fuzzy_state state;
-    if (do_cache)
+    if (*cache_hit)
     {
         /* fprintf(stderr, "C***: %u,%u,%u,%u\t%u,%u,%u,%u\n", */
         /*         a_counts[0], a_counts[1], a_counts[2], a_counts[3], */

@@ -21,8 +21,6 @@ struct binomial_est_state {
 };
 
 
-typedef double POINT[NUM_NUCS];
-
 struct points_buf {
     POINT *buf;
     size_t size, alloc;

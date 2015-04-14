@@ -29,7 +29,8 @@ void gen_reference_points_wrapper(const void *par, POINT *points);
 struct calc_post_to_dir_par
 {
     struct packed_counts *post_counts;
-    double proposal_alpha[NUM_NUCS];
+    POINT proposal_alpha;
+    POINT prior_alpha;
 };
 
 /* Generate GEN_POINTS_BATCH weights (ratio of posterior to dirichlet) */

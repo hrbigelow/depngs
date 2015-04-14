@@ -48,6 +48,7 @@ void init_sample_attributes(const char *jpd_file,
 struct pair_dist_stats {
     size_t dist_count[5]; /* number of enum fuzzy_state choices */
     size_t confirmed_changed;
+    size_t cache_hit, cache_miss;
 };
 
 

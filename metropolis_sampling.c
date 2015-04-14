@@ -50,7 +50,8 @@ size_t best_autocorrelation_offset(const double *samples,
     double autocor_measure;
 
     //linear search to find first qualifying offset
-    for (size_t o = 1; o != autocor_max_offset && o <= num_samples; ++o)
+    size_t o;
+    for (o = 1; o != autocor_max_offset && o <= num_samples; ++o)
     {
         autocor_measure = componentwise_autocorrelation(samples, num_samples, o);
         if (autocor_measure < valid_autocor)

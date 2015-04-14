@@ -412,7 +412,7 @@ int main_dist(int argc, char **argv)
     {
         unsigned p;
         fprintf(summary_stats_fh, "sample1\tsample2");
-        fprintf(summary_stats_fh, "\t%s", "confirmed_changed");
+        fprintf(summary_stats_fh, "\t%s\t%s\t%s", "cache_hit", "cache_miss", "confirmed_changed");
         for (s = 0; s != n_states; ++s)
             fprintf(summary_stats_fh, "\t%s", fuzzy_state_strings[s]);
         fprintf(summary_stats_fh, "\n");
@@ -423,6 +423,11 @@ int main_dist(int argc, char **argv)
             {
                 all_pair_stats[p].confirmed_changed 
                     += worker_buf[t].pair_stats[p].confirmed_changed;
+                all_pair_stats[p].cache_hit
+                    += worker_buf[t].pair_stats[p].cache_hit;
+                all_pair_stats[p].cache_miss
+                    += worker_buf[t].pair_stats[p].cache_miss;
+
                 for (s = 0; s != n_states; ++s)
                     all_pair_stats[p].dist_count[s] 
                         += worker_buf[t].pair_stats[p].dist_count[s];
@@ -432,6 +437,8 @@ int main_dist(int argc, char **argv)
             fprintf(summary_stats_fh, "%s\t%s", 
                     sample_attrs[pair_sample1[p]].label_string,
                     sample_attrs[pair_sample2[p]].label_string);
+            fprintf(summary_stats_fh, "\t%zu", all_pair_stats[p].cache_hit);
+            fprintf(summary_stats_fh, "\t%zu", all_pair_stats[p].cache_miss);
             fprintf(summary_stats_fh, "\t%zu", all_pair_stats[p].confirmed_changed);
             for (s = 0; s != n_states; ++s)
                 fprintf(summary_stats_fh, "\t%zu", all_pair_stats[p].dist_count[s]);

@@ -13,25 +13,26 @@
    same alpha.  assume NUM_NUCS dimensions */
 void ran_dirichlet_lnpdf_unnormalized(double *alpha, double *points, double *lndir)
 {
-    double 
-        lnpoints[GEN_POINTS_BATCH * NUM_NUCS], 
-        dir_lnpdf[GEN_POINTS_BATCH * NUM_NUCS],
-        alpha_minus_one[NUM_NUCS], 
-        *lnp;
-
-    size_t i, p;
+    POINT
+        lnpoints[GEN_POINTS_BATCH], 
+        *lnp, 
+        *lnpe = lnpoints + GEN_POINTS_BATCH,
+        alpha_minus_one;
+    
+    unsigned i;
     for (i = 0; i != NUM_NUCS; ++i) alpha_minus_one[i] = alpha[i] - 1.0;
 
-    (void)yepMath_Log_V64f_V64f(points, lnpoints, sizeof(lnpoints) / sizeof(lnpoints[0]));
+    /* treating lnpoints as individual double components */
+    (void)yepMath_Log_V64f_V64f(points, (double *)lnpoints, sizeof(lnpoints) / sizeof(double));
 
     lnp = lnpoints;
-    for (p = 0; p != GEN_POINTS_BATCH; ++p)
+    for (lnp = lnpoints; lnp != lnpe; ++lnp, ++lndir)
     {
-        dir_lnpdf[p] = 0.0;
-        for (i = 0; i != NUM_NUCS; ++i, ++lnp)
-            dir_lnpdf[p] += alpha_minus_one[i] * *lnp;
+        *lndir = alpha_minus_one[0] * (*lnp)[0]
+            + alpha_minus_one[1] * (*lnp)[1]
+            + alpha_minus_one[2] * (*lnp)[2]
+            + alpha_minus_one[3] * (*lnp)[3];
     }
-    memcpy(lndir, dir_lnpdf, sizeof(dir_lnpdf));
 }
 
 
@@ -98,6 +99,8 @@ void gen_reference_points_wrapper(const void *par, POINT *points)
 }
 
 
+/* calculates the ratio of log likelihood to log dirichlet.  In this,
+   the dirichlet prior is a common factor and so cancels.  */
 void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
 {
     int i;
@@ -110,7 +113,14 @@ void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
         dotp[GEN_POINTS_BATCH], ldotp[GEN_POINTS_BATCH],
         llh[GEN_POINTS_BATCH], ldir[GEN_POINTS_BATCH];
 
+    memset(llh, 0, sizeof(llh));
+
     POINT *p, *pe = points + GEN_POINTS_BATCH;
+
+    /* llh will not include the prior Dirichlet.  Only the effect of
+       the data itself. To correct for this, we must use a
+       'residual_alpha' for the equivalent, perfect-quality Dirichlet
+       proposal.*/
     while (trm != trm_end)
     {
         for (p = points, i = 0; p != pe; ++p, ++i)
@@ -119,11 +129,20 @@ void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
                 + (*p)[2] * trm->cpd[2] + (*p)[3] * trm->cpd[3];
         
         (void)yepMath_Log_V64f_V64f(dotp, ldotp, GEN_POINTS_BATCH);
-        (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)trm->ct, GEN_POINTS_BATCH);
+        if (trm->ct > 1) (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)trm->ct, GEN_POINTS_BATCH);
         (void)yepCore_Add_V64fV64f_V64f(llh, ldotp, llh, GEN_POINTS_BATCH);
         ++trm;
     }
-    ran_dirichlet_lnpdf_unnormalized(pd->proposal_alpha, (double *)points, ldir);
+
+    /* This is the residual Dirichlet correction. */
+    POINT residual_alpha;
+    for (i = 0; i != NUM_NUCS; ++i)
+        residual_alpha[i] = pd->proposal_alpha[i] - pd->prior_alpha[i] + 1.0;
+    ran_dirichlet_lnpdf_unnormalized(residual_alpha, (double *)points, ldir);
+
+    /* for (i = 0; i != GEN_POINTS_BATCH; ++i) */
+    /*     fprintf(stderr, "%7.5g\t%7.5g\t%7.5g\t%7.5g\t%7.5g\t%7.5g\n", */
+    /*             points[i][0], points[i][1], points[i][2], points[i][3], llh[i], ldir[i]); */
 
     for (i = 0; i != GEN_POINTS_BATCH; ++i)
         weights[i] = gsl_sf_exp(llh[i] - ldir[i]);

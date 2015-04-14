@@ -100,11 +100,13 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
 
 
 /* test two dirichlets based on their counts. Use a thread-safe
-   caching mechanism to update the cache as necessary. */
+   caching mechanism to update the cache as necessary. sets cache_hit
+   if the cache was used. */
 enum fuzzy_state
 cached_dirichlet_diff(unsigned *a_counts,
                       unsigned *b_counts,
-                      struct binomial_est_params *bpar);
+                      struct binomial_est_params *bpar,
+                      unsigned *cache_hit);
 
 
 #endif /* _DIRICHLET_DIFF_CACHE_H */

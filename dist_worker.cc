@@ -239,6 +239,8 @@ void update_pileup_locus(const struct nucleotide_stats *stats,
         (struct calc_post_to_dir_par *)ls->distp.pgen.weight_par;
 
     wp->post_counts = &ls->locus.counts;
+    memcpy(wp->prior_alpha, dw->bep.pset->prior_alpha, sizeof(wp->prior_alpha));
+
     (void)alphas_from_counts(wp->post_counts,
                              dw->bep.pset->prior_alpha,
                              wp->proposal_alpha);
@@ -341,6 +343,8 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
     unsigned counts1[NUM_NUCS], counts2[NUM_NUCS];
     enum fuzzy_state diff_state = AMBIGUOUS;
 
+    unsigned cache_hit;
+
     for (pi = 0; pi != dw->n_sample_pairs; ++pi)
     {
         dw->bep.dist[0] = &lslist[dw->pair_sample1[pi]].distp;
@@ -355,13 +359,15 @@ char *next_distance_quantiles_aux(dist_worker_input *dw,
         }
 
         if (! (lsp[0]->is_next && lsp[1]->is_next))
-            diff_state = AMBIGUOUS;
+            diff_state = AMBIGUOUS, cache_hit = 1;
 
         else
-            diff_state = cached_dirichlet_diff(counts1, counts2, &dw->bep);
+            diff_state = cached_dirichlet_diff(counts1, counts2, &dw->bep, &cache_hit);
 
         ++dw->pair_stats[pi].dist_count[diff_state];
-
+        if (cache_hit) ++dw->pair_stats[pi].cache_hit;
+        else ++dw->pair_stats[pi].cache_miss;
+        
         if (diff_state == CHANGED)
         {
             /* Finish sampling and do full distance marginal estimation */

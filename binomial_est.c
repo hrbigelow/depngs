@@ -39,6 +39,11 @@ perhaps worth it in the benefits of simplifying the code.
 
 #define CDF_ERROR(reason, gsl_errno) GSL_ERROR_VAL(reason, gsl_errno, GSL_NAN)
 
+/* From gsl betainv.c. 
+   Using binary seach, find x in [x0, x1] such that:
+   abs(gsl_cdf_beta_P(x, a, b) - P) < Ptol
+   or [x0, x1] shrinks to less than xtol.
+ */
 static double bisect(double x, double P, double a, double b, double xtol, double Ptol)
 {
     double x0 = 0, x1 = 1, Px;
@@ -93,7 +98,7 @@ double beta_Pinv(double P, double a, double b)
     else x = mean; /* Use expected value as first guess */
   
     /* Do bisection to get to within tolerance */
-    x = bisect(x, P, a, b, 0.01, 1e-10);
+    x = bisect(x, P, a, b, 1e-10, 1e-10);
     return x;
 
 }
@@ -139,10 +144,16 @@ void *init_beta_func(void *args)
     for (n = input->start; n < NUM_BETA_PRECALC; n += input->jump)
     {
         for (f = 0; f <= n; ++f)
+        {
+            if (f == 50 && n == 10000)
+            {
+                printf("got here\n");
+            }
+
             beta_lo[f][n] = beta_Pinv(Q, 
                                       (double)(n - f) + 0.5, 
                                       (double)f + 0.5);
-        
+        }
         for (f = 0; f <= n; ++f)
             beta_hi[f][n] = 1.0 - beta_lo[n - f][n];
         
@@ -213,7 +224,8 @@ enum bound_class {
    distribution to estimate the true binomial probability.  Use pgen1
    and pgen2 to generate more points (and weights) as needed. */
 struct binomial_est_state
-binomial_quantile_est(unsigned max_points, float min_dist,
+binomial_quantile_est(unsigned max_points, 
+                      float min_dist,
                       float post_conf, float beta_conf,
                       struct points_gen pgen1,
                       struct points_buf *points1,
