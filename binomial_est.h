@@ -33,16 +33,19 @@ struct weights_buf {
 
 struct points_gen
 {
-    void *point_par;
+    void *points_gen_par;
     void (*gen_point)(const void *par, POINT *points);
-
-    void *weight_par;
     void (*weight)(POINT *points, const void *par,
                    double *weights);
 };
 
 
-void init_beta(double beta_conf, size_t n_threads);
+void binomial_est_init(double beta_conf, 
+                       unsigned batch_size, 
+                       unsigned num_beta_precalc,
+                       size_t n_threads);
+
+void binomial_est_free();
 
 
 /* Sample pairs of points from dist_pair up to max_points, classifying
@@ -51,7 +54,8 @@ void init_beta(double beta_conf, size_t n_threads);
    distribution to estimate the true binomial probability.  Use dist1
    and dist2 to generate more points as needed. */
 struct binomial_est_state
-binomial_quantile_est(unsigned max_points, float min_dist,
+binomial_quantile_est(unsigned max_points,
+                      float min_dist,
                       float post_conf, float beta_conf,
                       struct points_gen pgen1,
                       struct points_buf *points1,

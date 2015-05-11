@@ -1,11 +1,6 @@
 #ifndef DIST_WORKER_H
 #define DIST_WORKER_H
 
-#include <map>
-#include <vector>
-#include <cstdlib>
-#include <cstring>
-
 #include <gsl/gsl_rng.h>
 
 #include "defs.h"
@@ -14,7 +9,6 @@
 extern "C" {
 #include "binomial_est.h"
 #include "ordering.h"
-#include "metropolis_sampling.h"
 #include "thread_queue.h"
 #include "dirichlet_diff_cache.h"
 }
@@ -32,24 +26,33 @@ struct locus_sampling
     pair_ordering locus_ord;
 };
 
-/* attributes intrinsic to one sample */
-struct sample_attributes
-{
-    char label_string[100];
-    struct nucleotide_stats nuc_stats;
-    FILE *fh;
-};
+void dist_worker_init(double _post_confidence, 
+                      double _min_dirichlet_dist,
+                      unsigned _max_sample_points,
+                      const char *samples_file,
+                      const char *sample_pairs_file,
+                      const char *fastq_type,
+                      const char *dist_quantiles_string,
+                      const char *comp_quantiles_string,
+                      unsigned do_dist,
+                      unsigned do_comp,
+                      unsigned do_indel,
+                      unsigned do_print_pileup);
 
-void init_sample_attributes(const char *jpd_file,
-                            const char *sample_label,
-                            const char *pileup_file,
-                            struct sample_attributes *s);
+void dist_worker_free();
 
-struct pair_dist_stats {
-    size_t dist_count[5]; /* number of enum fuzzy_state choices */
-    size_t confirmed_changed;
-    size_t cache_hit, cache_miss;
-};
+struct thread_queue *
+dist_worker_tq_init(const char *query_range_file,
+                    unsigned n_threads,
+                    unsigned n_readers,
+                    unsigned long max_input_mem,
+                    FILE *dist_fh,
+                    FILE *comp_fh,
+                    FILE *indel_fh);
+
+void dist_worker_tq_free();
+
+void print_pair_stats(const char *stats_file);
 
 
 /* there will be one of these instantiated for each thread.  Each of
@@ -59,16 +62,15 @@ struct pair_dist_stats {
    well, held in sample_attributes. */
 struct dist_worker_input
 {
-    struct sample_attributes *sample_atts;
     struct binomial_est_params bep;
-    /* struct posterior_settings *pset; */
     size_t thread_num;
-    size_t n_samples;
-    size_t n_sample_pairs;
-    size_t n_sample_point_pairings; 
 
     double dist_quantile_values[MAX_NUM_QUANTILES];
     double comp_quantile_values[MAX_NUM_QUANTILES];
+
+    struct {
+        unsigned total, cacheable, cache_was_set;
+    } metrics;
 
     gsl_rng *randgen;
     double *square_dist_buf; /* holds squares of distances for distance calculation */
@@ -76,14 +78,7 @@ struct dist_worker_input
                             (product of weights on individual
                             points) */
 
-    struct pair_dist_stats *pair_stats;
-
-    int print_pileup_fields; // if 0, do not print extra pileup fields
-
-    int do_dist, do_comp, do_indel;
-
-    /* defines the parsed set of sample pairs to compare */
-    size_t *pair_sample1, *pair_sample2; 
+    unsigned do_print_progress;
 };
 
 
@@ -98,5 +93,7 @@ void dist_worker(void *par,
 
 /* conforms to thread_queue_offload_t */
 void dist_offload(void *par, const struct managed_buf *bufs);
+
+void print_cache2_histo();
 
 #endif // DIST_WORKER_H

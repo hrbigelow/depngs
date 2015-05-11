@@ -24,12 +24,17 @@
 /* the main configuration object. opaque type using pimpl pattern */
 struct thread_queue;
 
-/* this client-provided reader function is expected to manage its
-   buf/size/alloc space as needed.  The thread_queue mechanism will
-   pass NULL, 0, 0 as arguments for the first call to reader. The
-   thread_queue library will de-allocate once work is done
-   however.  */
-typedef void (thread_queue_reader_t)(void *par, struct managed_buf *bufs);
+/* 'read' uses par to instruct it which ranges of which files to read
+   into bufs. beg is passed
+   thread_queue.global_read_start. thread_queue_free deallocates these
+   buffers.  'scan' scans the same files described by par, starting at
+   beg, and then updates global_read_start via its beg parameter. */
+typedef struct {
+    void (*read)(void *par, struct managed_buf *bufs);
+    void (*scan)(void *par, unsigned max_bytes);
+    void (*get_start)(void *par, void *pos);
+    void (*set_start)(void *par, void *pos);
+} thread_queue_reader_t;
 
 /* the client-provided worker consumes the input (one or more in_bufs)
    produced from the reader and outputs it into one or more out_bufs,
@@ -51,8 +56,10 @@ typedef void (thread_queue_offload_t)(void *par,
 
 /* initialize resources.
 
-   -- void *reader_par must hold the address of a single struct, which
-      will be cast to that struct by the reader function.
+   -- void *reader_par must hold the address of an array of n_readers
+      addresses, each an address to a struct chosen by the
+      user. thread_queue maintains a separate 'in_use' flag for each
+      reader.
 
    -- void *offload_par must hold the address of a single struct,
       which will be cast to that struct by the offload function.
@@ -62,17 +69,16 @@ typedef void (thread_queue_offload_t)(void *par,
       worker function.  The struct is chosen by the user.
 */
 struct thread_queue *
-thread_queue_init(thread_queue_reader_t reader,
-                  void *reader_par,
-                  thread_queue_worker_t worker,
-                  void *worker_par,
-                  thread_queue_offload_t offload,
-                  void *offload_par,
-                  size_t n_threads,
-                  size_t n_extra_in_pool,
-                  size_t n_inputs,
-                  size_t n_outputs,
-                  size_t max_input_mem);
+thread_queue_init(thread_queue_reader_t reader, void **reader_par,
+                  thread_queue_worker_t worker, void **worker_par,
+                  thread_queue_offload_t offload, void *offload_par,
+                  void *global_read_start,
+                  unsigned n_threads,
+                  unsigned n_extra_in_pool,
+                  unsigned n_readers,
+                  unsigned n_inputs,
+                  unsigned n_outputs,
+                  unsigned long max_input_mem);
 
 
 /* start things running. */

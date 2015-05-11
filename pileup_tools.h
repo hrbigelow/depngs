@@ -25,6 +25,8 @@ struct less_char_ptr
 
 typedef std::map<const char*, unsigned, less_char_ptr> CHAR_MAP;
 
+void pileup_init(unsigned _min_qual_score);
+
 class PileupSummary {
 
 public:
@@ -36,7 +38,7 @@ public:
     PileupSummary();
     ~PileupSummary();
 
-    void load_line(char const* line);
+    void load_line(char *line);
 
     char reference[100], reference_base;
     int position;
@@ -61,7 +63,7 @@ public:
 
     size_t quality(size_t read_num) const;
 
-    void parse(size_t min_quality_score);
+    void parse();
 
     static void SetFtype(FastqType _fastq_type);
     static void set_offset(int offset);

@@ -2,6 +2,7 @@
 #include "tools.h"
 #include "nucleotide_stats.h"
 #include "file_utils.h"
+#include "defs.h"
 
 #include <cassert>
 #include <set>
@@ -16,6 +17,18 @@ inline char pileup_code_to_redux(char code)
         return 'N'; break;
     default: return code; break;
     }
+}
+
+static unsigned min_quality_score;
+
+void pileup_init(unsigned _min_qual_score)
+{
+    if (_min_qual_score > 30)
+    {
+        fprintf(stderr, "Warning: minimum quality score of %u is probably too high...\n",
+                _min_qual_score);
+    }
+    min_quality_score = _min_qual_score;
 }
 
 int PileupSummary::quality_code_offset;
@@ -54,37 +67,29 @@ PileupSummary::~PileupSummary()
 /* load and parse a single line.  Assumes the line has all required
    fields.  Reads the input until the first newline or nul.
 */
-void PileupSummary::load_line(const char *read_ptr)
+void PileupSummary::load_line(char *line)
 {
+    char *p = line;
 
-    size_t span_depth;
-    int read_pos, raw_len, scanned_fields;
-    
-    scanned_fields =
-        sscanf(read_ptr, "%s %i %c %zi%n", 
-               this->reference, 
-               &this->position, 
-               &this->reference_base, 
-               &span_depth,
-               &read_pos);
+    /* this->reference */
+    unsigned ref_end = (p = (char *)memchr(p, '\t', MAX_PILEUP_LINE)) - line;
+    strncpy(this->reference, line, ref_end);
+    this->reference[ref_end] = '\0';
 
-    assert(read_ptr[read_pos] == '\t');
-    read_pos++;
+    /* this->position */
+    this->position = strtol(++p, &p, 10);
+    assert(*p++ == '\t');
 
-    if (span_depth == 0) raw_len = 0;
-    else sscanf(read_ptr + read_pos, "%*[^\t]%n", &raw_len);
+    /* this->reference_base */
+    this->reference_base = *p++;
+    assert(*p++ == '\t');
 
-    if (scanned_fields != 4)
-    {
-        char *line = strndup(read_ptr, strchr(read_ptr, '\n') - read_ptr);
-        fprintf(stderr, "PileupSummary::load_line: Warning: badly formatted line:\n%s\n",
-                line);
-        free(line);
-        assert(false);
-        exit(10);
-    }
+    /* span_depth */
+    unsigned span_depth = strtol(p, &p, 10);
+    assert(*p++ == '\t');
 
-    read_ptr += read_pos;
+    line = p;
+    unsigned base_raw_len = (p = (char *)memchr(p, '\t', MAX_PILEUP_LINE)) - line;
 
     this->quality_codes.size = span_depth + 1;
     ALLOC_GROW_TYPED(this->quality_codes.buf, this->quality_codes.size,
@@ -98,11 +103,11 @@ void PileupSummary::load_line(const char *read_ptr)
     ALLOC_GROW_TYPED(this->bases_upper.buf, this->bases_upper.size,
                      this->bases_upper.alloc);
 
-    this->bases_raw.size = raw_len + 1;
+    this->bases_raw.size = base_raw_len + 1;
     ALLOC_GROW_TYPED(this->bases_raw.buf, this->bases_raw.size,
                      this->bases_raw.alloc);
-    strncpy(this->bases_raw.buf, read_ptr, raw_len);
-    this->bases_raw.buf[raw_len] = '\0';
+    strncpy(this->bases_raw.buf, line, base_raw_len);
+    this->bases_raw.buf[base_raw_len] = '\0';
 
     const int max_indel_size = 1000;
     char indel_sequence[max_indel_size + 1];
@@ -117,18 +122,17 @@ void PileupSummary::load_line(const char *read_ptr)
     this->insertions.clear();
     this->deletions.clear();
 
-    while(*read_ptr != '\0' && *read_ptr != '\n')
+    while(*line != '\0' && *line != '\n')
     {
-        pileup_ccode = *read_ptr;
-        ++read_ptr;
+        pileup_ccode = *line++;
 
         //reduce the pileup code
         char pileup_redux = pileup_code_to_redux(pileup_ccode);
 
         indel_size = 0;
 
-        if (strchr("N+-", pileup_redux))
-        // if (pileup_redux == 'N' || pileup_redux == '+' || pileup_redux == '-')
+        // if (strchr("N+-", pileup_redux))
+        if (pileup_redux == 'N' || pileup_redux == '+' || pileup_redux == '-')
         {
             //actual sequence
 
@@ -151,11 +155,10 @@ void PileupSummary::load_line(const char *read_ptr)
             else 
             {
                 //indel
-                sscanf(read_ptr, "%i%n", &indel_size, &read_pos);
-                read_ptr += read_pos;
+                indel_size = strtol(line, &line, 10);
 
                 // insertion
-                memcpy(indel_sequence, read_ptr, MIN(indel_size, max_indel_size));
+                memcpy(indel_sequence, line, MIN(indel_size, max_indel_size));
                 indel_sequence[MIN(indel_size, max_indel_size)] = '\0';
                 char *p = indel_sequence;
                 while (*p != '\0') { *p = toupper(*p); ++p; }
@@ -166,7 +169,7 @@ void PileupSummary::load_line(const char *read_ptr)
                     ? (void)container->insert(CHAR_MAP::value_type(strdup(indel_sequence), 1))
                     : (void)(*it).second++;
 
-                read_ptr += indel_size;
+                line += indel_size;
             }
         }
 
@@ -174,8 +177,8 @@ void PileupSummary::load_line(const char *read_ptr)
         {
             //beginning of a read
             //ignore the next one character (a character-encoded mapping quality)
-            // sscanf(read_ptr, "%*c");
-            ++read_ptr;
+            // sscanf(line, "%*c");
+            ++line;
         }
         else if (pileup_redux == '$')
             ; /* the end of a read.  ignored */
@@ -193,11 +196,11 @@ void PileupSummary::load_line(const char *read_ptr)
         {
             //end of read_string, get the qual string
             /* Not sure what I was thinking here...This seems unnecessary. */
-            // sscanf(read_ptr, " %n", & read_pos); //eat white space
-            // read_ptr += read_pos;
+            // sscanf(line, " %n", & read_pos); //eat white space
+            // line += read_pos;
 
-            memcpy(this->quality_codes.buf, read_ptr, span_depth);
-            read_ptr += span_depth;
+            memcpy(this->quality_codes.buf, line, span_depth);
+            line += span_depth;
 
             this->quality_codes.buf[span_depth] = '\0';
 
@@ -246,7 +249,7 @@ size_t PileupSummary::quality(size_t read_num) const
 
 // 1. encode the basecall, quality, strand combination as an integer
 // initialize this->counts.raw_counts and this->counts.stats_index
-void PileupSummary::parse(size_t min_quality_score)
+void PileupSummary::parse()
 {
     // populate raw_counts_flat with a sparse set of counts
     unsigned long raw_counts_flat[NUC_NUM_BQS];

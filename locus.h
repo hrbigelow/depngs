@@ -8,7 +8,7 @@ struct pair_ordering init_locus(const char *line);
 int less_locus_range(const void *pa, const void *pb);
 
 struct pair_ordering_range *
-parse_query_ranges(const char *query_range_file, size_t *num_queries);
+parse_query_ranges(const char *query_range_file, unsigned *num_queries);
 
 
 #endif /* _LOCUS_H */

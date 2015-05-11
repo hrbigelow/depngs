@@ -152,19 +152,11 @@ int main_pug(int argc, char ** argv)
         p = q;
     }
 
-
-    FILE *pileup_fh = fopen(pileup_file, "r");
-    if (! pileup_fh)
-    {
-        fprintf(stderr, "Error: Couldn't find pileup file %s\n", pileup_file);
-        exit(1);
-    }
-
     /* main loop */
     q = queries;
     qend = queries + num_queries;
 
-    struct file_bsearch_index ix = file_bsearch_make_index(pileup_fh);
+    struct file_bsearch_index ix = file_bsearch_make_index(pileup_file);
     struct pair_ordering cur_beg, cur_end;
     while (q != qend)
     {
@@ -190,9 +182,6 @@ int main_pug(int argc, char ** argv)
     free(queries);
     file_bsearch_index_free(ix);
     dict_free();
-    file_bsearch_free();
-
-    fclose(pileup_fh);
 
     return 0;
 }

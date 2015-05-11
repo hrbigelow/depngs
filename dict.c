@@ -35,19 +35,18 @@ int dict_less_key(const void *pa, const void *pb)
 
 
 /* add item to the dictionary. does not check for duplicate keys or
-   duplicate index values. */
+   duplicate index values. does not initialize the item key pointer.
+   (dict_build() does that after all items have been added. */
 void dict_add_item(const char* key, unsigned long index)
 {
     size_t keysize = strlen(key) + 1;
     ALLOC_GROW(index_buf, index_nr + 1, index_alloc);
     ALLOC_GROW(key_buf, num_key_chars + keysize, num_chars_alloc);
 
-    struct dict item;
+    struct dict item = { NULL, num_key_chars, index };
     strncpy(key_buf + num_key_chars, key, keysize);
-    item.offset = num_key_chars;
     num_key_chars += keysize;
 
-    item.index = index;
     index_buf[index_nr++] = item;
 }
 

@@ -9,6 +9,18 @@
 #include "yepCore.h"
 
 
+static double alpha_prior;
+
+void init_dirichlet_points_gen(double _alpha_prior)
+{
+    alpha_prior = _alpha_prior;
+}
+
+double get_alpha_prior()
+{
+    return alpha_prior;
+}
+
 /* compute GEN_POINTS_BATCH of unnormalized dirichlet values using the
    same alpha.  assume NUM_NUCS dimensions */
 void ran_dirichlet_lnpdf_unnormalized(double *alpha, double *points, double *lndir)
@@ -67,11 +79,17 @@ void gsl_ran_dirichlet_batched(const gsl_rng *r,
 void gen_dirichlet_points_wrapper(const void *par, POINT *points)
 {
     int i;
-    struct dir_points_par *gd = (struct dir_points_par *)par;
+    struct points_gen_par *gd = (struct points_gen_par *)par;
+    double alpha[] = { 
+        gd->alpha_counts[0] + alpha_prior,
+        gd->alpha_counts[1] + alpha_prior,
+        gd->alpha_counts[2] + alpha_prior,
+        gd->alpha_counts[3] + alpha_prior 
+    };
 
     for (i = 0; i != GEN_POINTS_BATCH; ++i)
     {
-        gsl_ran_dirichlet(gd->randgen, NUM_NUCS, gd->alpha, *points);
+        gsl_ran_dirichlet(gd->randgen, NUM_NUCS, alpha, *points);
         ++points;
     }
 }
@@ -104,11 +122,12 @@ void gen_reference_points_wrapper(const void *par, POINT *points)
 void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
 {
     int i;
-    struct calc_post_to_dir_par *pd = (struct calc_post_to_dir_par *)par;
+    struct points_gen_par *pd = (struct points_gen_par *)par;
     const struct cpd_count 
         *trm = pd->post_counts->stats, 
         *trm_end = trm + pd->post_counts->num_data;
 
+    unsigned *perm = pd->alpha_perm;
     double 
         dotp[GEN_POINTS_BATCH], ldotp[GEN_POINTS_BATCH],
         llh[GEN_POINTS_BATCH], ldir[GEN_POINTS_BATCH];
@@ -125,11 +144,12 @@ void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
     {
         for (p = points, i = 0; p != pe; ++p, ++i)
             dotp[i] = 
-                (*p)[0] * trm->cpd[0] + (*p)[1] * trm->cpd[1]
-                + (*p)[2] * trm->cpd[2] + (*p)[3] * trm->cpd[3];
+                (*p)[0] * trm->cpd[perm[0]] + (*p)[1] * trm->cpd[perm[1]]
+                + (*p)[2] * trm->cpd[perm[2]] + (*p)[3] * trm->cpd[perm[3]];
         
         (void)yepMath_Log_V64f_V64f(dotp, ldotp, GEN_POINTS_BATCH);
-        if (trm->ct > 1) (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)trm->ct, GEN_POINTS_BATCH);
+        if (trm->ct > 1) 
+            (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)trm->ct, GEN_POINTS_BATCH);
         (void)yepCore_Add_V64fV64f_V64f(llh, ldotp, llh, GEN_POINTS_BATCH);
         ++trm;
     }
@@ -137,7 +157,7 @@ void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
     /* This is the residual Dirichlet correction. */
     POINT residual_alpha;
     for (i = 0; i != NUM_NUCS; ++i)
-        residual_alpha[i] = pd->proposal_alpha[i] - pd->prior_alpha[i] + 1.0;
+        residual_alpha[i] = (double)pd->alpha_counts[i] - alpha_prior + 1.0;
     ran_dirichlet_lnpdf_unnormalized(residual_alpha, (double *)points, ldir);
 
     /* for (i = 0; i != GEN_POINTS_BATCH; ++i) */
@@ -154,6 +174,3 @@ void calc_dummy_ratio(POINT *point, const void *par, double *weights)
     for (i = 0; i != GEN_POINTS_BATCH; ++i)
         weights[i] = 1;
 }
-
-
-

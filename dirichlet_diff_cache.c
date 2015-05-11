@@ -6,60 +6,287 @@
 #include "virtual_bound.h"
 #include "dirichlet_diff_cache.h"
 #include "dirichlet_points_gen.h"
+#include "khash.h"
+#include "cache.h"
 
 #include <math.h>
 #include <string.h>
 #include <pthread.h>
 #include <float.h>
 #include <inttypes.h>
-
-#define MAX_COUNT1 50
-#define MAX_COUNT2 10
+#include <assert.h>
 
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
-pthread_mutex_t set_flag_mtx;
-struct binomial_est_bounds ***bounds_cache, **bounds_cache_buf2, *bounds_cache_buf;
 
-/* bounds_cache[a2][b2][b1] */
-void dirichlet_diff_init(unsigned max1, unsigned max2)
+
+/* Describes estimated distance between two Dirichlets with alphas equal to:
+   { A1 + p, A2 + p, p, p }
+   { B1 + p, B2 + p, p, p }
+
+   Where A1, A2, B1, B2 are integral values.  [unchanged[0],
+   unchanged[1]) represents the range of values of A1 where it is
+   deemed UNCHANGED.  [ambiguous[0], ambiguous[1]) are the values of
+   A1 for which it is deemed AMBIGUOUS (or UNCHANGED, where this
+   interval overlaps the unchanged interval).  By construction: 
+   0 <= A[0] <= U[0] <= U[1] <= A[1] <= MAX_COUNT1
+   
+*/
+/* UNSET must be zero */
+enum init_phase { UNSET = 0, PENDING, SET };
+
+struct binomial_est_bounds {
+    enum init_phase state;
+    int16_t ambiguous[2];
+    int16_t unchanged[2];
+};
+
+struct set_flag {
+    pthread_mutex_t mtx;
+    pthread_cond_t cond;
+};
+
+struct counted_points {
+    struct points_buf pts;
+    unsigned hitcount;
+};
+
+KHASH_MAP_INIT_INT64(fuzzy_hash, enum fuzzy_state)
+KHASH_MAP_INIT_INT64(points_hash, struct counted_points);
+
+struct cache_counters {
+    unsigned long n_items, max_items;
+    unsigned long n_last_cleared_entries;
+    unsigned n_times_cleared;
+    unsigned n_unset_flags;
+    pthread_cond_t cond;
+    pthread_mutex_t mtx;
+};
+
+struct dirichlet_diff_cache_t {
+    unsigned max1, max2;
+    unsigned batch_size;
+    double post_confidence;
+    double beta_confidence;
+    double min_dirichlet_dist;
+    unsigned max_sample_points;
+    unsigned n_locks;
+    struct set_flag *locks;
+    khash_t(points_hash) *dir_points;
+    pthread_mutex_t dir_points_mtx;
+    unsigned n_vals_mtx;
+    pthread_mutex_t *dir_points_vals_mtx;
+    struct cache_counters c;
+    struct binomial_est_bounds *buf1, **buf2, ***bounds;
+    unsigned long max_secondary_cache_size;
+    khash_t(fuzzy_hash) *hash;
+    pthread_mutex_t hash_mtx;
+} cache;
+
+
+struct {
+    unsigned long hit, miss;
+} cache_stats;
+
+
+/* Arbitrary value when it makes sense to clear entries from the
+   cache. */
+#define MIN_LAST_CLEARED_ENTRIES 1000
+#define MAX_TIMES_CLEARED 50
+
+/* The first thread to get to 'do_freeze' waits, letting subsequent
+   threads enter this function and wait.  The last thread entering
+   will decrement n_unset_flags down to zero, and then broadcast to
+   others. */
+unsigned points_hash_frozen()
 {
-    pthread_mutex_init(&set_flag_mtx, NULL);
-    bounds_cache_buf = malloc(max2 * max2 * max1 * sizeof(struct binomial_est_bounds));
-    bounds_cache_buf2 = malloc(max2 * max2 * sizeof(struct binomial_est_bounds *));
-    bounds_cache = malloc(max2 * sizeof(struct binomial_est_bounds **));
+    pthread_mutex_lock(&cache.c.mtx);
+    unsigned do_freeze = 
+        cache.c.n_last_cleared_entries <= MIN_LAST_CLEARED_ENTRIES
+        || cache.c.n_times_cleared > MAX_TIMES_CLEARED;
+    if (do_freeze) 
+    {
+        cache.c.n_unset_flags--;
+        if (cache.c.n_unset_flags)
+            pthread_cond_wait(&cache.c.cond, &cache.c.mtx);
+        else
+            pthread_cond_broadcast(&cache.c.cond);
+    }
+    pthread_mutex_unlock(&cache.c.mtx);
+    return do_freeze;
+}
+
+
+void print_cache_stats()
+{
+    pthread_mutex_lock(&cache.dir_points_mtx);
+    time_t cal = time(NULL);
+    char *ts = strdup(ctime(&cal));
+    ts[strlen(ts)-1] = '\0';
+    fprintf(stderr, "%s: Dirichlet cache: %lu hits, %lu misses, %5.3f hit rate\n",
+            ts,
+            cache_stats.hit, cache_stats.miss,
+            100.0 * (float)cache_stats.hit 
+            / (float)(cache_stats.hit + cache_stats.miss));
+    cache_stats.hit = 0;
+    cache_stats.miss = 0;
+    free(ts);
+    pthread_mutex_unlock(&cache.dir_points_mtx);
+}
+
+
+struct alpha_packed_large {
+    unsigned a0 :24;
+    unsigned a1 :20;
+    unsigned a2 :12;
+    unsigned a3 :8;
+};
+
+union alpha_large_key {
+    struct alpha_packed_large c;
+    uint64_t raw;
+};
+
+/* initializes the key from the counts, sets ret to 1 on failure */
+void init_alpha_packed_large(unsigned *cts, union alpha_large_key *key,
+                             unsigned *packable)
+{
+    *packable = cts[0] <= (1<<24) 
+        && cts[1] <= (1<<20) 
+        && cts[2] <= (1<<12) 
+        && cts[3] <= (1<<8);
+
+    if (*packable)
+        key->c = (struct alpha_packed_large){ cts[0], cts[1], cts[2], cts[3] };
+}
+
+struct alpha_packed {
+    unsigned a0 :12; /* 4096 */
+    unsigned a1 :10; /* 1024 */
+    unsigned a2 :6;  /* 64 */
+    unsigned a3 :4;  /* 16 */
+};
+
+
+union alpha_key {
+    struct alpha_packed c[2];
+    uint64_t raw;
+};
+
+
+static unsigned primary_cache_size;
+
+void print_primary_cache_size()
+{
+    fprintf(stderr, "Primary cache size: %u\n", primary_cache_size);
+}
+
+#define INIT_ALPHA_KEY(a1, a2, prm)                                         \
+    { .c = {                                                            \
+        { (a1)[(prm)[0]], (a1)[(prm)[1]], (a1)[(prm)[2]], (a1)[(prm)[3]] }, \
+        { (a2)[(prm)[0]], (a2)[(prm)[1]], (a2)[(prm)[2]], (a2)[(prm)[3]] } \
+        }                                                               \
+    }                                                                   \
+        
+
+#define NUM_LOCKS 10
+#define NUM_HASH_MTX_PER_THREAD 10
+
+/* bounds_cache[a2][b2][b1].  sets each element to have 'state' = UNSET */
+void dirichlet_diff_init(unsigned max1, unsigned max2, 
+                         unsigned batch_size,
+                         double post_confidence,
+                         double beta_confidence,
+                         double min_dirichlet_dist,
+                         unsigned max_sample_points,
+                         unsigned long max_dir_cache_items,
+                         unsigned long max_secondary_cache_size,
+                         unsigned n_threads)
+{
+    cache.max1 = max1;
+    cache.max2 = max2;
+    cache.batch_size = batch_size;
+    cache.post_confidence = post_confidence;
+    cache.beta_confidence = beta_confidence;
+    cache.min_dirichlet_dist = min_dirichlet_dist;
+    cache.max_sample_points = max_sample_points;
+    cache.n_locks = NUM_LOCKS; /* this may need tuning */
+    cache.buf1 = calloc(max2 * max2 * max1, sizeof(struct binomial_est_bounds));
+    cache.buf2 = malloc(max2 * max2 * sizeof(struct binomial_est_bounds *));
+    cache.bounds = malloc(max2 * sizeof(struct binomial_est_bounds **));
+    cache.locks = malloc(cache.n_locks * sizeof(struct set_flag));
+    cache.dir_points = kh_init(points_hash);
+    pthread_mutex_init(&cache.dir_points_mtx, NULL);
+    cache.n_vals_mtx = n_threads * NUM_HASH_MTX_PER_THREAD;
+    cache.dir_points_vals_mtx = malloc(cache.n_vals_mtx * sizeof(pthread_mutex_t));
+    cache.c.n_items = 0;
+    cache.c.max_items = max_dir_cache_items;
+    cache.c.n_last_cleared_entries = ULONG_MAX;
+    cache.c.n_times_cleared = 0;
+    cache.c.n_unset_flags = n_threads;
+    pthread_cond_init(&cache.c.cond, NULL);
+    pthread_mutex_init(&cache.c.mtx, NULL);
+    cache.max_secondary_cache_size = max_secondary_cache_size;
+    cache.hash = kh_init(fuzzy_hash);
+    pthread_mutex_init(&cache.hash_mtx, NULL);
 
     unsigned i, j, k, l;
     unsigned M = max2 * max2;
     for (i = 0, j = 0; i != M; ++i, j += max1)
-        bounds_cache_buf2[i] = bounds_cache_buf + j;
+        cache.buf2[i] = cache.buf1 + j;
 
     for (k = 0, l = 0; k != max2; ++k, l += max2)
-        bounds_cache[k] = bounds_cache_buf2 + l;
+        cache.bounds[k] = cache.buf2 + l;
+
+    for (i = 0; i != cache.n_locks; ++i)
+    {
+        pthread_mutex_init(&cache.locks[i].mtx, NULL);
+        pthread_cond_init(&cache.locks[i].cond, NULL);
+    }
+    for (i = 0; i != cache.n_vals_mtx; ++i)
+        pthread_mutex_init(&cache.dir_points_vals_mtx[i], NULL);
+
+    cache_stats.hit = 0;
+    cache_stats.miss = 0;
 }
 
 
 void dirichlet_diff_free()
 {
-    free(bounds_cache);
-    free(bounds_cache_buf);
-    free(bounds_cache_buf2);
-    pthread_mutex_destroy(&set_flag_mtx);
+    free(cache.bounds);
+    free(cache.buf2);
+    free(cache.buf1);
+
+    unsigned i;
+    for (i = 0; i != cache.n_locks; ++i)
+    {
+        pthread_mutex_destroy(&cache.locks[i].mtx);
+        pthread_cond_destroy(&cache.locks[i].cond);
+    }
+    free(cache.locks);
+    for (i = 0; i != cache.n_vals_mtx; ++i)
+        pthread_mutex_destroy(&cache.dir_points_vals_mtx[i]);
+
+    free(cache.dir_points_vals_mtx);
+
+    kh_destroy(points_hash, cache.dir_points);
+    pthread_mutex_destroy(&cache.c.mtx);
+    pthread_mutex_destroy(&cache.dir_points_mtx);
+    kh_destroy(fuzzy_hash, cache.hash);
+    pthread_mutex_destroy(&cache.hash_mtx);
 }
 
 
-void alloc_distrib_points(struct distrib_points *dpts,
-                          unsigned max_sample_points)
+void alloc_distrib_points(struct distrib_points *dpts)
 {
-    unsigned msp = max_sample_points;
+    unsigned msp = cache.max_sample_points;
     dpts->pgen = (struct points_gen){ 
-        malloc(sizeof(struct dir_points_par)),
+        malloc(sizeof(struct points_gen_par)),
         gen_dirichlet_points_wrapper, 
-        malloc(sizeof(struct calc_post_to_dir_par)),
         calc_post_to_dir_ratio
     };
-    ((struct dir_points_par *)dpts->pgen.point_par)->randgen = 
+    ((struct points_gen_par *)dpts->pgen.points_gen_par)->randgen = 
         gsl_rng_alloc(gsl_rng_taus);
     dpts->points = (struct points_buf){ (POINT *)malloc(sizeof(POINT) * msp), 0, msp };
     dpts->weights = (struct weights_buf){ (double *)malloc(sizeof(double) * msp), 0, msp };
@@ -68,9 +295,8 @@ void alloc_distrib_points(struct distrib_points *dpts,
 
 void free_distrib_points(struct distrib_points *dpts)
 {
-    gsl_rng_free(((struct dir_points_par *)dpts->pgen.point_par)->randgen);
-    free((struct dir_points_par *)dpts->pgen.point_par);
-    free((struct calc_post_to_dir_par *)dpts->pgen.weight_par);
+    gsl_rng_free(((struct points_gen_par *)dpts->pgen.points_gen_par)->randgen);
+    free((struct points_gen_par *)dpts->pgen.points_gen_par);
     free(dpts->points.buf);
     free(dpts->weights.buf);
 }
@@ -78,53 +304,38 @@ void free_distrib_points(struct distrib_points *dpts)
 
 /* update dpts parameters and discard existing points.  if alpha is
    identical to existing parameters, do nothing. */
-void set_dirichlet_alpha(struct distrib_points *dpts, double *alpha)
+void update_points_gen_params(struct distrib_points *dpts,
+                              unsigned *alpha_counts,
+                              unsigned *perm)
 {
-    struct dir_points_par *dp = dpts->pgen.point_par;
+    struct points_gen_par *dp = dpts->pgen.points_gen_par;
     unsigned i, change = 0;
     for (i = 0; i != NUM_NUCS; ++i)
-        if (dp->alpha[i] != alpha[i]) change = 1;
+    {
+        if (dp->alpha_counts[i] != alpha_counts[perm[i]]
+            || dp->alpha_perm[i] != perm[i]) change = 1;
+        dp->alpha_counts[i] = alpha_counts[perm[i]];
+        dp->alpha_perm[i] = perm[i];
+    }
 
     if (change)
     {
-        memcpy(dp->alpha, alpha, sizeof(dp->alpha));
         dpts->points.size = 0;
+        dpts->weights.size = 0;
     }
 }
 
 /* set a single alpha, and discard points if there is a change */
-void set_dirichlet_alpha_single(struct distrib_points *dpts, unsigned i, double v)
+void set_dirichlet_alpha_single(struct distrib_points *dpts, unsigned i, unsigned v)
 {
-    struct dir_points_par *dp = dpts->pgen.point_par;
-    if (dp->alpha[i] != v)
+    struct points_gen_par *dp = dpts->pgen.points_gen_par;
+    if (dp->alpha_counts[i] != v)
     {
-        dp->alpha[i] = v;
+        dp->alpha_counts[i] = v;
         dpts->points.size = 0;
+        dpts->weights.size = 0;
     }
 }
-
-/* The main distance function.  This will modify dist[0]'s alpha
-   parameters and thus discard its points. */
-struct binomial_est_state pair_dist_aux(unsigned a1, void *par)
-{
-    struct binomial_est_params *b = par;
-    struct posterior_settings *ps = b->pset;
-
-    set_dirichlet_alpha_single(b->dist[0], 0, a1 + ps->prior_alpha[0]);
-
-    struct binomial_est_state est;
-    est = binomial_quantile_est(ps->max_sample_points, 
-                                ps->min_dist,
-                                ps->post_confidence, 
-                                ps->beta_confidence,
-                                b->dist[0]->pgen,
-                                &b->dist[0]->points, 
-                                b->dist[1]->pgen,
-                                &b->dist[1]->points,
-                                b->batch_size);
-    return est;
-}
-
 
 void read_diststats_line(FILE *fh, 
                          unsigned *a2,
@@ -162,56 +373,49 @@ void write_diststats_line(FILE *fh,
 }
 
 /* parse diststats header, initializing fields of pset and max1 and max2  */
-void parse_diststats_header(FILE *diststats_fh, 
-                            struct posterior_settings *pset,
-                            unsigned *max1, 
-                            unsigned *max2)
+void parse_diststats_header(FILE *diststats_fh, double *prior_alpha)
 {
     int n;
-    float prior_alpha;
     n = fscanf(diststats_fh, 
                "# max1: %u\n"
                "# max2: %u\n"
-               "# max_sample_points: %zu\n"
-               "# min_dist: %lf\n"
+               "# max_sample_points: %u\n"
+               "# min_dirichlet_dist: %lf\n"
                "# post_confidence: %lf\n"
                "# beta_confidence: %lf\n"
-               "# prior_alpha: %f\n",
-               max1, max2, 
-               &pset->max_sample_points,
-               &pset->min_dist,
-               &pset->post_confidence,
-               &pset->beta_confidence,
-               &prior_alpha);
+               "# prior_alpha: %lf\n",
+               &cache.max1, 
+               &cache.max2, 
+               &cache.max_sample_points,
+               &cache.min_dirichlet_dist,
+               &cache.post_confidence,
+               &cache.beta_confidence,
+               prior_alpha);
     if (n != 7)
     {
         fprintf(stderr, "error parsing diststats header at %s: %ul\n", __FILE__, __LINE__);
         exit(1);
     }
-    unsigned i;
-    for (i = 0; i != NUM_NUCS; ++i)
-        pset->prior_alpha[i] = prior_alpha;
+               
 }
 
-void write_diststats_header(FILE *diststats_fh,
-                            struct posterior_settings pset,
-                            unsigned max1,
-                            unsigned max2)
+void write_diststats_header(FILE *diststats_fh)
 {
     fprintf(diststats_fh, 
             "# max1: %u\n"
             "# max2: %u\n"
-            "# max_sample_points: %zu\n"
-            "# min_dist: %lf\n"
+            "# max_sample_points: %u\n"
+            "# min_dirichlet_dist: %lf\n"
             "# post_confidence: %lf\n"
             "# beta_confidence: %lf\n"
-            "# prior_alpha: %f\n",
-            max1, max2, 
-            pset.max_sample_points,
-            pset.min_dist,
-            pset.post_confidence,
-            pset.beta_confidence,
-            pset.prior_alpha[0]);
+            "# prior_alpha: %g\n",
+            cache.max1, 
+            cache.max2, 
+            cache.max_sample_points,
+            cache.min_dirichlet_dist,
+            cache.post_confidence,
+            cache.beta_confidence,
+            get_alpha_prior());
 }
 
 
@@ -224,7 +428,7 @@ void parse_diststats_body(FILE *diststats_fh, unsigned max1, unsigned max2)
     {
         read_diststats_line(diststats_fh, &a2, &b1, &b2, &beb);
         if (a2 < max2 && b2 < max2 && b1 < max1)
-            bounds_cache[a2][b2][b1] = beb;
+            cache.bounds[a2][b2][b1] = beb;
         else
         {
             fprintf(stderr, 
@@ -284,6 +488,395 @@ struct ipoint {
 
 
 
+/* Interpolate the interval in the beb row */
+enum fuzzy_state locate_cell(struct binomial_est_bounds *beb, unsigned a1)
+{
+    if (beb->unchanged[0] <= a1 && a1 < beb->unchanged[1])
+        return UNCHANGED;
+    else if (beb->ambiguous[0] <= a1 && a1 < beb->ambiguous[1])
+        return AMBIGUOUS;
+    else return CHANGED;
+}
+
+
+
+struct pair_point_gen {
+    struct points_gen pgen1, pgen2;
+    struct points_buf pts1, pts2;
+};
+
+
+/* Given a[4], b[4], and lim[4], find a permutation of {(a[p_1],
+   b[p_1]), (a[p_2], b[p_2]), (a[p_3], b[p_e]), (a[p_4], b[p_4]) }
+   such that both a[p_i] and b[p_i] are less than lim[p_i], if such
+   permutation exists. 
+   
+   Modification: Given lim[2] == 1 and lim[3] == 1, The permutation of
+   the last two elements does not matter.  So, we only need to specify
+   p_1 and p_2 in this case.
+
+   Also, if there is no permutation that suffices, set a flag
+   appropriately.
+
+   Assumes that lim is descending.  lim[i] >= lim[i+1]
+*/
+void find_cacheable_permutation(const unsigned *a, 
+                                const unsigned *b, 
+                                const unsigned *lim,
+                                unsigned *permutation, 
+                                unsigned *perm_found)
+{
+    *perm_found = 1;
+    /* mpi[i] (max permutation index) is the maximum position in the
+       permutation (described above) that the (a, b) pair may attain
+       and still stay below the limits. */
+    /* min value, min_index */
+    int i, j;
+    int min_mpi, mpi[] = { -1, -1, -1, -1 };
+    
+    unsigned tot[] = { a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
+    
+    for (i = 0; i != 4; ++i)
+        for (j = 0; j != 4; ++j)
+        {
+            if (a[i] >= lim[j] || b[i] >= lim[j]) break;
+            mpi[i] = j;
+        }
+    
+    /* p[i], (the permutation of mpi), s.t. mpi[p[i]] <= mpi[p[i+1]] */
+
+    /* mpi[j] = -1 means the value j has been placed in the
+       permutation */
+    for (i = 0; i != 4; ++i)
+    {
+        unsigned max_v = 0, max_i = 4;
+        min_mpi = 5;
+        for (j = 0; j != 4; ++j)
+            if (mpi[j] >= i && mpi[j] <= min_mpi && tot[j] >= max_v)
+            {
+                max_v = tot[j];
+                max_i = j;
+                min_mpi = mpi[j];
+            }
+        if (max_i != 4)
+            permutation[i] = max_i, mpi[max_i] = -1;
+        else
+        {
+            *perm_found = 0;
+            break;
+        }
+    }
+}
+
+
+/* simple hash function for distributing the dir_points_vals_mtx in
+   use. */
+unsigned dir_points_key_group(union alpha_large_key key)
+{
+    uint32_t h = ((key.raw)>>33^(key.raw)^(key.raw)<<11);
+    return h % cache.n_vals_mtx;
+}
+
+
+/* append any points in src beyond dest->size, growing dest as
+   necessary. */
+void append_extra_points(struct points_buf *dest, struct points_buf *src)
+{
+    assert(src->size >= dest->size);
+    unsigned end = dest->size, add = src->size - end;
+    dest->size = src->size;
+    ALLOC_GROW(dest->buf, src->size, dest->alloc);
+    memcpy(dest->buf + end, src->buf + end, add * sizeof(dest->buf[0]));
+}
+
+/* initialize points from cache.  we only call this if the desired set
+   of points is not populated.  once points_hash_frozen is true, you
+   do not need any mutex to do hash lookup operations.  however, to
+   actually read the contents of the value in the hash, you
+   do. finally, if val.size == cache.max_sample_points, we know that
+   val.buf will remain constant as well. */
+void safe_get_cached_points(union alpha_large_key key,
+                            struct points_buf *points,
+                            unsigned points_hash_frozen)
+{
+    assert(points->size == 0);
+    khiter_t itr;
+
+    if (points_hash_frozen)
+    {
+        /* no need for a mutex to query the hash */
+        itr = kh_get(points_hash, cache.dir_points, key.raw);
+        if (itr != kh_end(cache.dir_points))
+        {
+            pthread_mutex_t *mtx = 
+                &cache.dir_points_vals_mtx[dir_points_key_group(key)];
+            pthread_mutex_lock(mtx);
+            struct counted_points stored = kh_value(cache.dir_points, itr);
+            if (stored.pts.size == cache.max_sample_points)
+            {
+                /* the stored buffer is full and so its contents won't
+                   change. */
+                pthread_mutex_unlock(mtx);
+                append_extra_points(points, &stored.pts);
+                pthread_mutex_lock(mtx);
+                stored.hitcount++;
+                kh_value(cache.dir_points, itr) = stored;
+                pthread_mutex_unlock(mtx);
+            }
+            else
+                pthread_mutex_unlock(mtx);
+        }
+        else 
+            ; /* nothing to do. */
+    }
+    else
+    {
+        /* we need to use the global mutex to query the hash since the
+           hash is still changing */
+        pthread_mutex_t *mtx = &cache.dir_points_mtx;
+        pthread_mutex_lock(mtx);
+        itr = kh_get(points_hash, cache.dir_points, key.raw);
+        if (itr != kh_end(cache.dir_points))
+        {
+            struct counted_points stored = kh_value(cache.dir_points, itr);
+            append_extra_points(points, &stored.pts);
+            stored.hitcount++;
+            kh_value(cache.dir_points, itr) = stored;
+            pthread_mutex_unlock(mtx);
+            /* ++cache_stats.hit; */
+        }
+        else
+        {
+            /* ++cache_stats.miss; */
+            pthread_mutex_unlock(mtx);
+            /* nothing to do */
+        }
+    }
+}
+
+
+/* clear entries if necessary */
+void clear_low_hit_entries(unsigned max_hitcount)
+{
+    pthread_mutex_lock(&cache.c.mtx);
+
+    if (cache.c.n_items >= cache.c.max_items
+        && cache.c.n_last_cleared_entries > MIN_LAST_CLEARED_ENTRIES
+        && cache.c.n_times_cleared < MAX_TIMES_CLEARED)
+    {
+        struct counted_points val;
+        khiter_t itr;
+
+        pthread_mutex_lock(&cache.dir_points_mtx);
+        khint_t old_size = kh_size(cache.dir_points);
+        for (itr = kh_begin(cache.dir_points);
+             itr != kh_end(cache.dir_points); ++itr)
+        {
+            if (kh_exist(cache.dir_points, itr))
+            {
+                val = kh_value(cache.dir_points, itr);
+                if (val.hitcount <= max_hitcount)
+                {
+                    kh_del(points_hash, cache.dir_points, itr);
+                    if (val.pts.buf) free(val.pts.buf);
+                }
+            }
+        }
+        khint_t new_size = kh_size(cache.dir_points);
+        pthread_mutex_unlock(&cache.dir_points_mtx);
+
+        cache.c.n_items = new_size;
+        cache.c.n_last_cleared_entries = old_size - new_size;
+        ++cache.c.n_times_cleared;
+
+        time_t cal = time(NULL);
+        char *ts = strdup(ctime(&cal));
+        ts[strlen(ts)-1] = '\0';
+        fprintf(stderr, "%s: cache.n_last_cleared_entries = %lu\n",
+                ts, cache.c.n_last_cleared_entries);
+        free(ts);
+    }
+
+    pthread_mutex_unlock(&cache.c.mtx);
+}
+
+
+/* store points in cache.  if points->size > stored_size, replace hash
+   value with a copy of points.  outside of the mutex, hash values are
+   guaranteed to be constant. a missing value is deemed to have a
+   stored_size of 0. 
+
+   the mutex logic is as follows: at a top level, if
+   points_hash_frozen = 1, we know that cache.dir_points will not have
+   any more keys added or deleted.  only kh_get, kh_end, and kh_val
+   are called in this situation.   */
+void safe_store_cached_points(union alpha_large_key key,
+                              struct points_buf *points,
+                              unsigned points_hash_frozen)
+{
+    assert(points->size > 0);
+    khiter_t itr;
+    if (points_hash_frozen)
+    {
+        itr = kh_get(points_hash, cache.dir_points, key.raw);
+        if (itr != kh_end(cache.dir_points))
+        {
+            pthread_mutex_t *mtx = 
+                &cache.dir_points_vals_mtx[dir_points_key_group(key)];
+            pthread_mutex_lock(mtx);
+            struct counted_points stored = kh_val(cache.dir_points, itr);
+            if (stored.pts.size < points->size)
+            {
+                /* copy additional points over to stored */
+                append_extra_points(&stored.pts, points);
+                kh_val(cache.dir_points, itr) = stored;
+                pthread_mutex_unlock(mtx);
+                
+            }
+            else
+                pthread_mutex_unlock(mtx);
+        }
+        else
+            ; /* do nothing */
+    }
+    else
+    {
+        /* must use global mutex since the hash is still changing. */
+        pthread_mutex_t *hash_mtx = &cache.dir_points_mtx;
+        pthread_mutex_lock(hash_mtx);
+        struct counted_points stored;
+        itr = kh_get(points_hash, cache.dir_points, key.raw);
+        if (itr != kh_end(cache.dir_points))
+        {
+            stored = kh_val(cache.dir_points, itr);
+            if (stored.pts.size < points->size)
+            {
+                append_extra_points(&stored.pts, points);
+                kh_val(cache.dir_points, itr) = stored;
+            }                
+            pthread_mutex_unlock(hash_mtx);
+        }
+        else
+        {
+            /* create a new value. unlock the mutex so that we can do
+               this non-trivial work without blocking other
+               threads. this may however result in wasting this
+               work. */
+            pthread_mutex_unlock(hash_mtx);
+
+            struct counted_points new_buf = {
+                .pts = { 
+                    malloc(points->alloc * sizeof(points->buf[0])),
+                    points->size, 
+                    points->alloc
+                },
+                .hitcount = 1
+            };
+            memcpy(new_buf.pts.buf, points->buf, points->size * sizeof(points->buf[0]));
+
+            pthread_mutex_lock(hash_mtx);
+            itr = kh_get(points_hash, cache.dir_points, key.raw);
+            if (itr == kh_end(cache.dir_points))
+            {
+                int ret;
+                itr = kh_put(points_hash, cache.dir_points, key.raw, &ret);
+                assert(ret == 1 || ret == 2); /* key did not previously exist */
+                kh_val(cache.dir_points, itr) = new_buf;
+                cache.c.n_items = kh_size(cache.dir_points);
+                pthread_mutex_unlock(hash_mtx);
+            }
+            else
+            {
+                /* another thread created an entry for this key.
+                   ditch this one. */
+                pthread_mutex_unlock(hash_mtx);
+                free(new_buf.pts.buf);
+            }
+        }
+    }
+
+    /* clean out rarely used entries */
+    if (! points_hash_frozen) clear_low_hit_entries(1);
+}
+
+
+/* calculate the distance between two initialized
+   distributions. Assume bpar->dist[0] and bpar->dist[1] have already
+   had alpha_counts initialized, and have their size field set
+   appropriately (to zero if the points buffer is invalid). Use
+   caching of individual dirichlet distributions whenever possible. */
+struct binomial_est_state 
+get_est_state(struct binomial_est_params *bpar)
+{
+    union alpha_large_key a_key, b_key;
+    unsigned a_packable, b_packable;
+    unsigned *a_cts = ((struct points_gen_par *)bpar->dist[0]->pgen.points_gen_par)->alpha_counts;
+    unsigned *b_cts = ((struct points_gen_par *)bpar->dist[1]->pgen.points_gen_par)->alpha_counts;
+    init_alpha_packed_large(a_cts, &a_key, &a_packable);
+    init_alpha_packed_large(b_cts, &b_key, &b_packable);
+
+    if (bpar->dist[0]->points.size == 0 && a_packable)
+        safe_get_cached_points(a_key, &bpar->dist[0]->points, bpar->points_hash_frozen);
+
+    if (bpar->dist[1]->points.size == 0 && b_packable)
+        safe_get_cached_points(b_key, &bpar->dist[1]->points, bpar->points_hash_frozen);
+
+    struct binomial_est_state rval =
+        binomial_quantile_est(cache.max_sample_points, 
+                              cache.min_dirichlet_dist, 
+                              cache.post_confidence,
+                              cache.beta_confidence, 
+                              bpar->dist[0]->pgen,
+                              &bpar->dist[0]->points, 
+                              bpar->dist[1]->pgen,
+                              &bpar->dist[1]->points,
+                              cache.batch_size);
+
+    if (a_packable) 
+        safe_store_cached_points(a_key, &bpar->dist[0]->points, bpar->points_hash_frozen);
+    if (b_packable)
+        safe_store_cached_points(b_key, &bpar->dist[1]->points, bpar->points_hash_frozen);
+
+    return rval;
+}
+
+
+/* The main distance function.  This will modify dist[0]'s alpha
+   parameters and thus discard its points. It will assume all 7 other
+   alpha components are set as intended.  */
+struct binomial_est_state pair_dist_aux(unsigned a1, void *par)
+{
+    struct binomial_est_params *bpar = par;
+    set_dirichlet_alpha_single(bpar->dist[0], 0, a1);
+    return get_est_state(bpar);
+}
+                                
+
+/* depends on the ordering of enum fuzzy_state in a gradient from
+   CHANGED to UNCHANGED.
+   */
+int query_is_less(unsigned pos, void *par)
+{
+    struct binomial_est_params *b = par;
+    struct binomial_est_state est = pair_dist_aux(pos, par);
+    return b->use_low_beta
+        ? (b->query_beta < est.beta_qval_lo ? 1 : 0)
+        : (b->query_beta < est.beta_qval_hi ? 1 : 0);
+}
+
+/* USAGE: virtual_lower_bound(beg, end, elem_is_less, par).  Assumes
+   all elements in [beg, end) are in ascending order.  Return the
+   position of the left-most element that is b->query_state. */
+int elem_is_less(unsigned pos, void *par)
+{
+    struct binomial_est_params *b = par;
+    struct binomial_est_state est = pair_dist_aux(pos, par);
+    return b->use_low_beta
+        ? (est.beta_qval_lo < b->query_beta ? 1 : 0)
+        : (est.beta_qval_hi < b->query_beta ? 1 : 0);
+}
+
+
 /* Number of highest points to explore by flanking, used in
    noisy_mode. */
 #define NUMTOP 2
@@ -291,7 +884,7 @@ struct ipoint {
 /* find the mode in a semi-robust way.  for the 'down' member,
    0xDEADBEEF is used to mean 'uninitialized', while NULL means 'last
    in the chain'
- */
+*/
 unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
 {
     /* create the two anchors */
@@ -369,9 +962,9 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
     unsigned topx = hd->x;
 
     /* struct binomial_est_params *bb = bpar; */
-    /* struct dir_points_par  */
-    /*     *d0 = bb->dist[0]->pgen.point_par, */
-    /*     *d1 = bb->dist[1]->pgen.point_par; */
+    /* struct points_gen_par  */
+    /*     *d0 = bb->dist[0]->pgen.points_gen_par, */
+    /*     *d1 = bb->dist[1]->pgen.points_gen_par; */
 
     /* fprintf(stderr, "MODE: %5.3g\t%5.3g\t%5.3g\t%5.3g\t%i\t%7.4g\n",  */
     /*         d0->alpha[0], d0->alpha[1], d1->alpha[0], d1->alpha[1], */
@@ -389,147 +982,13 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
 }
 
 
-/* bounds_cache[a2][b2][b1] = a description of the matrix of distance
-   categories.  */
-// struct binomial_est_bounds bounds_cache[MAX_COUNT2][MAX_COUNT2][MAX_COUNT1];
-
-
-
-/* Interpolate the interval in the beb row */
-enum fuzzy_state locate_cell(struct binomial_est_bounds *beb, unsigned a1)
-{
-    if (beb->unchanged[0] <= a1 && a1 < beb->unchanged[1])
-        return UNCHANGED;
-    else if (beb->ambiguous[0] <= a1 && a1 < beb->ambiguous[1])
-        return AMBIGUOUS;
-    else return CHANGED;
-}
-
-
-
-struct pair_point_gen {
-    struct points_gen pgen1, pgen2;
-    struct points_buf pts1, pts2;
-};
-
-
-/* Given a[4], b[4], and lim[4], find a permutation of {(a[p_1],
-   b[p_1]), (a[p_2], b[p_2]), (a[p_3], b[p_e]), (a[p_4], b[p_4]) }
-   such that both a[p_i] and b[p_i] are less than lim[p_i], if such
-   permutation exists. 
-
-   Modification: Given lim[2] == 1 and lim[3] == 1, The permutation of
-   the last two elements does not matter.  So, we only need to specify
-   p_1 and p_2 in this case.
-
-   Also, if there is no permutation that suffices, set a flag
-   appropriately.
-
-   Assumes that lim is descending.  lim[i] >= lim[i+1]
-*/
-void find_cacheable_permutation(const unsigned *a, const unsigned *b, 
-                                const unsigned *lim,
-                                unsigned char *permutation, 
-                                unsigned *perm_found)
-{
-    *perm_found = 1;
-    /* mpi[i] (max permutation index) is the maximum position in the
-       permutation (described above) that the (a, b) pair may attain
-       and still stay below the limits. */
-    int mpi[] = { -1, -1, -1, -1 },
-        i, j,
-        mv = 0, mi = 0; /* min value, min_index */
-
-    for (i = 0; i != 4; ++i)
-        for (j = 0; j != 4; ++j)
-        {
-            if (a[i] >= lim[j] || b[i] >= lim[j]) break;
-            mpi[i] = j;
-        }
-
-    /* p[i], (the permutation of mpi), s.t. mpi[p[i]] <= mpi[p[i+1]] */
-    unsigned p[4];
-
-    /* flag[j] = 1 means the value j has been placed in the permutation */
-    unsigned char flag[] = { 0, 0, 0, 0 };
-
-    for (i = 0; i != 4; ++i)
-    {
-        mv = 5;
-        for (j = 0; j != 4; ++j)
-            if (! flag[j] && mpi[j] < mv)
-                mv = mpi[j], mi = j;
-        p[i] = mi;
-        flag[mi] = 1;
-    }
-    for (i = 0; i != 4; ++i)
-        if (mpi[p[i]] < i) { *perm_found = 0; break; }
-
-    permutation[0] = p[0];
-    permutation[1] = p[1];
-}
-
-                                
-
-/* find top 2 components in el, store their indices in i1 and i2.
-   Count the number of occurrences of min_val in z */
-void find_top2_aux(unsigned *el, int *i1, int *i2, unsigned *z)
-{
-    unsigned m1 = 0, m2 = 0;
-    *i1 = 0, *i2 = 0;
-    *z = 0;
-    unsigned i;
-    for (i = 0; i != NUM_NUCS; ++i)
-    {
-        if (m1 < el[i]) *i1 = i, m1 = el[i];
-        if (el[i] == 0) ++*z;
-    }
-    /* set i2 to an arbitrary value that is unequal to i1 */
-    *i2 = (NUM_NUCS - 1) - *i1;
-    m2 = el[*i2];
-    for (i = 0; i != NUM_NUCS; ++i)
-        if (i != *i1 && m2 < el[i])
-            *i2 = i, m2 = el[i];
-}
-
-
-
-/* depends on the ordering of enum fuzzy_state in a gradient from
-   CHANGED to UNCHANGED.
-   */
-int query_is_less(unsigned pos, void *par)
-{
-    struct binomial_est_params *b = par;
-    struct binomial_est_state est = pair_dist_aux(pos, par);
-    return b->use_low_beta
-        ? (b->query_beta < est.beta_qval_lo ? 1 : 0)
-        : (b->query_beta < est.beta_qval_hi ? 1 : 0);
-}
-
-/* USAGE: virtual_lower_bound(beg, end, elem_is_less, par).  Assumes
-   all elements in [beg, end) are in ascending order.  Return the
-   position of the left-most element that is b->query_state. */
-int elem_is_less(unsigned pos, void *par)
-{
-    struct binomial_est_params *b = par;
-    struct binomial_est_state est = pair_dist_aux(pos, par);
-    return b->use_low_beta
-        ? (est.beta_qval_lo < b->query_beta ? 1 : 0)
-        : (est.beta_qval_hi < b->query_beta ? 1 : 0);
-}
-
-
-#define CACHE_GEN_POINTS_BATCH 20
-
-
-
 
 /* For two dirichlet distributions A = { x+p, a2+p, p, p } and B = {
-   b1+p, b2+p, p, p }, virtually find the values of x in [0,
-   MAX_COUNT1) that denote the intervals where A and B are UNCHANGED,
-   and where they are AMBIGUOUS.  The expected underlying pattern as a
-   function of x is some number of C, AC, A, AU, U, AU, A, AC, C.
-   (see enum fuzzy_state in binomial_est.h) */
+   b1+p, b2+p, p, p }, virtually find the values of x in [0, max1)
+   that denote the intervals where A and B are UNCHANGED, and where
+   they are AMBIGUOUS.  The expected underlying pattern as a function
+   of x is some number of C, AC, A, AU, U, AU, A, AC, C.  (see enum
+   fuzzy_state in binomial_est.h) */
 void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
                            struct binomial_est_params *bpar,
                            struct binomial_est_bounds *beb)
@@ -537,202 +996,192 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
     beb->ambiguous[0] = beb->ambiguous[1] = 0;
     beb->unchanged[0] = beb->unchanged[1] = 0;
 
-    struct posterior_settings *ps = bpar->pset;
+    unsigned perm[] = { 0, 1, 2, 3 };
+    unsigned alpha1_cts[] = { 0, a2, 0, 0 };
+    update_points_gen_params(bpar->dist[0], alpha1_cts, perm);
 
-    double alpha[NUM_NUCS];
-    memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-    alpha[1] += a2;
-    set_dirichlet_alpha(bpar->dist[0], alpha);
+    unsigned alpha2_cts[] = { b1, b2, 0, 0 };
+    update_points_gen_params(bpar->dist[1], alpha2_cts, perm);
 
-    memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-    alpha[0] += b1;
-    alpha[1] += b2;
-    set_dirichlet_alpha(bpar->dist[1], alpha);
-
-    /* Find Mode.  (consider [0, xmode) and [xmode, bpar->max1) as the
+    /* Find Mode.  (consider [0, xmode) and [xmode, cache.max1) as the
        upward and downward phase intervals */
-    unsigned xmode = noisy_mode(0, bpar->max1, bpar);
+    unsigned xmode = noisy_mode(0, cache.max1, bpar);
 
     bpar->use_low_beta = 0;
-    bpar->query_beta = 1.0 - ps->post_confidence;
+    bpar->query_beta = 1.0 - cache.post_confidence;
     beb->ambiguous[0] = virtual_lower_bound(0, xmode, elem_is_less, bpar);
-    beb->ambiguous[1] = virtual_upper_bound(xmode, bpar->max1, elem_is_less, bpar);
+    beb->ambiguous[1] = virtual_upper_bound(xmode, cache.max1, elem_is_less, bpar);
 
     bpar->use_low_beta = 1;
-    bpar->query_beta = ps->post_confidence;
+    bpar->query_beta = cache.post_confidence;
     beb->unchanged[0] = virtual_lower_bound(beb->ambiguous[0], xmode, elem_is_less, bpar);
     beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], elem_is_less, bpar);
     
 }
 
-#if 0
-/* Does the same as print_bounds, but calculates the bounds using
-   binary search. */
-void print_beb_bounds(struct binomial_est_params *bpar)
-{
-    unsigned a1, a2, b1, b2;
-    char states[] = "CRAFU";
-    struct binomial_est_bounds beb;
-    // struct binomial_est_state est;
-    // struct posterior_settings *ps = bpar->pset;
-    // double alpha[NUM_NUCS];
 
-    /* a1 >= a2, b1 >= b2*/
-    for (b1 = 0; b1 != bpar->max1; ++b1)
-    // for (b1 = 30; b1 != 40; ++b1)
+/* thread-safe initialization of a bounds cache entry. the strategy is
+   to */
+struct binomial_est_bounds *
+safe_init_cache_entry(struct binomial_est_params *bpar,
+                      unsigned a2, unsigned b1, unsigned b2,
+                      unsigned points_hash_frozen,
+                      unsigned *was_set)
+{
+    *was_set = 1;
+
+    struct binomial_est_bounds *beb = &cache.bounds[a2][b2][b1];
+
+    unsigned fi = (beb - cache.buf1) % cache.n_locks;
+
+    pthread_mutex_lock(&cache.locks[fi].mtx);
+    if (beb->state == SET) 
+        pthread_mutex_unlock(&cache.locks[fi].mtx);
+
+    else if (beb->state == UNSET)
     {
-        for (a2 = 0; a2 != bpar->max2 && a2 <= a1; ++a2)
-            // for (a2 = 0; a2 != 1; ++a2)
-        {
-            for (b2 = 0; b2 != bpar->max2 && b2 <= b1; ++b2)
-                // for (b2 = 0; b2 != 5 && b2 <= b1; ++b2)
-            {
-                initialize_est_bounds(a2, b1, b2, bpar, &beb);
-                for (a1 = a2; a1 != bpar->max1; ++a1)
-                    fprintf(stdout, "PBB\t%i\t%i\t%i\t%i\t0.0\t0.0\t%c\n", a1, a2, b1, b2,
-                            a1 < beb.ambiguous[0] ? states[CHANGED]
-                            : (a1 < beb.unchanged[0] ? states[AMBIGUOUS]
-                               : (a1 < beb.unchanged[1] ? states[UNCHANGED]
-                                  : (a1 < beb.ambiguous[1] ? states[AMBIGUOUS]
-                                     : states[CHANGED]))));
-#if 0                
-                for (a1 = a2; a1 != bpar->max1; ++a1)
-                {
-                    memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-                    alpha[0] += a1;
-                    alpha[1] += a2;
-                    set_dirichlet_alpha(bpar->dist[0], alpha);
-                
-                    memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-                    alpha[0] += b1;
-                    alpha[1] += b2;
-                    set_dirichlet_alpha(bpar->dist[1], alpha);
-                
-                    est = binomial_quantile_est(ps->max_sample_points, 
-                                                ps->min_dist,
-                                                ps->post_confidence, 
-                                                ps->beta_confidence,
-                                                bpar->dist[0]->pgen,
-                                                &bpar->dist[0]->points, 
-                                                bpar->dist[1]->pgen,
-                                                &bpar->dist[1]->points,
-                                                bpar->batch_size);
-                    fprintf(stdout, "PB\t%i\t%i\t%i\t%i\t%7.5g\t%7.5g\t%c\n", a1, a2, b1, b2, 
-                            est.beta_qval_lo, est.beta_qval_hi, states[est.state]);
-                }
-#endif
-            }
-        }
-    }
-    fflush(stdout);
-}
-#endif
+        *was_set = 0;
+        beb->state = PENDING;
+        pthread_mutex_unlock(&cache.locks[fi].mtx);
+        initialize_est_bounds(a2, b1, b2, bpar, beb);
+        pthread_mutex_lock(&cache.locks[fi].mtx);
+        beb->state = SET;
+        primary_cache_size++;
+        pthread_mutex_unlock(&cache.locks[fi].mtx);
 
-#if 0
-void print_bounds(struct binomial_est_params *bpar)
-{
-    unsigned a1, a2, b1, b2;
-    struct binomial_est_state est;
-    struct posterior_settings *ps = bpar->pset;
-    char states[] = "CRAFU";
-    double alpha[NUM_NUCS];
-    /* a1 >= a2, b1 >= b2*/
+        /* wake up any threads waiting on this PENDING state.  (Should
+           this be called before the mutex unlock?) */
+        pthread_cond_broadcast(&cache.locks[fi].cond);
+    }
+    else
+    {
+        /* state == PENDING.  */
+        while (beb->state == PENDING)
+            pthread_cond_wait(&cache.locks[fi].cond, &cache.locks[fi].mtx);
+
+        /* Now, this could mean that */
+        assert(beb->state == SET);
+        pthread_mutex_unlock(&cache.locks[fi].mtx);
+    }
     
-    for (a1 = 0; a1 != bpar->max1; ++a1)
-    {
-        for (b1 = 0; b1 != bpar->max1; ++b1)
-        // for (b1 = 17; b1 != 18; ++b1)
-        {
-            for (a2 = 0; a2 != 2 && a2 <= a1; ++a2)
-                // for (a2 = 8; a2 != 9; ++a2)
-            {
-                for (b2 = 0; b2 != bpar->max2 && b2 <= b1; ++b2)
-                    // for (b2 = 8; b2 != 9; ++b2)
-                {
-                    memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-                    alpha[0] += a1;
-                    alpha[1] += a2;
-                    set_dirichlet_alpha(bpar->dist[0], alpha);
-
-                    memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-                    alpha[0] += b1;
-                    alpha[1] += b2;
-                    set_dirichlet_alpha(bpar->dist[1], alpha);
-
-                    est = binomial_quantile_est(ps->max_sample_points, 
-                                                ps->min_dist,
-                                                ps->post_confidence, 
-                                                ps->beta_confidence,
-                                                bpar->dist[0]->pgen,
-                                                &bpar->dist[0]->points, 
-                                                bpar->dist[1]->pgen,
-                                                &bpar->dist[1]->points,
-                                                bpar->batch_size);
-                    fprintf(stdout, "PB\t%i\t%i\t%i\t%i\t%7.5g\t%7.5g\t%c\n", a1, a2, b1, b2, 
-                            est.beta_qval_lo, est.beta_qval_hi, states[est.state]);
-                }
-            }
-        }
-    }
-    fflush(stdout);
+    return beb;
 }
-#endif
 
 
-/* test two dirichlets based on their counts. */
+
+
+/* complete the generation of sample points */
+
+/* test two dirichlets based on their counts. if the pattern of counts
+   is cacheable, 'cacheable' is set to 1, and the cache is queried for
+   the entry, and cache_was_set is set to 1 if found. */
 enum fuzzy_state cached_dirichlet_diff(unsigned *a_counts,
                                        unsigned *b_counts,
                                        struct binomial_est_params *bpar,
-                                       unsigned *cache_hit)
+                                       unsigned points_hash_frozen,
+                                       unsigned *cacheable,
+                                       unsigned *cache_was_set)
 {
-    unsigned lim[] = { bpar->max1, bpar->max2, 1, 1 };
-    unsigned char perm[2];
-    
-    find_cacheable_permutation(a_counts, b_counts, lim, perm, cache_hit);
+    unsigned lim[] = { cache.max1, cache.max2, 1, 1 };
+    unsigned perm[4];
+    unsigned primary_cacheable, secondary_cacheable;
+
+    find_cacheable_permutation(a_counts, b_counts, lim, perm, &primary_cacheable);
     
     enum fuzzy_state state;
-    if (*cache_hit)
+    if (primary_cacheable)
     {
         /* fprintf(stderr, "C***: %u,%u,%u,%u\t%u,%u,%u,%u\n", */
         /*         a_counts[0], a_counts[1], a_counts[2], a_counts[3], */
         /*         b_counts[0], b_counts[1], b_counts[2], b_counts[3]); */
         
-        unsigned i1 = perm[0], i2 = perm[1];
+        *cacheable = 1;
+        unsigned 
+            a1 = a_counts[perm[0]],
+            a2 = a_counts[perm[1]], 
+            b1 = b_counts[perm[0]], 
+            b2 = b_counts[perm[1]];
 
-        struct binomial_est_bounds *beb = 
-            &bounds_cache[a_counts[i2]][b_counts[i2]][b_counts[i1]];
-        
-        state = locate_cell(beb, a_counts[i1]);
+        struct binomial_est_bounds *beb =
+            safe_init_cache_entry(bpar, a2, b1, b2, points_hash_frozen, cache_was_set);
+
+        state = locate_cell(beb, a1);
     }
     else
     {
-        /* fprintf(stderr, "N---: %u,%u,%u,%u\t%u,%u,%u,%u\n", */
-        /*         a_counts[0], a_counts[1], a_counts[2], a_counts[3], */
-        /*         b_counts[0], b_counts[1], b_counts[2], b_counts[3]); */
-        
-        /* need to test the bounds organically, with no caching */
-        struct posterior_settings *ps = bpar->pset;
-        double alpha[NUM_NUCS];
-        memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-        unsigned i;
-        for (i = 0; i != NUM_NUCS; ++i) alpha[i] += a_counts[i];
-        set_dirichlet_alpha(bpar->dist[0], alpha);
-        
-        memcpy(alpha, bpar->pset->prior_alpha, sizeof(alpha));
-        for (i = 0; i != NUM_NUCS; ++i) alpha[i] += b_counts[i];
-        set_dirichlet_alpha(bpar->dist[1], alpha);
+        /* fall back to secondary caching.  we use more liberal limits */
+        unsigned lim2[] = { cache.max1, cache.max2, 5, 5 };
+        find_cacheable_permutation(a_counts, b_counts, lim2, perm, &secondary_cacheable);
 
-        struct binomial_est_state est = 
-            binomial_quantile_est(ps->max_sample_points, 
-                                  ps->min_dist, 
-                                  ps->post_confidence,
-                                  ps->beta_confidence, 
-                                  bpar->dist[0]->pgen,
-                                  &bpar->dist[0]->points, 
-                                  bpar->dist[1]->pgen,
-                                  &bpar->dist[1]->points,
-                                  bpar->batch_size);
-        state = est.state;
+        if (secondary_cacheable)
+        {
+            *cacheable = 1;
+            union alpha_key alpha_pair = INIT_ALPHA_KEY(a_counts, b_counts, perm);
+            
+            khiter_t itr;
+            pthread_mutex_lock(&cache.hash_mtx);
+            itr = kh_get(fuzzy_hash, cache.hash, alpha_pair.raw);
+            if (itr == kh_end(cache.hash))
+            {
+                *cache_was_set = 0;
+                pthread_mutex_unlock(&cache.hash_mtx);
+
+                update_points_gen_params(bpar->dist[0], a_counts, perm);
+                update_points_gen_params(bpar->dist[1], b_counts, perm);
+
+                struct binomial_est_state est = get_est_state(bpar);
+
+                state = est.state;
+
+                /* attempt to add it if needed */
+                pthread_mutex_lock(&cache.hash_mtx);
+                if (kh_size(cache.hash) < cache.max_secondary_cache_size)
+                {
+                    int ret;
+                    itr = kh_put(fuzzy_hash, cache.hash, alpha_pair.raw, &ret);
+                     /* key might exist because it was inserted by
+                        another thread while we were calculating the
+                        missing value.  */
+                    assert(ret == 0 || ret == 1);
+                    kh_val(cache.hash, itr) = state;
+                }
+                else
+                {
+                    *cacheable = 0;
+                    /* fprintf(stderr, "Secondary cache full.\n"); */
+                }
+            }
+            else
+            {
+                *cache_was_set = 1;
+                state = kh_val(cache.hash, itr);
+            }
+            pthread_mutex_unlock(&cache.hash_mtx);
+        }
+        else
+        {
+            *cacheable = 0;
+            *cache_was_set = 0;
+
+            unsigned test_cacheable;
+            unsigned p[4];
+            unsigned lim3[] = { 1e8, 1e8, 1e8, 1e8 };
+            find_cacheable_permutation(a_counts, b_counts, lim3, p, &test_cacheable);
+
+            if (! test_cacheable)
+                p[0] = 0, p[1] = 1, p[2] = 2, p[3] = 3;
+
+            /* if (test_cacheable) */
+            /*     fprintf(stderr, "Uncacheable: %u,%u,%u,%u\t%u,%u,%u,%u\n", */
+            /*             a_counts[p[0]], a_counts[p[1]], a_counts[p[2]], a_counts[p[3]], */
+            /*             b_counts[p[0]], b_counts[p[1]], b_counts[p[2]], b_counts[p[3]]); */
+            
+            /* one-off calculation with no pair-caching */
+            update_points_gen_params(bpar->dist[0], a_counts, p);
+            update_points_gen_params(bpar->dist[1], b_counts, p);
+            struct binomial_est_state est = get_est_state(bpar);
+            state = est.state;
+        }
     }
     return state;
 }

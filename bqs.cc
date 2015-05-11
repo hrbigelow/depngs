@@ -28,14 +28,11 @@ struct fastq_tally_input
     std::vector<char *>::iterator beg;
     std::vector<char *>::iterator end;
     size_t * counts; // do not own
-    size_t min_quality_score;
     fastq_tally_input(size_t thread_num,
                       std::vector<char *>::iterator beg,
                       std::vector<char *>::iterator end,
-                      size_t * counts,
-                      size_t min_quality_score) :
-        thread_num(thread_num), beg(beg), end(end), counts(counts),
-        min_quality_score(min_quality_score)
+                      size_t * counts) :
+        thread_num(thread_num), beg(beg), end(end), counts(counts)
     {
     }
     
@@ -52,7 +49,7 @@ void * fastq_tally_worker(void * args)
     for (it = input->beg; it != input->end; ++it)
     {
         locus.load_line(*it);
-        locus.parse(input->min_quality_score);
+        locus.parse();
         for (c = 0; c != locus.counts.num_data; ++c)
             input->counts[locus.counts.stats_index[c]] 
                 += locus.counts.stats[c].ct;
@@ -84,6 +81,8 @@ int main_bqs(int argc, char ** argv)
     char *pileup_input_file = argv[optind];
     char *bqs_output_file = argv[optind + 1];
     size_t min_quality_score = 0;
+
+    pileup_init(min_quality_score);
 
     //initialize fastq_type;
 
@@ -117,8 +116,7 @@ int main_bqs(int argc, char ** argv)
     {
         counts_t[t] = new size_t[NUC_NUM_BQS];
         std::fill(counts_t[t], counts_t[t] + NUC_NUM_BQS, 0);
-        worker_input[t] = new fastq_tally_input(t, lines.begin(), lines.end(), counts_t[t],
-                                                min_quality_score);
+        worker_input[t] = new fastq_tally_input(t, lines.begin(), lines.end(), counts_t[t]);
     }
 
     size_t fread_nsec;

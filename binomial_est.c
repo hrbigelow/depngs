@@ -11,7 +11,7 @@
 #include <pthread.h>
 
 #include "cache.h"
-
+#include "dirichlet_points_gen.h"
 
 const char *fuzzy_state_strings[] = {
     "changed",
@@ -112,50 +112,43 @@ double beta_Qinv(double Q, double a, double b)
 
 
 /* Maximum N of precalculated Beta values. */
-#define NUM_BETA_PRECALC 11000
-
-/* beta_lo[f][n] = gsl_cdf_beta_Pinv(beta_conf, s + 1/2, n - s + 1/2), where
-   s: # of successes
-   f: # of failures (n - s)
-   n: # of trials
-   This is the low bound of the Jeffrey's posterior for binomial
-   confidence intervals. */
-float beta_lo[NUM_BETA_PRECALC][NUM_BETA_PRECALC];
 
 
-/* beta_hi[f][n] = gsl_cdf_beta_Qinv(beta_conf, s + 1/2, n - s + 1/2).
-   This is the high bound of the Jeffrey's posterior for binomial
-   confidence intervals. */
-float beta_hi[NUM_BETA_PRECALC][NUM_BETA_PRECALC];
+/* beta_lo[f][b] = gsl_cdf_beta_Pinv(beta_conf, s + 1/2, n - s + 1/2),
+   where s: # of successes, f: # of failures, (n - s) n: # of trials,
+   b = n / batch_size. This is the low bound of the Jeffrey's
+   posterior for binomial confidence intervals. */
+
+/* beta_hi[f][b] = gsl_cdf_beta_Qinv(beta_conf, s + 1/2,
+   n - s + 1/2).  This is the high bound of the Jeffrey's posterior
+   for binomial confidence intervals. */
+struct {
+    float *lo_buf, **lo, *hi_buf, **hi;
+    unsigned batch_sz, max_n;
+    double conf;
+} beta_cache;
 
 
 struct beta_input {
-    unsigned start, jump;
-    double beta_conf;
+    unsigned start_batch, jump;
 };
 
 void *init_beta_func(void *args)
 {
-    struct beta_input *input = args;
-    double Q = 1.0 - input->beta_conf;
+    struct beta_input *bi = args;
+    double Q = 1.0 - beta_cache.conf;
     assert(Q < 0.5);
-    unsigned f, n;
+    unsigned f, n, b, n_batch = beta_cache.max_n / beta_cache.batch_sz;
     
-    for (n = input->start; n < NUM_BETA_PRECALC; n += input->jump)
+    for (b = bi->start_batch; b < n_batch; b += bi->jump)
     {
+        n = b * beta_cache.batch_sz;
         for (f = 0; f <= n; ++f)
-        {
-            if (f == 50 && n == 10000)
-            {
-                printf("got here\n");
-            }
+            beta_cache.lo[f][b] = 
+                beta_Pinv(Q, (double)(n - f) + 0.5, (double)f + 0.5);
 
-            beta_lo[f][n] = beta_Pinv(Q, 
-                                      (double)(n - f) + 0.5, 
-                                      (double)f + 0.5);
-        }
         for (f = 0; f <= n; ++f)
-            beta_hi[f][n] = 1.0 - beta_lo[n - f][n];
+            beta_cache.hi[f][b] = 1.0 - beta_cache.lo[n - f][b];
         
     }
     pthread_exit(NULL);
@@ -170,16 +163,42 @@ void *init_beta_func(void *args)
         exit(1);                                                        \
     }                                                                   \
     
-void init_beta(double beta_conf, size_t n_threads)
+void binomial_est_init(double beta_conf, 
+                       unsigned batch_size, 
+                       unsigned num_beta_precalc,
+                       size_t n_threads)
 {
     pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
     struct beta_input *inputs = malloc(n_threads * sizeof(struct beta_input));
+
+    beta_cache.max_n = num_beta_precalc;
+    beta_cache.batch_sz = batch_size;
+    beta_cache.conf = beta_conf;
+
+    unsigned n_batch = beta_cache.max_n / beta_cache.batch_sz;
+
+    beta_cache.lo_buf = malloc(beta_cache.max_n * n_batch * sizeof(beta_cache.lo_buf[0]));
+    beta_cache.lo = malloc(beta_cache.max_n * sizeof(beta_cache.lo_buf));
+
+    beta_cache.hi_buf = malloc(beta_cache.max_n * n_batch * sizeof(beta_cache.hi_buf[0]));
+    beta_cache.hi = malloc(beta_cache.max_n * sizeof(beta_cache.hi_buf));
+
+    float **p, **pe, *b;
+    pe = beta_cache.lo + beta_cache.max_n;
+    for (p = beta_cache.lo, b = beta_cache.lo_buf; p != pe; ++p, b += n_batch)
+        *p = b;
+
+    pe = beta_cache.hi + beta_cache.max_n;
+    for (p = beta_cache.hi, b = beta_cache.hi_buf; p != pe; ++p, b += n_batch)
+        *p = b;
+
 
     unsigned t;
     int rc;
     for (t = 0; t != n_threads; ++t)
     {
-        inputs[t] = (struct beta_input){ t, n_threads, beta_conf };
+        inputs[t] = (struct beta_input){ t, n_threads };
+
         rc = pthread_create(&threads[t], NULL, init_beta_func, &inputs[t]);
         CHECK_THREAD(t, rc);
     }
@@ -188,24 +207,44 @@ void init_beta(double beta_conf, size_t n_threads)
         CHECK_THREAD(t, rc);
     }
 
+    /* unsigned f, bi, n; */
+    /* for (bi = 0; bi != n_batch; ++bi) */
+    /* { */
+    /*     n = bi * beta_cache.batch_sz; */
+    /*     for (f = 0; f <= n; ++f) */
+    /*         fprintf(stderr, "%u\t%u\t%7.5g\t%7.5g\n", f, n,  */
+    /*                 beta_cache.lo[f][bi],  */
+    /*                 beta_cache.hi[f][bi]); */
+    /* } */
+
     free(threads);
     free(inputs);
 }
 
 
-/* safe function for obtaining a beta value */
-static inline double jeffreys_beta_lo(int n, int s, double beta_conf)
+void binomial_est_free()
 {
-    return n < NUM_BETA_PRECALC
-        ? beta_lo[n - s][n]
-        : beta_Pinv(1 - beta_conf, (double)s + 0.5, (double)(n - s) + 0.5);
+    free(beta_cache.lo_buf);
+    free(beta_cache.lo);
+    free(beta_cache.hi_buf);
+    free(beta_cache.hi);
 }
 
-static inline double jeffreys_beta_hi(int n, int s, double beta_conf)
+/* safe function for obtaining a beta value */
+static inline double jeffreys_beta_lo(int n, int s)
 {
-    return n < NUM_BETA_PRECALC
-        ? beta_hi[n - s][n]
-        : beta_Qinv(1 - beta_conf, (double)s + 0.5, (double)(n - s) + 0.5);
+    assert(n % beta_cache.batch_sz == 0);
+    return n < beta_cache.max_n
+        ? beta_cache.lo[n - s][n / beta_cache.batch_sz]
+        : beta_Pinv(1 - beta_cache.conf, (double)s + 0.5, (double)(n - s) + 0.5);
+}
+
+static inline double jeffreys_beta_hi(int n, int s)
+{
+    assert(n % beta_cache.batch_sz == 0);
+    return n < beta_cache.max_n
+        ? beta_cache.hi[n - s][n / beta_cache.batch_sz]
+        : beta_Qinv(1 - beta_cache.conf, (double)s + 0.5, (double)(n - s) + 0.5);
 }
 
 
@@ -222,7 +261,15 @@ enum bound_class {
    each pair as 'success' if distance is less than min_dist, 'failure'
    otherwise.  From the set of successes and failures, use the Beta
    distribution to estimate the true binomial probability.  Use pgen1
-   and pgen2 to generate more points (and weights) as needed. */
+   and pgen2 to generate more points (and weights) as needed. 
+   
+   Stopping criteria: 
+
+   We want to take enough points to achieve a certain level of desired
+   confidence (loose_spread). But, in the case our confidence interval
+   straddles a cut-point, we demand extra confidence
+   (tight_spread). It makes some sense for loose_spread to be the same
+   as post_qmin on a vague intuitive level.  */
 struct binomial_est_state
 binomial_quantile_est(unsigned max_points, 
                       float min_dist,
@@ -260,23 +307,37 @@ binomial_quantile_est(unsigned max_points,
         *pend1 = points1->buf + points1->size,
         *pend2 = points2->buf + points2->size;
     /* invariant: pcur <= pend */
-    
+    /*
+    unsigned *alpha1_cts = ((struct points_gen_par *)pgen1.points_gen_par)->alpha_counts;
+    unsigned *alpha2_cts = ((struct points_gen_par *)pgen2.points_gen_par)->alpha_counts;
+
+    fprintf(stderr, "binomial_est_state: %u,%u,%u,%u\t%u,%u,%u,%u\n",
+            alpha1_cts[0], alpha1_cts[1], alpha1_cts[2], alpha1_cts[3],
+            alpha2_cts[0], alpha2_cts[1], alpha2_cts[2], alpha2_cts[3]);
+    */
+
+    /* See NOTE above on stopping criteria. */
     unsigned p;
+    double
+        beta_spread = est.beta_qval_hi - est.beta_qval_lo, 
+        spread_loose_max = post_qmin,
+        spread_tight_max = post_qmin * 0.2;
     while (n != max_points 
-           && (lo_tag != hi_tag || (est.beta_qval_hi - est.beta_qval_lo) > 1e-4))
+           && ((lo_tag != CHANGED && beta_spread > spread_loose_max)
+               || (lo_tag == CHANGED && beta_spread > spread_tight_max)))
     {
         /* process another batch of samples, generating sample
            points as needed. */
         n += batch_size;
         while (points1->size < n) 
         {
-            pgen1.gen_point(pgen1.point_par, pend1);
+            pgen1.gen_point(pgen1.points_gen_par, pend1);
             points1->size += batch_size;
             pend1 += batch_size;
         }
         while (points2->size < n) 
         {
-            pgen2.gen_point(pgen2.point_par, pend2);
+            pgen2.gen_point(pgen2.points_gen_par, pend2);
             points2->size += batch_size;
             pend2 += batch_size;
         }
@@ -296,7 +357,7 @@ binomial_quantile_est(unsigned max_points,
         }
 
         /* regardless of est, we need to calculate est.beta_qval_lo */
-        est.beta_qval_lo = jeffreys_beta_lo(n, s, beta_conf);
+        est.beta_qval_lo = jeffreys_beta_lo(n, s);
         
         if (post_qmax < est.beta_qval_lo) lo_tag = BOUND_UNCHANGED;
         else if (post_qmin < est.beta_qval_lo) lo_tag = BOUND_AMBIGUOUS;
@@ -305,13 +366,14 @@ binomial_quantile_est(unsigned max_points,
         if (lo_tag != BOUND_UNCHANGED)
         {
             /* Now, calculate est.beta_qval_hi only if necessary */
-            est.beta_qval_hi = jeffreys_beta_hi(n, s, beta_conf);
+            est.beta_qval_hi = jeffreys_beta_hi(n, s);
             assert(!isnan(est.beta_qval_hi));
 
             if (post_qmax < est.beta_qval_hi) hi_tag = BOUND_UNCHANGED;
             else if (post_qmin < est.beta_qval_hi) hi_tag = BOUND_AMBIGUOUS;
             else hi_tag = BOUND_CHANGED;
         }
+        beta_spread = est.beta_qval_hi - est.beta_qval_lo;
     }
 
     est.state = AMBIGUOUS;

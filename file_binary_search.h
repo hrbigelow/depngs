@@ -40,6 +40,9 @@ struct file_bsearch_node {
    associated structure(s) needed to use it. */
 struct file_bsearch_index {
     FILE *fh;
+    char *mem_scan_buf;
+    char *line_buf;
+    size_t line_len;
     struct file_bsearch_node *root, *cur_node;
     size_t n_nodes;
 };
@@ -52,7 +55,7 @@ void file_bsearch_init(get_line_ord_t _get_line_ord,
 
 
 /* generate an index that spans the whole file */
-struct file_bsearch_index file_bsearch_make_index(FILE *fh);
+struct file_bsearch_index file_bsearch_make_index(const char *file);
 
 
 /* release resources.  call this after you are done searching, or
@@ -80,6 +83,11 @@ size_t read_range(struct file_bsearch_index *ix,
                   struct pair_ordering beg,
                   struct pair_ordering end,
                   char *buf);
+
+/* return the largest offset such that all lines spanning query start
+   at or after this offset. */
+off_t off_lower_bound(struct file_bsearch_index *ix,
+                      struct pair_ordering query);
 
 /* free a portion of the index tree that covers [beg, end) range. */
 void file_bsearch_index_free(struct file_bsearch_index ix);

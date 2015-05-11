@@ -2,6 +2,7 @@
 #define _DEFS_H
 
 #define NUM_NUCS 4
+#define MAX_PILEUP_LINE 1000000
 
 typedef double POINT[NUM_NUCS];
 

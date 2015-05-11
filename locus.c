@@ -1,9 +1,11 @@
 #include "locus.h"
 #include "dict.h"
 #include "cache.h"
+#include "defs.h"
 
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define MISSING_CONTIG(CTG)                         \
     do {                                            \
@@ -20,8 +22,18 @@ struct pair_ordering init_locus(const char *line)
     char contig[200];
     unsigned pos;
     struct pair_ordering o;
-    int nparsed = sscanf(line, "%s\t%u\t", contig, &pos);
-    assert(nparsed == 2);
+
+    char *p;
+    unsigned ref_end = (p = (char *)memchr(line, '\t', MAX_PILEUP_LINE)) - line;
+    assert(ref_end < sizeof(contig));
+    strncpy(contig, line, ref_end);
+    contig[ref_end] = '\0';
+
+    pos = strtol(++p, &p, 10);
+    assert(*p == '\t');
+
+    /* int nparsed = sscanf(line, "%s\t%u\t", contig, &pos); */
+    /* assert(nparsed == 2); */
     long ix;
     if ((ix = dict_search(contig)) >= 0)
         o.hi = (size_t)ix;
@@ -33,7 +45,7 @@ struct pair_ordering init_locus(const char *line)
 
 /* */
 struct pair_ordering_range *parse_query_ranges(const char *query_range_file,
-                                               size_t *num_queries)
+                                               unsigned *num_queries)
 {
     FILE *query_range_fh = fopen(query_range_file, "r");
     if (! query_range_fh)

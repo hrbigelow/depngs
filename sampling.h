@@ -23,8 +23,14 @@ void compute_marginal_wquantiles(double *sample_points,
                                  size_t sort_dimension,
                                  const double *quantiles,
                                  size_t n_quantiles,
-                                 double *quantile_values,
-                                 double *mean);
+                                 double *quantile_values);
+
+double compute_marginal_mean(double *points,
+                             double *weights,
+                             size_t n_points,
+                             size_t n_dims,
+                             size_t dim);
+
 
 char *print_marginal_quantiles(char *out_buf, 
                                const char *line_label,

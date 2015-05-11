@@ -50,9 +50,64 @@ struct less_wcoord {
 };
 
 
+/* given a set of n_points weighted points and sum of those weights,
+   partition the range into two regions with the coordinate in the
+   first region always less than that in the second (using
+   nth_element) and whose mass of region A < quantile * wgt_sum. */
+struct weighted_coord *
+weighted_quantiles_aux(struct weighted_coord *wgt_points,
+                       size_t n_points,
+                       double sum_wgt,
+                       double quantile)
+{
+    struct weighted_coord 
+        *wb = wgt_points, *we = wb + n_points, *cut;
+
+    /* Find an initial estimate */
+    struct less_wcoord lesswc;
+    double target_wgt = quantile * sum_wgt;
+    cut = wb + (size_t)floor(quantile * (double)n_points);
+    std::nth_element(wb, cut, we, lesswc);
+
+    if (cut == wb || cut == we) return cut;
+
+    /* If cut is somewhere in the middle, then we have two non-empty
+       intervals to possibly traverse.  */
+    double sum_wgt_lft, sum_wgt_rgt;
+
+    struct weighted_coord *wp;
+    if (cut - wb < we - cut)
+    {
+        for (wp = wb, sum_wgt_lft = 0; wp != cut; ++wp)
+            sum_wgt_lft += wp->weight;
+        sum_wgt_rgt = sum_wgt - sum_wgt_lft;
+    }
+    else
+    {
+        for (wp = cut, sum_wgt_rgt = 0; wp != we; ++wp)
+            sum_wgt_rgt += wp->weight;
+        sum_wgt_lft = sum_wgt - sum_wgt_rgt;
+    }
+    /* choose to recurse on left or right sub-interval */
+    if (sum_wgt_lft < target_wgt) 
+    {
+        n_points = we - cut;
+        wb = cut;
+        quantile = (target_wgt - sum_wgt_lft) / sum_wgt_rgt;
+        sum_wgt = sum_wgt_rgt;
+    }
+    else
+    {
+        n_points = cut - wb;
+        quantile = target_wgt / sum_wgt_lft;
+        sum_wgt = sum_wgt_lft;
+    }
+    return weighted_quantiles_aux(wb, n_points, sum_wgt, quantile);
+}
+
+
 /* computes the marginal quantiles from a set of weighted sample
-   points, selecting the 'dim' component of the point. Note: This
-   function can process POINT *points as well, but needs a cast (?) */
+   points, selecting the 'dim' component of the point. */
 void compute_marginal_wquantiles(double *sample_points,
                                  double *weights,
                                  size_t n_points,
@@ -60,8 +115,7 @@ void compute_marginal_wquantiles(double *sample_points,
                                  size_t dim,
                                  const double *quantiles,
                                  size_t n_quantiles,
-                                 double *quantile_values,
-                                 double *mean)
+                                 double *quantile_values)
 {
     /* copy appropriate dimension */
     struct weighted_coord 
@@ -72,43 +126,45 @@ void compute_marginal_wquantiles(double *sample_points,
 
     double *ps = sample_points + dim;
     double *pw = weights;
+    double sum_wgt = 0;
     for (cut = start; cut != end; ++cut, ps += n_dims, ++pw) 
     {
         cut->coord = *ps;
         cut->weight = *pw;
+        sum_wgt += *pw;
     }
 
     size_t f;
-    double sum_wgts = 0, sum_wval = 0;
-    struct less_wcoord lesswc;
     for (f = 0; f != n_quantiles; ++f)
     {
-        cut = wgt_points + (size_t)std::round(quantiles[f] * n_points);
-        std::nth_element(start, cut, end, lesswc);
-        while (start != cut) 
-        {
-            sum_wgts += start->weight;
-            ++start;
-        }
-        quantile_values[f] = sum_wgts;
+        cut = weighted_quantiles_aux(wgt_points, n_points, sum_wgt, quantiles[f]);
+        quantile_values[f] = cut->coord;
     }
-
-    /* finish computing the sum_wgts */
-    while (start != end) sum_wgts += start++->weight;
-
-    /* normalize quantile values */
-    double sum_wgts_inv = 1.0 / sum_wgts;
-    for (f = 0; f != n_quantiles; ++f)
-        quantile_values[f] *= sum_wgts_inv;
-
-    /* compute mean */
-    for (start = wgt_points; start != end; ++start)
-        sum_wval += start->weight * start->coord;
-    *mean = sum_wval * sum_wgts_inv;
 
     free(wgt_points);
 }
 
+
+double compute_marginal_mean(double *points,
+                             double *weights,
+                             size_t n_points,
+                             size_t n_dims,
+                             size_t dim)
+{
+    double 
+        *pb,
+        *wb = weights, *we = wb + n_points, 
+        sum_wgts = 0, marg = 0;
+
+    while (wb != we) sum_wgts += *wb++;
+
+    for (wb = weights, pb = points + dim; wb != we; ++wb, pb += n_dims) 
+        marg += *pb * *wb;
+
+    marg /= sum_wgts;
+    return marg;
+}
+                             
 
 #if 0
 /* prints out return next write position after writing to out_buf */

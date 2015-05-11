@@ -9,11 +9,17 @@
 /* number of points or weights generated at a time */
 #define GEN_POINTS_BATCH 32
 
-struct dir_points_par
+struct points_gen_par
 {
-    double alpha[NUM_NUCS];
+    unsigned alpha_counts[NUM_NUCS];
+    unsigned alpha_perm[NUM_NUCS]; /* the permutation that was applied to get alpha_counts */
     gsl_rng *randgen;
+    struct packed_counts *post_counts;
 };
+
+void init_dirichlet_points_gen(double _alpha_prior);
+
+double get_alpha_prior();
 
 /* Generate GEN_POINTS_BATCH points using par to parameterize the
    distribution */
@@ -25,13 +31,6 @@ void gen_dirichlet_points_wrapper(const void *par, POINT *points);
    will serve as an 'always different' point. */
 void gen_reference_points_wrapper(const void *par, POINT *points);
 
-
-struct calc_post_to_dir_par
-{
-    struct packed_counts *post_counts;
-    POINT proposal_alpha;
-    POINT prior_alpha;
-};
 
 /* Generate GEN_POINTS_BATCH weights (ratio of posterior to dirichlet) */
 void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights);

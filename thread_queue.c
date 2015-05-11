@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <string.h>
 
 enum buf_status {
     EMPTY,
@@ -37,44 +38,57 @@ struct thread_comp_input {
 /* the main configuration object. there will be just one of these for
    a given program (typically) or for a given task. */
 struct thread_queue {
-    thread_queue_reader_t *reader;
+    thread_queue_reader_t reader;
     thread_queue_worker_t *worker;
     thread_queue_offload_t *offload;
 
     /* parameters to be used by the reader within the read_mtx lock */
-    void *reader_par, *offload_par;
+    void **reader_par;
+    void *global_read_start; /* keeps readers from re-reading the same input */
+    unsigned *reader_in_use, n_readers, n_readers_free;
+    pthread_mutex_t read_mtx;
+    pthread_cond_t read_cond;
+    void *offload_par;
     struct output_node *out_pool, *out_head, *out_tail;
+    unsigned pool_status[4]; /* number of output nodes in each of the states */
     struct thread_comp_input *input;
-    pthread_mutex_t pool_mtx, read_mtx;
+    pthread_mutex_t pool_mtx;
     pthread_t *threads;
-    /* struct pthread_attr_t thread_attr; */
-    size_t n_threads, n_extra, n_inputs, n_outputs;
+    unsigned n_threads, n_extra, n_inputs, n_outputs;
 };
 
 
 /* initialize resources */
 struct thread_queue *
-thread_queue_init(thread_queue_reader_t reader,
-                  void *reader_par,
-                  thread_queue_worker_t worker,
-                  void *worker_par,
-                  thread_queue_offload_t offload,
-                  void *offload_par,
-                  size_t n_threads,
-                  size_t n_extra,
-                  size_t n_inputs,
-                  size_t n_outputs,
-                  size_t max_input_mem)
+thread_queue_init(thread_queue_reader_t reader, void **reader_par,
+                  thread_queue_worker_t worker, void **worker_par,
+                  thread_queue_offload_t offload, void *offload_par,
+                  void *global_read_start,
+                  unsigned n_threads,
+                  unsigned n_extra,
+                  unsigned n_readers,
+                  unsigned n_inputs,
+                  unsigned n_outputs,
+                  unsigned long max_input_mem)
 {
+    unsigned n_pool = n_threads + n_extra;
     struct thread_queue *tq = malloc(sizeof(struct thread_queue));
     tq->reader = reader;
     tq->reader_par = reader_par;
+    tq->n_readers = n_readers;
+    tq->n_readers_free = n_readers;
+    tq->reader_in_use = calloc(n_readers, sizeof(tq->reader_in_use[0]));
+    pthread_mutex_init(&tq->read_mtx, NULL);
+    pthread_cond_init(&tq->read_cond, NULL);
     tq->worker = worker;
     tq->offload = offload;
     tq->offload_par = offload_par;
-    tq->out_pool = calloc(n_threads + n_extra, sizeof(struct output_node));
+    tq->out_pool = calloc(n_pool, sizeof(struct output_node));
     tq->out_head = NULL;
     tq->out_tail = NULL;
+    memset(tq->pool_status, 0, sizeof(tq->pool_status));
+    tq->pool_status[EMPTY] = n_pool;
+    tq->global_read_start = global_read_start;
     tq->input = calloc(n_threads, sizeof(struct thread_comp_input));
 
     pthread_mutex_init(&tq->pool_mtx, NULL);
@@ -86,11 +100,10 @@ thread_queue_init(thread_queue_reader_t reader,
     tq->n_outputs = n_outputs;
 
     /* only need initialize the pointer to NULL */
-    size_t p, t, b;
-    void **worker_pars = worker_par;
+    unsigned p, t, b;
     for (t = 0; t != n_threads; ++t)
     {
-        tq->input[t].worker_par = worker_pars[t];
+        tq->input[t].worker_par = worker_par[t];
         tq->input[t].buf = malloc(n_inputs * sizeof(struct managed_buf));
         for (b = 0; b != n_inputs; ++b)
         {
@@ -103,8 +116,7 @@ thread_queue_init(thread_queue_reader_t reader,
 
     /* by default, use 2% of the memory of the input for the whole
        initial output */
-    size_t n_pool = n_threads + n_extra;
-    size_t out_chunk_size = max_input_mem * 2 / 100 / n_pool + 10;
+    unsigned out_chunk_size = max_input_mem * 2 / 100 / n_pool + 10;
     for (p = 0; p != n_pool; ++p)
     {
         tq->out_pool[p].buf = malloc(n_outputs * sizeof(struct managed_buf));
@@ -135,7 +147,7 @@ static void *worker_func(void *args);
 int thread_queue_run(struct thread_queue *tq)
 {
 
-    size_t t;
+    unsigned t;
     int rc;
     for (t = 0; t != tq->n_threads; ++t) {
         rc = pthread_create(&tq->threads[t], NULL, worker_func, &tq->input[t]);
@@ -157,7 +169,7 @@ void thread_queue_free(struct thread_queue *tq)
     pthread_mutex_destroy(&tq->read_mtx);
     free(tq->threads);
 
-    size_t t, b;
+    unsigned t, b;
     for (t = 0; t != tq->n_threads; ++t)
     {
         for (b = 0; b != tq->n_inputs; ++b)
@@ -165,7 +177,7 @@ void thread_queue_free(struct thread_queue *tq)
         free(tq->input[t].buf);
     }
     free(tq->input);
-    size_t n_pool = tq->n_threads + tq->n_extra;
+    unsigned n_pool = tq->n_threads + tq->n_extra;
     for (t = 0; t != n_pool; ++t)
     {
         for (b = 0; b != tq->n_outputs; ++b)
@@ -177,13 +189,16 @@ void thread_queue_free(struct thread_queue *tq)
 
 
 /* safely change the status flag of the 'out' node. */
-void mutex_change_status(struct thread_queue *tq, struct output_node *out,
+void mutex_change_status(struct thread_queue *tq,
+                         struct output_node *out,
                          enum buf_status status)
 {
     int rc = pthread_mutex_lock(&tq->pool_mtx);
     CHECK_THREAD(rc);
+    --tq->pool_status[out->status];
     out->status = status;
-    size_t b;
+    ++tq->pool_status[out->status];
+    unsigned b;
     if (status == EMPTY)
         for (b = 0; b != tq->n_outputs; ++b)
             out->buf[b].size = 0;
@@ -200,19 +215,25 @@ void mutex_change_status(struct thread_queue *tq, struct output_node *out,
 #ifdef _THREAD_QUEUE_DEBUG
 #define PROGRESS_DECL() struct timespec beg_time, end_time
 #define PROGRESS_START() clock_gettime(CLOCK_REALTIME, &beg_time)
-#define PROGRESS_MSG(msg)                                   \
-    do {                                                    \
-        clock_gettime(CLOCK_REALTIME, &end_time);           \
-        fprintf(stderr, "%li\t%li\t%s\n",                   \
-                in - tq->input,                             \
-                ELAPSED_MS,                                 \
-                (msg));                                     \
-        fflush(stderr);                                     \
+#define PROGRESS_MSG(category, msg)                                     \
+    do {                                                                \
+        clock_gettime(CLOCK_REALTIME, &end_time);                       \
+        fprintf(stderr, "%s\t%li\t%li\t%li\t%u\t%u\t%u\t%u\t%s\n",      \
+                (category),                                             \
+                (end_time.tv_sec * 1000000000 + end_time.tv_nsec),      \
+                in - tq->input,                                         \
+                ELAPSED_MS,                                             \
+                tq->pool_status[EMPTY],                                 \
+                tq->pool_status[LOADING],                               \
+                tq->pool_status[FULL],                                  \
+                tq->pool_status[UNLOADING],                             \
+                (msg));                                                 \
+        fflush(stderr);                                                 \
     } while (0)
 #else
 #define PROGRESS_DECL()
 #define PROGRESS_START()
-#define PROGRESS_MSG(msg)
+#define PROGRESS_MSG(category, msg)
 #endif
 
 
@@ -221,7 +242,7 @@ static void *worker_func(void *args)
 {
     struct thread_comp_input *in = args;
     struct thread_queue *tq = in->tq;
-    size_t p, n_pool = tq->n_threads + tq->n_extra;
+    unsigned p, n_pool = tq->n_threads + tq->n_extra;
 
     PROGRESS_DECL();
 
@@ -231,34 +252,58 @@ static void *worker_func(void *args)
         /* read chunk into input buffer.  this step can be done
            independent of any locking of the out-buffer pool. */
         PROGRESS_START();
-        rc = pthread_mutex_lock(&tq->read_mtx);
-        CHECK_THREAD(rc);
-        PROGRESS_MSG("Wait for read lock");
+        (void)pthread_mutex_lock(&tq->read_mtx);
+
+        /* wait for a reader to free up. */
+        while (! tq->n_readers_free)
+            pthread_cond_wait(&tq->read_cond, &tq->read_mtx);
+
+        /* find the first free reader */
+        unsigned r;
+        for (r = 0; r != tq->n_readers; ++r)
+            if (! tq->reader_in_use[r]) break;
+        
+        tq->reader_in_use[r] = 1;
+        --tq->n_readers_free;
+
+        tq->reader.get_start(tq->reader_par[r], tq->global_read_start);
+        PROGRESS_MSG("WL", "Reserve a reader");
 
         PROGRESS_START();
-        tq->reader(tq->reader_par, in->buf);
-        rc = pthread_mutex_unlock(&tq->read_mtx);
-        CHECK_THREAD(rc);
+        tq->reader.scan(tq->reader_par[r], in->buf[0].alloc);
+        PROGRESS_MSG("RS", "Scan");
+
+        tq->reader.set_start(tq->reader_par[r], tq->global_read_start);
+        (void)pthread_mutex_unlock(&tq->read_mtx);
+
+        PROGRESS_START();
+        tq->reader.read(tq->reader_par[r], in->buf);
+        PROGRESS_MSG("RR", "Read");
+
+        (void)pthread_mutex_lock(&tq->read_mtx);
+        tq->reader_in_use[r] = 0;
+        ++tq->n_readers_free;
+        (void)pthread_mutex_unlock(&tq->read_mtx);
+
+        pthread_cond_signal(&tq->read_cond);
 
         /* no need to free any resources here */
-        size_t sz = 0, b;
+        unsigned sz = 0, b;
         for (b = 0; b != tq->n_inputs; ++b)
-            if (in->buf[b].size)
+            if (in->buf[b].size) 
             {
                 sz = 1;
                 break;
             }
         if (sz == 0)
         {
-            PROGRESS_MSG("No more to read.  Exiting.");
             pthread_exit(NULL);
         }
         else 
-            PROGRESS_MSG("Read input");
 
         /* search for EMPTY output buf, append, set status to
            LOADING */
-        PROGRESS_START();
+        /* PROGRESS_START(); */
         while (1)
         {
             rc = pthread_mutex_lock(&tq->pool_mtx); /* ########## POOL LOCK ########## */
@@ -267,7 +312,9 @@ static void *worker_func(void *args)
                 if (tq->out_pool[p].status == EMPTY)
                 {
                     in->out = &tq->out_pool[p];
+                    --tq->pool_status[in->out->status];
                     in->out->status = LOADING;
+                    ++tq->pool_status[in->out->status];
                     in->out->next = NULL;
                     
                     if (! tq->out_head)
@@ -286,19 +333,17 @@ static void *worker_func(void *args)
                locks/unlocks, but frequent enough compared to the time
                it takes for the main loop */
         }
-        PROGRESS_MSG("Buffer search");
+        /* PROGRESS_MSG("BS", "Buffer search"); */
 
         /* load the output buffer. */
         PROGRESS_START();
         tq->worker(in->worker_par, in->buf, in->out->buf);
-        PROGRESS_MSG("Work");
+        PROGRESS_MSG("W", "Work");
 
-        PROGRESS_START();
         mutex_change_status(tq, in->out, FULL);
         in->out = NULL;
-        PROGRESS_MSG("Changed status to FULL");
         
-        PROGRESS_START();
+        /* PROGRESS_START(); */
         while (tq->out_head && tq->out_head->status == FULL)
         {
             mutex_change_status(tq, tq->out_head, UNLOADING);
@@ -307,7 +352,10 @@ static void *worker_func(void *args)
             rc = pthread_mutex_lock(&tq->pool_mtx);
             CHECK_THREAD(rc);
 
+            --tq->pool_status[tq->out_head->status];
             tq->out_head->status = EMPTY;
+            ++tq->pool_status[tq->out_head->status];
+            
             for (b = 0; b != tq->n_outputs; ++b)
                 tq->out_head->buf[b].size = 0;
 
@@ -316,6 +364,6 @@ static void *worker_func(void *args)
             rc = pthread_mutex_unlock(&tq->pool_mtx);
             CHECK_THREAD(rc);
         }
-        PROGRESS_MSG("Unload");
+        /* PROGRESS_MSG("U", "Unload"); */
     }
 }
