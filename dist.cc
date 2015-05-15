@@ -13,25 +13,19 @@ extern "C" {
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
-// #define MAX_SECONDARY_CACHE_SIZE 100000
-#define MAX_SECONDARY_CACHE_SIZE 0
-
 int dist_usage()
 {
     fprintf(stderr, 
-            "\nUsage: dep dist [options] samples.rdb contig_order.rdb\n" 
+            "\nUsage: dep dist [options] samples.rdb sample_pairings.rdb contig_order.rdb\n" 
             "Options:\n\n"
             "FILES\n"
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
             "-c STRING   (optional) name of output composition file.  If absent, do not output composition marginal estimates.\n"
             "-i STRING   (optional) name of output indel distance file.  If absent, do not perform indel distance calculation.\n"
-            "-s STRING   name of sample_pairings.rdb file (see description below).  Required if -d or -i are given.\n"
             "-r STRING   input range file (lines 'contig<tab>start<tab>end') to process [blank] (blank = process whole file)\n"
             "-x STRING   (optional) name of output summary statistics file of differing loci.\n"
             "\n"
             "STATISTICAL PARAMETERS\n"
-            "-1 INT      MAX1, maximum first dirichlet alpha component [1000]\n"
-            "-2 INT      MAX2, maximum second dirichlet alpha component [100]\n"
             "-y FLOAT    MIN_DIST, min mutation distance (0-1 scale) to call as changed [0.2]\n"
             "-X FLOAT    POST_CONF, confidence for -y [0.99]\n"
             "-Z FLOAT    BETA_CONF, confidence for binomial estimation [0.9999]\n"
@@ -39,7 +33,7 @@ int dist_usage()
             "-p FLOAT    PRIOR_ALPHA, alpha value for dirichlet prior [0.1]\n"
             "\n"
             "OTHER\n"
-            "-q INT      minimum quality score to include bases as evidence [%s]\n"
+            "-q INT      minimum quality score to include bases as evidence [5]\n"
             "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
             "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
             "-t INT      number of threads to use [1]\n"
@@ -49,13 +43,14 @@ int dist_usage()
             "\n"
             "These options affect how sampling is done.\n"
             "\n"
-            "-D STRING   distance quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
-            "-C STRING   composition quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
+            "-Q STRING   quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
             "\n"
             "samples.rdb has lines of <sample_id><tab></path/to/sample.jpd><tab></path/to/sample.pileup>\n"
             "sample_pairings.rdb has lines of <sample_id><tab><sample_id>\n"
             "defining which pairs of samples are to be compared.  <sample_id> correspond\n"
-            "with those in samples.rdb\n"
+            "with those in samples.rdb.  The special <sample_id> \"PSEUDO\" may be"
+            "supplied as the second sample in the pair.  This indicates to do comparisons\n"
+            "with a conceptual sample that is identical to the reference base at every locus.\n"
             "\n"
             "contig_order.rdb has lines of <contig><tab><ordering>\n"
             "It must be consistent and complete with the orderings of the contigs mentioned in\n"
@@ -63,8 +58,6 @@ int dist_usage()
             "\n"
             "On machines where 2 or more concurrent reads achieve higher\n"
             "throughput than one read, set -R (number of readers) accordingly\n"
-            ,
-            Usage::quality_string
             );
     return 1;
 }
@@ -85,34 +78,28 @@ int main_dist(int argc, char **argv)
     unsigned max_sample_points = 10000;
     int print_pileup_fields = 0;
 
-    const char *dist_quantiles_string = "0.005,0.05,0.5,0.95,0.995";
-    const char *comp_quantiles_string = "0.005,0.05,0.5,0.95,0.995";
+    const char *quantiles_string = "0.005,0.05,0.5,0.95,0.995";
 
     const char *dist_file = NULL;
     const char *comp_file = NULL;
     const char *indel_dist_file = NULL;
     const char *fastq_type = NULL;
-    const char *sample_pairs_file = NULL;
     const char *summary_stats_file = NULL;
     const char *query_range_file = NULL;
 
-    unsigned max1_alpha = 1000, max2_alpha = 100;
     double prior_alpha = 0.1;
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:i:s:r:x:1:2:t:R:f:y:X:Z:p:t:m:q:F:D:C:g")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:i:r:x:t:R:f:y:X:Z:p:t:m:q:F:Q:g")) >= 0)
     {
         switch(c)
         {
         case 'd': dist_file = optarg; break;
         case 'c': comp_file = optarg; break;
         case 'i': indel_dist_file = optarg; break;
-        case 's': sample_pairs_file = optarg; break;
         case 'r': query_range_file = optarg; break;
         case 'x': summary_stats_file = optarg; break;
 
-        case '1': max1_alpha = (size_t)atof(optarg); break;
-        case '2': max2_alpha = (size_t)atof(optarg); break;
         case 'f': max_sample_points = (size_t)atof(optarg); break;
         case 'y': min_dirichlet_dist = sqrt(2.0) * atof(optarg); break;
         case 'X': post_confidence = atof(optarg); break;
@@ -124,13 +111,12 @@ int main_dist(int argc, char **argv)
         case 'm': max_mem = (size_t)atof(optarg); break;
         case 'q': min_quality_score = (size_t)atoi(optarg); break;
         case 'F': fastq_type = optarg; break;
-        case 'D': dist_quantiles_string = optarg; break;
-        case 'C': comp_quantiles_string = optarg; break;
+        case 'Q': quantiles_string = optarg; break;
         case 'g': print_pileup_fields = 1; break;
         default: return dist_usage(); break;
         }
     }
-    if (argc - optind != 2) return dist_usage();
+    if (argc - optind != 3) return dist_usage();
 
     pileup_init(min_quality_score);
 
@@ -138,18 +124,11 @@ int main_dist(int argc, char **argv)
     max_sample_points += GEN_POINTS_BATCH - (max_sample_points % GEN_POINTS_BATCH);
 
     const char *samples_file = argv[optind];
-    const char *contig_order_file = argv[optind + 1];
+    const char *sample_pairs_file = argv[optind + 1];
+    const char *contig_order_file = argv[optind + 2];
 
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("\n"); /* So progress messages don't interfere with shell prompt. */
-
-    // consistency checks
-    if (! sample_pairs_file && (dist_file || indel_dist_file))
-    {
-        // either provide dist_file and sample_pairs_file, or none at all
-        fprintf(stderr, "If -d or -i are given, you must also provide -S.\n");
-        exit(5);
-    }
 
     if (! dist_file && ! comp_file && ! indel_dist_file)
     {
@@ -166,7 +145,7 @@ int main_dist(int argc, char **argv)
 
     dist_worker_init(post_confidence, min_dirichlet_dist, max_sample_points,
                      samples_file, sample_pairs_file, fastq_type,
-                     dist_quantiles_string, comp_quantiles_string,
+                     quantiles_string,
                      (dist_fh != NULL), (comp_fh != NULL), (indel_fh != NULL),
                      print_pileup_fields);
 
@@ -202,16 +181,17 @@ int main_dist(int argc, char **argv)
     unsigned long max_dir_cache_items = 
         FRAGMENTATION_FACTOR * (max_mem - max_input_mem) 
         / (max_sample_points * BYTES_PER_POINT);
+    unsigned long max_bounds_cache_items = 1000;
 
     init_dirichlet_points_gen(prior_alpha);
 
-    dirichlet_diff_init(max1_alpha, max2_alpha,
+    dirichlet_diff_init(PSEUDO_DEPTH,
                         GEN_POINTS_BATCH,
                         post_confidence, beta_confidence,
                         min_dirichlet_dist,
                         max_sample_points,
                         max_dir_cache_items, 
-                        MAX_SECONDARY_CACHE_SIZE,
+                        max_bounds_cache_items,
                         n_threads);
 
     /* initialize beta quantile estimation procedure */

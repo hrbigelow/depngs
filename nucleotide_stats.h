@@ -25,7 +25,7 @@ struct cpd_count {
 };
 
 /* this structure holds a summary of all raw base calls at a given
-   locus the values in stats_index can be decoded into (basecall,
+   locus. the values in stats_index can be decoded into (basecall,
    quality, strand) triplets using Nucleotide::decode */
 struct packed_counts
 {
@@ -33,7 +33,7 @@ struct packed_counts
     /* number of populated elements in stats and 'stats_index'. */
     size_t num_data; 
 
-    /* stats_index[n] = code.  Nucleotide::decode(code, &b, &q,
+    /* stats_index[n] = code.  decode_nucleotide(code, &b, &q,
        &s). gives the (b,q,s) tuple. */
     size_t stats_index[NUC_NUM_BQS];
 };

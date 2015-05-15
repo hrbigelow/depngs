@@ -94,9 +94,10 @@ void decode_nucleotide(size_t code, char * basecall, size_t *quality, size_t *st
 }
 
 
-/* initialize fbqs_cpd field of c.  packs the subset of statistics for
-   this model that are represented in the c->stats_index */
-void nucleotide_stats_pack(const struct nucleotide_stats *stats, struct packed_counts *pc)
+/* initialize fbqs_cpd field of pc.  packs the subset of statistics for
+   this model that are represented in the pc->stats_index */
+void nucleotide_stats_pack(const struct nucleotide_stats *stats,
+                           struct packed_counts *pc)
 {
     size_t i, f;
     for (i = 0; i != pc->num_data; ++i)

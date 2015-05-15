@@ -58,6 +58,9 @@ struct thread_queue {
 };
 
 
+struct timespec program_start_time;
+
+
 /* initialize resources */
 struct thread_queue *
 thread_queue_init(thread_queue_reader_t reader, void **reader_par,
@@ -127,6 +130,7 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
             tq->out_pool[p].buf[b].buf = malloc(tq->out_pool[p].buf[b].alloc);
         }
     }
+    clock_gettime(CLOCK_REALTIME, &program_start_time);
 
     return tq;
 }
@@ -213,27 +217,52 @@ void mutex_change_status(struct thread_queue *tq,
       ((beg_time).tv_sec * 1000000000 + (beg_time).tv_nsec)) / 1000000)
 
 #ifdef _THREAD_QUEUE_DEBUG
-#define PROGRESS_DECL() struct timespec beg_time, end_time
-#define PROGRESS_START() clock_gettime(CLOCK_REALTIME, &beg_time)
-#define PROGRESS_MSG(category, msg)                                     \
+#define PROGRESS_DECL() struct timespec beg_time, end_time;
+
+#define TIME_MS(t) \
+    (long)((t).tv_sec * 1e3 + (t).tv_nsec / 1e6)                        \
+    - (long)(program_start_time.tv_sec * 1e3                            \
+             + program_start_time.tv_nsec / 1e6)
+
+#define PROGRESS_START(category)                                        \
+    do {                                                                \
+    clock_gettime(CLOCK_REALTIME, &beg_time);                           \
+    fprintf(stderr,                                                     \
+            "START\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\t%u\n",          \
+            (category),                                                 \
+            TIME_MS(beg_time),                                          \
+            TIME_MS(beg_time),                                          \
+            in - tq->input,                                             \
+            0l,                                                         \
+            tq->pool_status[EMPTY],                                     \
+            tq->pool_status[LOADING],                                   \
+            tq->pool_status[FULL],                                      \
+            tq->pool_status[UNLOADING]);                                \
+    fflush(stderr);                                                     \
+    } while (0)
+
+
+    
+#define PROGRESS_MSG(category)                                          \
     do {                                                                \
         clock_gettime(CLOCK_REALTIME, &end_time);                       \
-        fprintf(stderr, "%s\t%li\t%li\t%li\t%u\t%u\t%u\t%u\t%s\n",      \
+        fprintf(stderr,                                                 \
+                "END\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\t%u\n",        \
                 (category),                                             \
-                (end_time.tv_sec * 1000000000 + end_time.tv_nsec),      \
+                TIME_MS(beg_time),                                      \
+                TIME_MS(end_time),                                      \
                 in - tq->input,                                         \
                 ELAPSED_MS,                                             \
                 tq->pool_status[EMPTY],                                 \
                 tq->pool_status[LOADING],                               \
                 tq->pool_status[FULL],                                  \
-                tq->pool_status[UNLOADING],                             \
-                (msg));                                                 \
+                tq->pool_status[UNLOADING]);                            \
         fflush(stderr);                                                 \
     } while (0)
 #else
 #define PROGRESS_DECL()
-#define PROGRESS_START()
-#define PROGRESS_MSG(category, msg)
+#define PROGRESS_START(category)
+#define PROGRESS_MSG(category)
 #endif
 
 
@@ -251,7 +280,7 @@ static void *worker_func(void *args)
         int rc;
         /* read chunk into input buffer.  this step can be done
            independent of any locking of the out-buffer pool. */
-        PROGRESS_START();
+        PROGRESS_START("WAIT");
         (void)pthread_mutex_lock(&tq->read_mtx);
 
         /* wait for a reader to free up. */
@@ -267,18 +296,18 @@ static void *worker_func(void *args)
         --tq->n_readers_free;
 
         tq->reader.get_start(tq->reader_par[r], tq->global_read_start);
-        PROGRESS_MSG("WL", "Reserve a reader");
+        PROGRESS_MSG("WAIT");
 
-        PROGRESS_START();
+        PROGRESS_START("SCAN");
         tq->reader.scan(tq->reader_par[r], in->buf[0].alloc);
-        PROGRESS_MSG("RS", "Scan");
+        PROGRESS_MSG("SCAN");
 
         tq->reader.set_start(tq->reader_par[r], tq->global_read_start);
         (void)pthread_mutex_unlock(&tq->read_mtx);
 
-        PROGRESS_START();
+        PROGRESS_START("READ");
         tq->reader.read(tq->reader_par[r], in->buf);
-        PROGRESS_MSG("RR", "Read");
+        PROGRESS_MSG("READ");
 
         (void)pthread_mutex_lock(&tq->read_mtx);
         tq->reader_in_use[r] = 0;
@@ -303,7 +332,7 @@ static void *worker_func(void *args)
 
         /* search for EMPTY output buf, append, set status to
            LOADING */
-        /* PROGRESS_START(); */
+        /* PROGRESS_START("BS"); */
         while (1)
         {
             rc = pthread_mutex_lock(&tq->pool_mtx); /* ########## POOL LOCK ########## */
@@ -333,17 +362,17 @@ static void *worker_func(void *args)
                locks/unlocks, but frequent enough compared to the time
                it takes for the main loop */
         }
-        /* PROGRESS_MSG("BS", "Buffer search"); */
+        /* PROGRESS_MSG("BS"); */
 
         /* load the output buffer. */
-        PROGRESS_START();
+        PROGRESS_START("WORK");
         tq->worker(in->worker_par, in->buf, in->out->buf);
-        PROGRESS_MSG("W", "Work");
+        PROGRESS_MSG("WORK");
 
         mutex_change_status(tq, in->out, FULL);
         in->out = NULL;
         
-        /* PROGRESS_START(); */
+        /* PROGRESS_START("U"); */
         while (tq->out_head && tq->out_head->status == FULL)
         {
             mutex_change_status(tq, tq->out_head, UNLOADING);
@@ -364,6 +393,6 @@ static void *worker_func(void *args)
             rc = pthread_mutex_unlock(&tq->pool_mtx);
             CHECK_THREAD(rc);
         }
-        /* PROGRESS_MSG("U", "Unload"); */
+        /* PROGRESS_MSG("U"); */
     }
 }

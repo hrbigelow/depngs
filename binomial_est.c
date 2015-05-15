@@ -22,6 +22,13 @@ const char *fuzzy_state_strings[] = {
 };
 
 /*
+See the section 'Jeffreys Interval' on estimation of confidence
+intervals on p given a sequence of bernoulli
+outcomes. 
+
+http://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval
+
+
 Consider generating the distance distribution between a real
 locus (a posterior in the simplex) and a 'fake' locus that
 represents homozygous reference (a point-mass at one of the

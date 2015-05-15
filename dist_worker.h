@@ -19,8 +19,8 @@ extern "C" {
 struct locus_sampling
 {
     PileupSummary locus;
-    bool is_next;
-    unsigned char dist_printed;
+    unsigned char is_next;
+    unsigned char confirmed_changed;
     struct distrib_points distp;
     char *current, *end;
     pair_ordering locus_ord;
@@ -32,8 +32,7 @@ void dist_worker_init(double _post_confidence,
                       const char *samples_file,
                       const char *sample_pairs_file,
                       const char *fastq_type,
-                      const char *dist_quantiles_string,
-                      const char *comp_quantiles_string,
+                      const char *quantiles_string,
                       unsigned do_dist,
                       unsigned do_comp,
                       unsigned do_indel,
@@ -72,6 +71,8 @@ struct dist_worker_input
         unsigned total, cacheable, cache_was_set;
     } metrics;
 
+    struct locus_sampling pseudo_sample, *lslist;
+    struct pair_dist_stats *pair_stats;
     gsl_rng *randgen;
     double *square_dist_buf; /* holds squares of distances for distance calculation */
     double *weights_buf; /* holds weights from those square distances
@@ -93,6 +94,8 @@ void dist_worker(void *par,
 
 /* conforms to thread_queue_offload_t */
 void dist_offload(void *par, const struct managed_buf *bufs);
+
+#define PSEUDO_DEPTH 100000
 
 void print_cache2_histo();
 

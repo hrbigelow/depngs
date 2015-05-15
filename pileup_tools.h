@@ -69,7 +69,7 @@ public:
     static void set_offset(int offset);
 };
 
-FastqType FastqFileType(char const* pileup_file,
+FastqType FastqFileType(const char *pileup_file,
                         char * chunk_buffer_in,
                         size_t chunk_size,
                         size_t num_threads);

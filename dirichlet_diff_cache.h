@@ -25,6 +25,7 @@ struct binomial_est_params {
     unsigned use_low_beta;
     double query_beta;
     unsigned points_hash_frozen;
+    unsigned bounds_hash_frozen;
     struct distrib_points *dist[2];
 };
 
@@ -37,9 +38,11 @@ void print_primary_cache_size();
 
 unsigned points_hash_frozen();
 
+unsigned bounds_hash_frozen();
+
 void print_cache_stats();
 
-void dirichlet_diff_init(unsigned max1, unsigned max2, 
+void dirichlet_diff_init(unsigned max_depth,
                          unsigned batch_size,
                          double post_confidence,
                          double beta_confidence,
@@ -66,7 +69,6 @@ enum fuzzy_state
 cached_dirichlet_diff(unsigned *a_counts,
                       unsigned *b_counts,
                       struct binomial_est_params *bpar,
-                      unsigned points_hash_frozen,
                       unsigned *cacheable,
                       unsigned *cache_was_set);
 
