@@ -181,7 +181,7 @@ int main_dist(int argc, char **argv)
     unsigned long max_dir_cache_items = 
         FRAGMENTATION_FACTOR * (max_mem - max_input_mem) 
         / (max_sample_points * BYTES_PER_POINT);
-    unsigned long max_bounds_cache_items = 1000;
+    unsigned long max_bounds_cache_items = 5000;
 
     init_dirichlet_points_gen(prior_alpha);
 
@@ -200,6 +200,9 @@ int main_dist(int argc, char **argv)
                       max_sample_points, n_threads);
 
     printf("done.\n");
+
+    printf("Prepopulating Difference hash...");
+    prepopulate_bounds_keys(n_threads);
 
     struct thread_queue *tqueue =
         dist_worker_tq_init(query_range_file, 

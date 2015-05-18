@@ -1276,7 +1276,7 @@ void dist_worker(void *par,
             dw->bep.points_hash_frozen = points_hash_frozen();
 
         if (! dw->bep.bounds_hash_frozen)
-            dw->bep.bounds_hash_frozen = bounds_hash_frozen();
+            dw->bep.bounds_hash_frozen = freeze_bounds_hash();
 
         if (dist_buf || comp_buf)
             next_distance_quantiles_aux(dw, gs, dist_buf);

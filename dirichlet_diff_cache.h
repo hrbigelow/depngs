@@ -26,6 +26,9 @@ struct binomial_est_params {
     double query_beta;
     unsigned points_hash_frozen;
     unsigned bounds_hash_frozen;
+
+    /* these two are set to point to instances owned in struct
+       locus_sampling. */
     struct distrib_points *dist[2];
 };
 
@@ -38,7 +41,7 @@ void print_primary_cache_size();
 
 unsigned points_hash_frozen();
 
-unsigned bounds_hash_frozen();
+unsigned freeze_bounds_hash();
 
 void print_cache_stats();
 
@@ -52,6 +55,8 @@ void dirichlet_diff_init(unsigned max_depth,
                          unsigned long max_secondary_cache_size,
                          unsigned n_threads);
 void dirichlet_diff_free();
+
+void prepopulate_bounds_keys(unsigned n_threads);
 
 void find_cacheable_permutation(const unsigned *a, const unsigned *b, 
                                 const unsigned *lim,
