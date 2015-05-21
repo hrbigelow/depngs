@@ -45,7 +45,8 @@ struct pair_ordering init_locus(const char *line)
 
 /* */
 struct pair_ordering_range *parse_query_ranges(const char *query_range_file,
-                                               unsigned *num_queries)
+                                               unsigned *num_queries,
+                                               unsigned long *n_total_loci)
 {
     FILE *query_range_fh = fopen(query_range_file, "r");
     if (! query_range_fh)
@@ -64,6 +65,8 @@ struct pair_ordering_range *parse_query_ranges(const char *query_range_file,
     char reformat_buf[1000], contig[1000];
     unsigned beg_pos, end_pos, rval;
     *num_queries = 0;
+    *n_total_loci = 0;
+
     while (!feof(query_range_fh))
     {
         if ((rval = fscanf(query_range_fh, "%s\t%u\t%u\n",
@@ -99,8 +102,11 @@ struct pair_ordering_range *parse_query_ranges(const char *query_range_file,
             if (q->end.lo < q->beg.lo)
                 q->end.lo = q->beg.lo;
         }
+
         p = q;
     }
+    for (q = queries; q != queries + *num_queries; ++q)
+        *n_total_loci += q->end.lo - q->beg.lo;
 
     return queries;
 }

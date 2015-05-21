@@ -41,10 +41,12 @@ struct thread_queue {
     thread_queue_reader_t reader;
     thread_queue_worker_t *worker;
     thread_queue_offload_t *offload;
+    thread_queue_exit_t *onexit;
 
     /* parameters to be used by the reader within the read_mtx lock */
     void **reader_par;
-    void *global_read_start; /* keeps readers from re-reading the same input */
+    void *global_reader_state; /* allows threads to communicate reader
+                                  progress. */
     unsigned *reader_in_use, n_readers, n_readers_free;
     pthread_mutex_t read_mtx;
     pthread_cond_t read_cond;
@@ -66,7 +68,8 @@ struct thread_queue *
 thread_queue_init(thread_queue_reader_t reader, void **reader_par,
                   thread_queue_worker_t worker, void **worker_par,
                   thread_queue_offload_t offload, void *offload_par,
-                  void *global_read_start,
+                  thread_queue_exit_t onexit,
+                  void *global_reader_state,
                   unsigned n_threads,
                   unsigned n_extra,
                   unsigned n_readers,
@@ -86,12 +89,13 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
     tq->worker = worker;
     tq->offload = offload;
     tq->offload_par = offload_par;
+    tq->onexit = onexit;
     tq->out_pool = calloc(n_pool, sizeof(struct output_node));
     tq->out_head = NULL;
     tq->out_tail = NULL;
     memset(tq->pool_status, 0, sizeof(tq->pool_status));
     tq->pool_status[EMPTY] = n_pool;
-    tq->global_read_start = global_read_start;
+    tq->global_reader_state = global_reader_state;
     tq->input = calloc(n_threads, sizeof(struct thread_comp_input));
 
     pthread_mutex_init(&tq->pool_mtx, NULL);
@@ -295,14 +299,14 @@ static void *worker_func(void *args)
         tq->reader_in_use[r] = 1;
         --tq->n_readers_free;
 
-        tq->reader.get_start(tq->reader_par[r], tq->global_read_start);
+        tq->reader.get_global_state(tq->reader_par[r], tq->global_reader_state);
         PROGRESS_MSG("WAIT");
 
         PROGRESS_START("SCAN");
         tq->reader.scan(tq->reader_par[r], in->buf[0].alloc);
         PROGRESS_MSG("SCAN");
 
-        tq->reader.set_start(tq->reader_par[r], tq->global_read_start);
+        tq->reader.set_global_state(tq->reader_par[r], tq->global_reader_state);
         (void)pthread_mutex_unlock(&tq->read_mtx);
 
         PROGRESS_START("READ");
@@ -326,6 +330,7 @@ static void *worker_func(void *args)
             }
         if (sz == 0)
         {
+            tq->onexit(in->worker_par);
             pthread_exit(NULL);
         }
         else 

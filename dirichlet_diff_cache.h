@@ -39,9 +39,14 @@ struct alpha_pair {
 
 void print_primary_cache_size();
 
-unsigned points_hash_frozen();
+void set_points_hash_flag(unsigned disable);
 
+unsigned freeze_points_hash();
 unsigned freeze_bounds_hash();
+
+/* call this if the thread needs to stop writing to the shared data */    
+void inactivate_shared_data(unsigned inactivate_points, 
+                            unsigned inactivate_bounds);
 
 void print_cache_stats();
 

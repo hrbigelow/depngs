@@ -19,4 +19,8 @@ int cmp_pair_ordering(const void *pa, const void *pb);
 /* ordering of a pair_ordering_range */
 int cmp_pair_ordering_range(const void *pa, const void *pb);
 
+
+/* ordering that returns zero for interval containment */
+int cmp_pair_ordering_contained(const void *pa, const void *pb);
+
 #endif /* _ORDERING_H */

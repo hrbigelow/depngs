@@ -4,9 +4,7 @@
 dep \- diversity estimation probabilistically
 
 .SH SYNOPSIS
-dep comp [options] input.jpd input.pileup output.comp [output.points]
-.br
-dep dist [options] samples.rdb contig_order.rdb
+dep dist [options] samples.rdb sample_pairings.rdb contig_order.rdb
 .br
 dep simp FTYPE input.jpd sim_comp.rdb > output.pileup
 .br
@@ -31,27 +29,20 @@ is a collection of programs for analyzing single-base loci, one at a
 time, from an alignment of next-gen sequencing reads.
 
 .TP
-.B comp
-dep comp [options] input.jpd input.pileup output.comp [output.points]
-
-Estimates locus base composition with confidence intervals, for each
-locus in the provided pileup file.  Computes confidence intervals as
-base-marginal quantile values for each of the four nucleotides for the
-specified quantiles.
-
-.TP
 .B dist
-dep dist [options] sample_index.rdb contig_order.rdb
+dep dist [options] sample_index.rdb sample_pairings.rdb contig_order.rdb
 
 Estimates mutational distance at each locus and for each pair of
 samples specified in \fBsample_index.rdb\fP, reporting loci that
-differ by some minimum amount.  The 1-D mutational distance
-distribution is generated from the two 4-D base composition estimates
-run on the pair of samples by generating random pairs of sample
-points, one from each 4-D distribution, and computing the euclidean
-distance between each pair of points. From the 1-D distribution, it
-computes confidence intervals. The same approach is taken to generate
-mutational distance for indels.
+differ by some minimum amount.  Also allows measuring 'distance' of a
+sample from the reference sequence (see \fBsample_pairings.rdb\fP
+below) The 1-D mutational distance distribution is generated from the
+two 4-D base composition estimates run on the pair of samples by
+generating random pairs of sample points, one from each 4-D
+distribution, and computing the euclidean distance between each pair
+of points. From the 1-D distribution, it computes confidence
+intervals. The same approach is taken to generate mutational distance
+for indels.
 
 The vast majority of loci will not differ between samples.  To take
 advantage of this and avoid doing unnecessarily refined computations,
@@ -104,7 +95,7 @@ this family for each of the five phases.
 
 
 .TP
-.B Posterior Probability Distribution used for \fIcomp\fP and \fIdist\fP.
+.B Posterior Probability Distribution used for \fIdist\fP.
 
 The posterior probability distribution is a real-valued function
 defined over the 4D "nucleotide composition" space of (A,C,G,T) with
@@ -114,12 +105,12 @@ single locus.  Its value at a point in {A,C,G,T} represents the
 relative probability that the actual sample base composition at that
 locus takes that value. Because it is a continuous probability
 distribution and is not analytical, it can only be used by generating
-sample points and calculating quantile values by counting points.
+sample points and calculating quantile values by counting the number
+of those points on either side of some chosen position in the simplex.
 
 The distribution function itself can be thought of as a 4D Dirichlet
 whose alpha parameters are the actual basecalls, with the "correction"
-owing to the imperfect quality scores of those basecalls.  The use of
-the Dirichlet 
+owing to the imperfect quality scores of those basecalls.
 
 .TP
 .B bqslocus
@@ -262,6 +253,21 @@ For example:
 
 
 .TP
+.B sample_pairings.rdb
+Specifies the set of sample pairs to compare against each other, and
+also samples to compare against the reference genome, to detect
+differences from reference. Contains lines of <label1><tab><label2>,
+where <label1> and <label2> are the labels of samples given in
+\fBsamples.rdb\fP file given as an argument.  The special value for
+label2 of 'REF' indicates to compare the label1 sample against the
+reference sequence.  'REF' can be thought of as a pseudo-sample that
+has ultra-high sequence depth and matches the reference everywhere.
+The algorithm actually uses the same pairwise distance technique using
+this pseudo-sample as the second sample in the pair.
+
+
+
+.TP
 .B contig_order.rdb
 Specifies the set of all contigs, and their orderings in all
 \fBsample.pileup\fP input files.  The ordering must be consistent with
@@ -292,7 +298,7 @@ chrM    25
 
 .TP
 .B output.comp
-The main result file from \fBdep comp\fP. The base composition of a
+The main result file from \fBdep dist\fP. The base composition of a
 given locus in a given sample is represented by 5 lines in this file.
 One line each for the marginal composition estimate of each of the
 four nucleotides, plus one 'summary' line showing totals of the
@@ -385,7 +391,7 @@ given base at high confidence.
 .B output.dist
 The main result file from \fBdep dist\fP.  Each line represents a
 single locus whose base composition of two particular samples differs
-above a threshold.  The tab-delimited fields (with definitions) are:
+above a threshold.  The tab-delimited fields are:
 
 .RS
 
@@ -568,7 +574,7 @@ quals, and depth, as specified below.
 
 .TP
 .B output.points
-Optional sample points and numerical CDFs output from \fBdep comp\fP.
+Optional sample points and numerical CDFs output from \fBdep dist\fP.
 Warning: very large file, will contain 10000 lines (or the value of
 \fBfinal_num_points\fP) for each locus processed. Useful for plotting
 and visualizing the shape of the posterior as a cloud of points in
@@ -699,13 +705,6 @@ Dirichlet parameterized by the counts of each indel event. If not
 provided, do not calculated indel distance.
 
 .TP
-.I sample_pairings_file
-Input file that defines what pairs of samples to compare.  Contains
-lines of <label1><tab><label2>, where <label1> and <label2> are the
-labels of samples given in \fBsamples.rdb\fP file given as an
-argument.
-
-.TP
 .I input_range_file
 Input file that defines ranges of loci to process, in the format
 <contig><tab><start><tab><end>, for example: "chr1 1000000 2000000".
@@ -729,12 +728,6 @@ unsure whether to classify in one of the other categories.  Finally,
 confirmed_changed are the subset of changed that are confirmed by
 weighting using quality scores.  All other stats are determined using
 basecalls alone.
-
-.TP
-.I max_dirichlet_comp1
-
-.TP
-.I max_dirichlet_comp2
 
 .TP
 .I min_distance
@@ -829,69 +822,56 @@ more caching and reading of greater chunks of files, which limits the
 amount of file scanning needed to delineate input chunks.
 
 .TP
-.I dist_quantiles_string
+.I quantiles_string
 A comma-separated list of numbers, ascending, between zero and one.
 These specify all of the quantiles to output quantile values for the
-mutational distance estimate.
-
-.TP
-.I comp_quantiles_string
-A comma-separated list of numbers, ascending, between zero and one.
-These specify all of the quantiles to output quantile values for the
-single-locus base composition marginal estimates.
+mutational distance estimate and the single-base marginal composition
+estimates.
 
 .B Command Options Table
 
-\fBoption\fP                      \fBcomp\fP           \fBdist\fP
+\fBoption\fP for \fBdep dist\fP
 .br
-label                     | -l [comp]    | 
+label                     
 .br
-verbose                   | -v [off]     |
+verbose                   
 .br
-dist_file                 |              | -d [blank]
+dist_file                 -d [blank]
 .br
-comp_file                 |              | -c [blank]
+comp_file                 -c [blank]
 .br
-indel_dist_file           |              | -i [blank]
+indel_dist_file           -i [blank]
 .br
-sample_pairings_file      |              | -s [blank]
+input_range_file          -r [blank]
 .br
-input_range_file          |              | -r [blank]
+summary_stats_file        -x [blank]
 .br
-summary_stats_file        |              | -x [blank]
+min_distance              -y [0.2]
 .br
-max_dirichlet_comp1       |              | -1 [1000]
+posterior_confidence      -X [0.99]
 .br
-max_dirichlet_comp2       |              | -2 [100]
+beta_confidence           -Z [0.9999]
 .br
-min_distance              |              | -y [0.2]
+max_sample_point_pairs    -f [10000]
 .br
-posterior_confidence      |              | -X [0.99]
+prior_alpha               -p [0.1]
 .br
-beta_confidence           |              | -Z [0.9999]
+min_quality_score         -q [5]
 .br
-max_sample_point_pairs    |              | -f [10000]
+fastq_type                -F [None]
 .br
-prior_alpha               | -p [0.1]     | -p [0.1]
+do_print_pileup_fields    -g [off]
 .br
-min_quality_score         | -q [5]       | -q [5]
+num_worker_threads        -t [1]
 .br
-fastq_type                | -F [None]    | -F [None]
+max_concurrent_reads      -R [2]
 .br
-do_print_pileup_fields    |              | -g [off]
+max_mem                   -m [4e9]
 .br
-num_worker_threads        | -t [1]       | -t [1]
-.br
-max_concurrent_reads      |              | -R [2]
-.br
-max_mem                   | -m [4e9]     | -m [4e9]
-.br
-dist_quantiles_string     |              | -D ["0.005,0.05,0.5,0.95,0.995"]
-.br
-comp_quantiles_strilg     |              | -C ["0.005,0.05,0.5,0.95,0.995"]
+quantiles_string          -Q ["0.005,0.05,0.5,0.95,0.995"]
 .br
 
-\fBoption\fP                     \fBsimc\fP          \fBbqslocus\fP       \fBbqs\fP             \fBpug\fP
+\fBoption\fP for...               \fBsimc\fP          \fBbqslocus\fP       \fBbqs\fP             \fBpug\fP
 .br
 sequencing_depth          | -d          |              |               |
 .br

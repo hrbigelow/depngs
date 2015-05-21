@@ -95,6 +95,8 @@ void dist_worker(void *par,
 /* conforms to thread_queue_offload_t */
 void dist_offload(void *par, const struct managed_buf *bufs);
 
+void dist_on_exit(void *par);
+
 #define PSEUDO_DEPTH 100000
 
 void print_cache2_histo();

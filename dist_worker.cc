@@ -77,7 +77,7 @@ static struct {
     void **reader_par;
     unsigned n_readers;
     struct pair_ordering_range *ranges;
-    struct pair_ordering global_read_start;
+    struct reader_state rstate;
     unsigned n_ranges;
     struct dist_worker_input *w;
     void **wp;
@@ -251,7 +251,7 @@ void init_sample_pairs(const char *pair_file, khash_t(remap) *map)
     unsigned alloc = 0;
 
     /* initialize the keyword PSEUDO as the reference sample */
-    char pseudo_key[] = "PSEUDO";
+    char pseudo_key[] = "REF";
     k1 = kh_put(remap, map, pseudo_key, &ret);
     assert(ret == 0 || ret == 1);
     kh_val(map, k1) = -1;
@@ -320,6 +320,8 @@ void init_quantiles(const char *csv, double *vals, unsigned *n_vals)
     sizeof(sample_pairs.p[0].stats.dist_count) \
     / sizeof(sample_pairs.p[0].stats.dist_count[0])
 
+
+/* increment all pair_dist_stats in sample_pairs with stats */
 void accumulate_pair_stats(struct pair_dist_stats *stats)
 {
     pthread_mutex_lock(&pair_stats_mtx);
@@ -383,10 +385,19 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
     thread_params.reader_par = (void **)malloc(n_readers * sizeof(void *));
 
     unsigned r;
-    for (r = 0; r != n_readers; ++r)
+    unsigned long n_total_loci;
     if (query_range_file)
+    {
         thread_params.ranges = 
-            parse_query_ranges(query_range_file, &thread_params.n_ranges);
+            parse_query_ranges(query_range_file, &thread_params.n_ranges,
+                               &n_total_loci);
+        if (! thread_params.n_ranges)
+        {
+            fprintf(stderr, "Error: there are no ranges to process in query range file %s\n",
+                    query_range_file);
+            exit(1);
+        }
+    }
     else
     {
         /* simply set the 'query' to the largest span possible */
@@ -395,6 +406,7 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
             malloc(sizeof(struct pair_ordering_range));
         thread_params.ranges[0] = 
             (struct pair_ordering_range){ { 0, 0 }, { SIZE_MAX, SIZE_MAX - 1 } };
+        n_total_loci = ULONG_MAX;
     }
 
     for (r = 0; r != n_readers; ++r)
@@ -405,8 +417,11 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
             samples.n,
             thread_params.ranges, 
             thread_params.ranges + thread_params.n_ranges,
-            { 0, 0 },
-            { 0, 0 },
+            n_total_loci,
+            thread_params.ranges[0].beg,
+            thread_params.ranges[0].beg,
+            NULL,
+            0,
             init_locus,
             1
         };
@@ -428,14 +443,17 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
     size_t n_output_files = 
         (dist_fh ? 1 : 0) + (comp_fh ? 1 : 0) + (indel_fh ? 1 : 0);
 
-    thread_queue_reader_t reader = { rl_reader, rl_scanner, rl_get_start, rl_set_start };
-    thread_params.global_read_start = (struct pair_ordering){ 0, 0 };
-
+    thread_queue_reader_t reader = { rl_reader, rl_scanner, 
+                                     rl_get_global_state, 
+                                     rl_set_global_state };
+    thread_params.rstate = 
+        (struct reader_state){ thread_params.ranges[0].beg, n_total_loci };
     struct thread_queue *tqueue =
         thread_queue_init(reader, thread_params.reader_par,
                           dist_worker, thread_params.wp,
                           dist_offload, &thread_params.offload_par,
-                          &thread_params.global_read_start,
+                          dist_on_exit,
+                          &thread_params.rstate,
                           n_threads, n_extra, n_readers, samples.n,
                           n_output_files, max_input_mem);
 
@@ -493,9 +511,11 @@ void print_pair_stats(const char *stats_file)
     for (p = 0; p != sample_pairs.n; ++p)
     {
         /* Print out statistics */
+        int s1 = sample_pairs.p[p].s1,
+            s2 = sample_pairs.p[p].s2;
         fprintf(fh, "%s\t%s", 
-                samples.atts[sample_pairs.p[p].s1].label,
-                samples.atts[sample_pairs.p[p].s2].label);
+                samples.atts[s1].label,
+                s2 == PSEUDO_SAMPLE ? "REF" : samples.atts[s2].label);
         fprintf(fh, "\t%zu", sample_pairs.p[p].stats.total);
         fprintf(fh, "\t%zu", sample_pairs.p[p].stats.cacheable);
         fprintf(fh, "\t%zu", sample_pairs.p[p].stats.cache_was_set);
@@ -733,6 +753,7 @@ void init_pseudo_locus(struct locus_sampling *ls)
 
 }
 
+
 /* update ls->locus.counts with ultra-high depth of perfect 'nuc'
    basecalls. */
 void update_pseudo_locus(char nuc, struct locus_sampling *ls)
@@ -778,10 +799,10 @@ void print_indel_distance_quantiles(const char *contig,
                                     double *dist_quantile_values,
                                     indel_event *events,
                                     size_t n_events,
-                                    locus_sampling *sd,
+                                    struct dist_worker_input *dw,
                                     struct managed_buf *mb)
 {
-    unsigned s1 = sample_pairs.p[pair_index].s1,
+    int s1 = sample_pairs.p[pair_index].s1,
         s2 = sample_pairs.p[pair_index].s2;
 
     unsigned space = (2 * MAX_LABEL_LEN) + 3 + 100 + (10 * MAX_NUM_QUANTILES);
@@ -790,7 +811,7 @@ void print_indel_distance_quantiles(const char *contig,
     mb->size += sprintf(mb->buf + mb->size, 
                         "%s\t%s\t%s\t%Zu", 
                         samples.atts[s1].label,
-                        samples.atts[s2].label,
+                        s2 == PSEUDO_SAMPLE ? "REF" : samples.atts[s2].label,
                         contig, position);
     
     for (size_t q = 0; q != n_quantiles; ++q)
@@ -827,24 +848,28 @@ void print_indel_distance_quantiles(const char *contig,
         eb++;
     }
 
-    if (sd)
+    locus_sampling 
+        *ls1 = &dw->lslist[s1],
+        *ls2 = s2 == PSEUDO_SAMPLE ? &dw->pseudo_sample : &dw->lslist[s2];
+
+    if (worker_options.do_print_pileup)
     {
         unsigned extra_space = 
-            sd[s1].locus.bases_raw.size
-            + sd[s1].locus.quality_codes.size
-            + sd[s2].locus.bases_raw.size
-            + sd[s2].locus.quality_codes.size
+            ls1->locus.bases_raw.size
+            + ls1->locus.quality_codes.size
+            + ls2->locus.bases_raw.size
+            + ls2->locus.quality_codes.size
             + 50;
 
         ALLOC_GROW_TYPED(mb->buf, mb->size + extra_space, mb->alloc);
         mb->size += sprintf(mb->buf + mb->size,
                             "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
-                            sd[s1].locus.read_depth,
-                            sd[s1].locus.bases_raw.buf,
-                            sd[s1].locus.quality_codes.buf,
-                            sd[s2].locus.read_depth,
-                            sd[s2].locus.bases_raw.buf,
-                            sd[s2].locus.quality_codes.buf);
+                            ls1->locus.read_depth,
+                            ls1->locus.bases_raw.buf,
+                            ls1->locus.quality_codes.buf,
+                            ls2->locus.read_depth,
+                            ls2->locus.bases_raw.buf,
+                            ls2->locus.quality_codes.buf);
     }
     mb->size += sprintf(mb->buf + mb->size, "\n");
 }
@@ -1159,7 +1184,7 @@ void next_indel_distance_quantiles_aux(struct dist_worker_input *dw,
                 print_indel_distance_quantiles(ls1->locus.reference, 
                                                ls1->locus.position, pi, 
                                                dw->dist_quantile_values, 
-                                               all_events, n_events, dw->lslist, buf);
+                                               all_events, n_events, dw, buf);
             }
 
             delete[] points1;
@@ -1250,6 +1275,12 @@ void dist_worker(void *par,
 
     gs = init_global_and_next(dw->lslist);
 
+    update_pseudo_locus(dw->lslist[gs].locus.reference_base, &dw->pseudo_sample);
+
+    /* zero out the pair_stats */
+    unsigned pi;
+    for (pi = 0; pi != sample_pairs.n; ++pi)
+        memset(&dw->pair_stats[pi], 0, sizeof(dw->pair_stats[0]));
 
     // main loop for computing pairwise distances
     // though slightly inefficient, just construct null_points here
@@ -1273,7 +1304,7 @@ void dist_worker(void *par,
         /* this will strain the global mutex, but only during the hash
            loading phase. */
         if (! dw->bep.points_hash_frozen)
-            dw->bep.points_hash_frozen = points_hash_frozen();
+            dw->bep.points_hash_frozen = freeze_points_hash();
 
         if (! dw->bep.bounds_hash_frozen)
             dw->bep.bounds_hash_frozen = freeze_bounds_hash();
@@ -1371,17 +1402,33 @@ void dist_offload(void *par, const struct managed_buf *bufs)
 {
     struct dist_worker_offload_par *ol = (struct dist_worker_offload_par *)par;
     unsigned i = 0;
-    if (ol->dist_fh) 
+    if (ol->dist_fh)
+    {
         fwrite(bufs[i].buf, 1, bufs[i].size, ol->dist_fh), i++;
+        fflush(ol->dist_fh);
+    }
 
     if (ol->comp_fh)
+    {
         fwrite(bufs[i].buf, 1, bufs[i].size, ol->comp_fh), i++;
+        fflush(ol->comp_fh);
+    }
 
     if (ol->indel_fh)
+    {
         fwrite(bufs[i].buf, 1, bufs[i].size, ol->indel_fh), i++;
+        fflush(ol->indel_fh);
+    }
 }
 
-
+/* when a worker thread exits, it must inform the rest of the program
+   that it will not be modifying shared data anymore. */
+void dist_on_exit(void *par)
+{
+    struct dist_worker_input *dw = (struct dist_worker_input *)par;
+    inactivate_shared_data(! dw->bep.points_hash_frozen,
+                           ! dw->bep.bounds_hash_frozen);
+}
 
 
 

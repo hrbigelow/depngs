@@ -48,7 +48,7 @@ int dist_usage()
             "samples.rdb has lines of <sample_id><tab></path/to/sample.jpd><tab></path/to/sample.pileup>\n"
             "sample_pairings.rdb has lines of <sample_id><tab><sample_id>\n"
             "defining which pairs of samples are to be compared.  <sample_id> correspond\n"
-            "with those in samples.rdb.  The special <sample_id> \"PSEUDO\" may be"
+            "with those in samples.rdb.  The special <sample_id> \"REF\" may be"
             "supplied as the second sample in the pair.  This indicates to do comparisons\n"
             "with a conceptual sample that is identical to the reference base at every locus.\n"
             "\n"
@@ -176,7 +176,7 @@ int main_dist(int argc, char **argv)
     /* */
 #define INPUT_MEM_FRACTION 0.4
 
-    /* allot 10% of total memory to input buffers. */
+    /* allot a fraction of total memory to input buffers. */
     unsigned long max_input_mem = max_mem * INPUT_MEM_FRACTION;
     unsigned long max_dir_cache_items = 
         FRAGMENTATION_FACTOR * (max_mem - max_input_mem) 
@@ -198,11 +198,15 @@ int main_dist(int argc, char **argv)
     printf("Precomputing confidence interval statistics...");
     binomial_est_init(beta_confidence, GEN_POINTS_BATCH, 
                       max_sample_points, n_threads);
-
     printf("done.\n");
 
-    printf("Prepopulating Difference hash...");
+    set_points_hash_flag(1);
+
+    printf("Precomputing difference hash...");
     prepopulate_bounds_keys(n_threads);
+    printf("done.\n");
+
+    set_points_hash_flag(0);
 
     struct thread_queue *tqueue =
         dist_worker_tq_init(query_range_file, 

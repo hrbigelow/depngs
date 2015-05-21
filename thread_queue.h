@@ -32,8 +32,8 @@ struct thread_queue;
 typedef struct {
     void (*read)(void *par, struct managed_buf *bufs);
     void (*scan)(void *par, unsigned max_bytes);
-    void (*get_start)(void *par, void *pos);
-    void (*set_start)(void *par, void *pos);
+    void (*get_global_state)(void *par, void *state);
+    void (*set_global_state)(void *par, void *state);
 } thread_queue_reader_t;
 
 /* the client-provided worker consumes the input (one or more in_bufs)
@@ -54,6 +54,9 @@ typedef void (thread_queue_worker_t)(void *par,
 typedef void (thread_queue_offload_t)(void *par, 
                                       const struct managed_buf *bufs);
 
+
+typedef void (thread_queue_exit_t)(void *par);
+
 /* initialize resources.
 
    -- void *reader_par must hold the address of an array of n_readers
@@ -72,6 +75,7 @@ struct thread_queue *
 thread_queue_init(thread_queue_reader_t reader, void **reader_par,
                   thread_queue_worker_t worker, void **worker_par,
                   thread_queue_offload_t offload, void *offload_par,
+                  thread_queue_exit_t onexit,
                   void *global_read_start,
                   unsigned n_threads,
                   unsigned n_extra_in_pool,

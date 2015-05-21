@@ -24,6 +24,30 @@ static get_line_ord_t get_line_ord;
 static size_t mem_scan_threshold;
 
 
+/* load buf with enough content from fh, and return the location in
+   buf the nearest line start of a complete line to the left of the
+   current position in the file.  buf is allocated with an initial
+   'sz'. */
+char *rfind_linestart(char *buf, size_t buf_sz, FILE *fh)
+{
+    char *nl = NULL;
+    off_t max_sz = ftello(fh);
+    off_t off = MIN(buf_sz, max_sz);
+    do
+    {
+        buf = realloc(buf, off);
+        fseeko(fh, -off, SEEK_CUR);
+        fread(buf, 1, off, fh);
+        nl = memrchr(buf, '\n', off);
+        if (nl) nl = memrchr(buf, '\n', nl - buf);
+        off *= 2;
+        off = MIN(off, max_sz);
+    }
+    while (! nl && off != max_sz);
+    return nl ? nl + 1 : buf;
+}
+
+
 /* initialize resources */
 void file_bsearch_init(get_line_ord_t _get_line_ord,
                        size_t _mem_scan_threshold)
@@ -50,46 +74,57 @@ struct file_bsearch_index file_bsearch_make_index(const char *file)
         exit(1);
     }
     setvbuf(fh, NULL, _IONBF, 0);
-    root->span_beg = (struct pair_ordering){ 0, 0 };
-    root->span_end = (struct pair_ordering){ SIZE_MAX, SIZE_MAX };
+
+    struct file_bsearch_index ix = { 
+        .fh = fh,
+        .mem_scan_buf = malloc(mem_scan_threshold),
+        .line_buf = malloc(1e5),
+        .line_len = 1e5,
+        .root = root, 
+        .cur_node = root, 
+        .n_nodes = 1
+    };
+
+    int nchars_read = getline(&ix.line_buf, &ix.line_len, ix.fh);
+    assert(nchars_read != -1);
+
+    root->span_beg = get_line_ord(ix.line_buf);
     root->start_offset = 0;
-    fseeko(fh, 0, SEEK_END);
+
+    fseeko(ix.fh, 0, SEEK_END);
     root->end_offset = ftello(fh);
+    unsigned scan_sz = MIN(root->end_offset - root->start_offset, 1e3);
+    char *end_buf = malloc(scan_sz);
+    
+    char *line_start = rfind_linestart(end_buf, scan_sz, ix.fh);
+    root->span_end = get_line_ord(line_start);
+    root->span_end.lo++;
+    free(end_buf);
+
     root->left = root->right = root->parent = NULL;
     root->span_contents = NULL;
-
-    
-    struct file_bsearch_index ix = { 
-        fh,
-        malloc(mem_scan_threshold),
-        malloc(1e5),
-        1e5,
-        root, 
-        root, 
-        1
-    };
 
     return ix;
 }
 
 
-/* find a loose-fitting index that contains cur, starting at
-   ix->cur_node, using only binary search.  Does not guarantee to find
-   the tightest possible index because the bisection is done based on
-   file offsets, not loci positions. updates ix->cur_node to point to
-   this new node.  */
+/* find a loose-fitting index that contains cur, or the root node if
+   not found.  starting at ix->cur_node, using only binary search.
+   Does not guarantee to find the tightest possible index because the
+   bisection is done based on file offsets, not loci
+   positions. updates ix->cur_node to point to this new node.  */
 void
 find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *fh)
 {
     /* expansion phase */
     struct file_bsearch_node *nd = ix->cur_node;
-    while (! contains(nd, &cur))
+    while (! contains(nd, &cur) && nd->parent)
     {
-        if (! nd->parent) 
-        {
-            fprintf(stderr, "Error at %s: index does not contain query\n", __func__);
-            exit(1);
-        }
+        /* if (! nd->parent)  */
+        /* { */
+        /*     fprintf(stderr, "Error at %s: index does not contain query\n", __func__); */
+        /*     exit(1); */
+        /* } */
         nd = nd->parent;
     }
 
@@ -194,6 +229,11 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
     ix->cur_node = nd;
 }
 
+
+/* search forward in nd->span_contents for the offset which is the
+   start (cmp == 0) or end (cmp == 1) of first line greater than
+   query. if query < nd->span_beg, return nd->start_offset.  if query
+   >= nd->span_end, return nd->end_offset */
 off_t off_bound_aux(struct file_bsearch_node *nd,
                     struct pair_ordering query,
                     int cmp)

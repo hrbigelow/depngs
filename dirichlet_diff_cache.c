@@ -57,17 +57,16 @@ KHASH_MAP_INIT_INT64(points_hash, struct counted_points);
 KHASH_MAP_INIT_INT64(bounds_hash, struct binomial_est_bounds);
 
 struct cache_counters {
-    unsigned long n_items, max_items;
-    unsigned long n_last_cleared_entries;
+    unsigned long n_items, n_permanent_items, max_items;
     unsigned n_times_cleared;
-    unsigned n_unset_flags;
+    unsigned n_threads_points_active;
     unsigned min_n_hit_to_keep;
     pthread_cond_t cond;
     pthread_mutex_t mtx;
 };
 
 struct dirichlet_diff_cache_t {
-    unsigned max_depth;
+    unsigned pseudo_depth;
     unsigned batch_size;
     double post_confidence;
     double beta_confidence;
@@ -76,109 +75,25 @@ struct dirichlet_diff_cache_t {
     unsigned n_locks;
     struct set_flag *locks;
     khash_t(points_hash) *dir_points;
-    pthread_mutex_t dir_points_mtx;
     unsigned n_vals_mtx;
     pthread_mutex_t *dir_points_vals_mtx;
     pthread_rwlock_t dir_points_rwlock;
     struct cache_counters c;
+    unsigned disable_points_hash;
     khash_t(bounds_hash) *bounds;
     pthread_rwlock_t bounds_rwlock;
     unsigned locus_count;
     unsigned n_threads_bounds_active;
     pthread_mutex_t locus_mtx;
     pthread_cond_t locus_cond;
-    /* struct cache_counters b; */
 
 } cache;
 
 
-struct {
-    unsigned long hit, miss;
-} cache_stats;
-
-
-/* Arbitrary value when it makes sense to clear entries from the
-   cache. */
-
-/* The first thread to get to 'do_freeze' waits, letting subsequent
-   threads enter this function and wait.  The last thread entering
-   will decrement n_unset_flags down to zero, and then broadcast to
-   others. */
-unsigned hash_frozen_aux(struct cache_counters *cc,
-                         unsigned long min_last_cleared_entries,
-                         unsigned long max_times_cleared)
+void set_points_hash_flag(unsigned disable)
 {
-    pthread_mutex_lock(&cc->mtx);
-    unsigned do_freeze = 
-        cc->n_last_cleared_entries <= min_last_cleared_entries
-        || cc->n_times_cleared > max_times_cleared;
-    if (do_freeze) 
-    {
-        cc->n_unset_flags--;
-        if (cc->n_unset_flags)
-            pthread_cond_wait(&cc->cond, &cc->mtx);
-        else
-            pthread_cond_broadcast(&cc->cond);
-    }
-    pthread_mutex_unlock(&cc->mtx);
-    return do_freeze;
+    cache.disable_points_hash = disable;
 }
-
-
-#define MIN_LAST_CLEARED_POINTS_ENTRIES 1000
-#define MAX_TIMES_CLEARED 50
-unsigned points_hash_frozen()
-{
-    return hash_frozen_aux(&cache.c, 
-                           MIN_LAST_CLEARED_POINTS_ENTRIES,
-                           MAX_TIMES_CLEARED);
-}
-
-#define N_LOCI_TO_FREEZE 1e7
-
-unsigned freeze_bounds_hash()
-{
-    pthread_mutex_lock(&cache.locus_mtx);
-    ++cache.locus_count;
-    unsigned do_freeze = cache.locus_count > N_LOCI_TO_FREEZE;
-    if (do_freeze)
-    {
-        cache.n_threads_bounds_active--;
-        if (cache.n_threads_bounds_active)
-            pthread_cond_wait(&cache.locus_cond, &cache.locus_mtx);
-        else
-            pthread_cond_broadcast(&cache.locus_cond);
-    }
-    pthread_mutex_unlock(&cache.locus_mtx);
-    return do_freeze;
-}
-
-
-/* #define MIN_LAST_CLEARED_BOUNDS_ENTRIES 100 */
-/* unsigned bounds_hash_frozen() */
-/* { */
-/*     return hash_frozen_aux(&cache.b, */
-/*                            MIN_LAST_CLEARED_BOUNDS_ENTRIES, */
-/*                            MAX_TIMES_CLEARED); */
-/* } */
-
-void print_cache_stats()
-{
-    pthread_mutex_lock(&cache.dir_points_mtx);
-    time_t cal = time(NULL);
-    char *ts = strdup(ctime(&cal));
-    ts[strlen(ts)-1] = '\0';
-    fprintf(stderr, "%s: Dirichlet cache: %lu hits, %lu misses, %5.3f hit rate\n",
-            ts,
-            cache_stats.hit, cache_stats.miss,
-            100.0 * (float)cache_stats.hit 
-            / (float)(cache_stats.hit + cache_stats.miss));
-    cache_stats.hit = 0;
-    cache_stats.miss = 0;
-    free(ts);
-    pthread_mutex_unlock(&cache.dir_points_mtx);
-}
-
 
 struct alpha_packed_large {
     unsigned a0 :24;
@@ -237,8 +152,21 @@ void print_primary_cache_size()
 #define NUM_LOCKS 10
 #define NUM_HASH_MTX_PER_THREAD 1
 
+
+#define MAX_ALPHA1_PREPOP 100
+#define MAX_ALPHA2_PREPOP 10
+#define MAX_BOUNDS_PREPOP MAX_ALPHA1_PREPOP * MAX_ALPHA2_PREPOP * MAX_ALPHA2_PREPOP
+
+/* for prepopulating the difference hash for pseudo-loci.  This will
+   allow caching alpha pairs { a1, a2, 0, 0 } and {
+   cache.pseudo_depth, 0, 0, 0 } for a2 varying from 0 to 1000. */
+#define MAX_ALPHA2_PSEUDO_PREPOP 1000
+
+/* number of loci to process before freezing the bounds hash. */
+#define N_LOCI_TO_FREEZE 1e8
+
 /* bounds_cache[a2][b2][b1].  sets each element to have 'state' = UNSET */
-void dirichlet_diff_init(unsigned max_depth,
+void dirichlet_diff_init(unsigned pseudo_depth,
                          unsigned batch_size,
                          double post_confidence,
                          double beta_confidence,
@@ -248,7 +176,7 @@ void dirichlet_diff_init(unsigned max_depth,
                          unsigned long max_bounds_items,
                          unsigned n_threads)
 {
-    cache.max_depth = max_depth;
+    cache.pseudo_depth = pseudo_depth;
     cache.batch_size = batch_size;
     cache.post_confidence = post_confidence;
     cache.beta_confidence = beta_confidence;
@@ -260,40 +188,35 @@ void dirichlet_diff_init(unsigned max_depth,
     /* resize so h->upper_bound is greater than max_dir_cache_items */
     unsigned long ub = max_dir_cache_items * (1.0 / __ac_HASH_UPPER);
     kh_resize(points_hash, cache.dir_points, kroundup32(ub));
-    pthread_mutex_init(&cache.dir_points_mtx, NULL);
     cache.n_vals_mtx = n_threads * NUM_HASH_MTX_PER_THREAD;
     cache.dir_points_vals_mtx = malloc(cache.n_vals_mtx * sizeof(pthread_mutex_t));
     pthread_rwlock_init(&cache.dir_points_rwlock, NULL);
-    cache.c = (struct cache_counters){ 0, max_dir_cache_items, ULONG_MAX, 0, n_threads, 2 };
+    cache.c = (struct cache_counters){ 
+        .n_items = 0, 
+        .n_permanent_items = 0, 
+        .max_items = max_dir_cache_items, 
+        .n_times_cleared = 0, 
+        .n_threads_points_active = n_threads, 
+        .min_n_hit_to_keep = 2
+    };
+
     pthread_cond_init(&cache.c.cond, NULL);
     pthread_mutex_init(&cache.c.mtx, NULL); 
     /* cache.b = (struct cache_counters){ 0, max_bounds_items, ULONG_MAX, 0, n_threads }; */
     /* pthread_cond_init(&cache.b.cond, NULL); */
     /* pthread_mutex_init(&cache.b.mtx, NULL); */
     cache.bounds = kh_init(bounds_hash);
+    unsigned long ub_bounds_hash = 
+        (MAX_BOUNDS_PREPOP + MAX_ALPHA2_PSEUDO_PREPOP 
+         + N_LOCI_TO_FREEZE) * (1.0 / __ac_HASH_UPPER);
+
+    kh_resize(bounds_hash, cache.bounds, kroundup32(ub_bounds_hash));
+
     pthread_rwlock_init(&cache.bounds_rwlock, NULL);
     cache.locus_count = 0;
     cache.n_threads_bounds_active = n_threads;
     pthread_mutex_init(&cache.locus_mtx, NULL);
     pthread_cond_init(&cache.locus_cond, NULL);
-
-    /* pthread_mutex_init(&cache.bounds_mtx, NULL); */
-    /* pthread_cond_init(&cache.bounds_cond, NULL); */
-    /* cache.min_n_hit_to_keep = 2; */
-    /* cache.buf1 = calloc(max2 * max2 * max1, sizeof(struct binomial_est_bounds)); */
-    /* cache.buf2 = malloc(max2 * max2 * sizeof(struct binomial_est_bounds *)); */
-    /* cache.bounds = malloc(max2 * sizeof(struct binomial_est_bounds **)); */
-    /* cache.max_secondary_cache_size = max_secondary_cache_size; */
-    /* cache.hash = kh_init(fuzzy_hash); */
-    /* pthread_mutex_init(&cache.hash_mtx, NULL); */
-
-    /* unsigned i, j, k, l; */
-    /* unsigned M = max2 * max2; */
-    /* for (i = 0, j = 0; i != M; ++i, j += max1) */
-    /*     cache.buf2[i] = cache.buf1 + j; */
-
-    /* for (k = 0, l = 0; k != max2; ++k, l += max2) */
-    /*     cache.bounds[k] = cache.buf2 + l; */
 
     unsigned i;
     for (i = 0; i != cache.n_locks; ++i)
@@ -304,17 +227,11 @@ void dirichlet_diff_init(unsigned max_depth,
     for (i = 0; i != cache.n_vals_mtx; ++i)
         pthread_mutex_init(&cache.dir_points_vals_mtx[i], NULL);
 
-    cache_stats.hit = 0;
-    cache_stats.miss = 0;
 }
 
 
 void dirichlet_diff_free()
 {
-    /* free(cache.bounds); */
-    /* free(cache.buf2); */
-    /* free(cache.buf1); */
-
     unsigned i;
     for (i = 0; i != cache.n_locks; ++i)
     {
@@ -329,18 +246,81 @@ void dirichlet_diff_free()
 
     kh_destroy(points_hash, cache.dir_points);
     pthread_mutex_destroy(&cache.c.mtx);
-    pthread_mutex_destroy(&cache.dir_points_mtx);
     pthread_rwlock_destroy(&cache.dir_points_rwlock);
     kh_destroy(bounds_hash, cache.bounds);
     pthread_rwlock_destroy(&cache.bounds_rwlock);
 
     pthread_mutex_destroy(&cache.locus_mtx);
     pthread_cond_destroy(&cache.locus_cond);
-
-    /* kh_destroy(fuzzy_hash, cache.hash); */
-    /* pthread_mutex_destroy(&cache.hash_mtx); */
 }
 
+
+/* Arbitrary value when it makes sense to clear entries from the
+   cache. */
+
+/* The first thread to get to 'do_freeze' waits, letting subsequent
+   threads enter this function and wait.  The last thread entering
+   will decrement n_unset_flags down to zero, and then broadcast to
+   others. */
+#define MAX_TIMES_CLEARED 20
+unsigned freeze_points_hash()
+{
+    pthread_mutex_lock(&cache.c.mtx);
+    unsigned do_freeze = 
+        cache.c.n_permanent_items > 0.95 * cache.c.max_items
+        || cache.c.n_times_cleared > MAX_TIMES_CLEARED;
+    if (do_freeze) 
+    {
+        cache.c.n_threads_points_active--;
+        if (cache.c.n_threads_points_active)
+            pthread_cond_wait(&cache.c.cond, &cache.c.mtx);
+        else
+        {
+            fprintf(stderr, "Freezing points hash.\n");
+            pthread_cond_broadcast(&cache.c.cond);
+        }
+    }
+    pthread_mutex_unlock(&cache.c.mtx);
+    return do_freeze;
+}
+
+unsigned freeze_bounds_hash()
+{
+    pthread_mutex_lock(&cache.locus_mtx);
+    ++cache.locus_count;
+    unsigned do_freeze = cache.locus_count > N_LOCI_TO_FREEZE;
+    if (do_freeze)
+    {
+        cache.n_threads_bounds_active--;
+        if (cache.n_threads_bounds_active)
+            pthread_cond_wait(&cache.locus_cond, &cache.locus_mtx);
+        else
+        {
+            fprintf(stderr, "Freezing bounds hash.\n");
+            pthread_cond_broadcast(&cache.locus_cond);
+        }
+    }
+    pthread_mutex_unlock(&cache.locus_mtx);
+    return do_freeze;
+}
+
+/* call this if the thread needs to stop writing to the shared data */    
+void inactivate_shared_data(unsigned inactivate_points, 
+                            unsigned inactivate_bounds)
+{
+    if (inactivate_points)
+    { 
+        pthread_mutex_lock(&cache.c.mtx);
+        cache.c.n_threads_points_active--;
+        pthread_mutex_unlock(&cache.c.mtx);
+    }
+    if (inactivate_bounds)
+    {
+        pthread_mutex_lock(&cache.locus_mtx);
+        cache.n_threads_bounds_active--;
+        pthread_mutex_unlock(&cache.locus_mtx);
+    }
+}
 
 void alloc_distrib_points(struct distrib_points *dpts)
 {
@@ -401,114 +381,7 @@ void set_dirichlet_alpha_single(struct distrib_points *dpts, unsigned i, unsigne
     }
 }
 
-void read_diststats_line(FILE *fh, 
-                         unsigned *a2,
-                         unsigned *b1,
-                         unsigned *b2,
-                         struct binomial_est_bounds *beb)
-{
-    int n;
-    n = fscanf(fh, 
-               "%u\t%u\t%u\t%"SCNd32"\t%"SCNd32"\t%"SCNd32"\t%"SCNd32"\n", 
-               a2, b1, b2,
-               &beb->ambiguous[0],
-               &beb->unchanged[0],
-               &beb->unchanged[1],
-               &beb->ambiguous[1]);
-    if (n != 7)
-    {
-        fprintf(stderr, "error reading diststats line at %s: %u\n", __FILE__, __LINE__);
-        exit(1);
-    }
-}
 
-
-void write_diststats_line(FILE *fh,
-                          unsigned a2,
-                          unsigned b1,
-                          unsigned b2,
-                          struct binomial_est_bounds *beb)
-{
-    fprintf(fh,
-            "%i\t%i\t%i\t%i\t%i\t%i\t%i\n", 
-            a2, b1, b2,
-            beb->ambiguous[0], beb->unchanged[0], 
-            beb->unchanged[1], beb->ambiguous[1]);
-}
-
-/* parse diststats header, initializing fields of pset and max1 and max2  */
-/*
-void parse_diststats_header(FILE *diststats_fh, double *prior_alpha)
-{
-    int n;
-    n = fscanf(diststats_fh, 
-               "# max1: %u\n"
-               "# max2: %u\n"
-               "# max_sample_points: %u\n"
-               "# min_dirichlet_dist: %lf\n"
-               "# post_confidence: %lf\n"
-               "# beta_confidence: %lf\n"
-               "# prior_alpha: %lf\n",
-               &cache.max1, 
-               &cache.max2, 
-               &cache.max_sample_points,
-               &cache.min_dirichlet_dist,
-               &cache.post_confidence,
-               &cache.beta_confidence,
-               prior_alpha);
-    if (n != 7)
-    {
-        fprintf(stderr, "error parsing diststats header at %s: %ul\n", __FILE__, __LINE__);
-        exit(1);
-    }
-               
-}
-*/
-
- /*
-void write_diststats_header(FILE *diststats_fh)
-{
-    fprintf(diststats_fh, 
-            "# max1: %u\n"
-            "# max2: %u\n"
-            "# max_sample_points: %u\n"
-            "# min_dirichlet_dist: %lf\n"
-            "# post_confidence: %lf\n"
-            "# beta_confidence: %lf\n"
-            "# prior_alpha: %g\n",
-            cache.max1, 
-            cache.max2, 
-            cache.max_sample_points,
-            cache.min_dirichlet_dist,
-            cache.post_confidence,
-            cache.beta_confidence,
-            get_alpha_prior());
-}
- */
-
-/* initialize internal bounds_cache */
-/*
-void parse_diststats_body(FILE *diststats_fh, unsigned max1, unsigned max2)
-{
-    struct binomial_est_bounds beb;
-    unsigned a2, b1, b2;
-    while (! feof(diststats_fh))
-    {
-        read_diststats_line(diststats_fh, &a2, &b1, &b2, &beb);
-        if (a2 < max2 && b2 < max2 && b1 < max1)
-            cache.bounds[a2][b2][b1] = beb;
-        else
-        {
-            fprintf(stderr, 
-                    "Error at %s: %u\n"
-                    "Indices exceed limits.  A2 = %u, B2 = %u, B1 = %u, MAX1 = %u, MAX2 = %u\n",
-                    __FILE__, __LINE__,
-                    a2, b2, b1, max1, max2);
-            exit(1);
-        }
-    }
-}
-*/
 
 /* mode-finding algorithm, robust to some amount of error in the
    measurement */
@@ -664,90 +537,42 @@ void winnow_points_hash()
 {
     pthread_mutex_lock(&cache.c.mtx);
 
-    if (cache.c.n_items >= cache.c.max_items
-        && cache.c.n_last_cleared_entries > MIN_LAST_CLEARED_POINTS_ENTRIES
-        && cache.c.n_times_cleared < MAX_TIMES_CLEARED)
+    if (cache.c.n_items >= cache.c.max_items)
     {
         struct counted_points val;
-        khiter_t itr;
+        khiter_t k;
 
-        pthread_mutex_lock(&cache.dir_points_mtx);
-        khint_t old_size = kh_size(cache.dir_points);
-        for (itr = kh_begin(cache.dir_points);
-             itr != kh_end(cache.dir_points); ++itr)
+        pthread_rwlock_wrlock(&cache.dir_points_rwlock);
+        for (k = kh_begin(cache.dir_points);
+             k != kh_end(cache.dir_points); ++k)
         {
-            if (kh_exist(cache.dir_points, itr))
+            if (kh_exist(cache.dir_points, k))
             {
-                val = kh_value(cache.dir_points, itr);
+                val = kh_val(cache.dir_points, k);
                 if (val.n_hit < cache.c.min_n_hit_to_keep)
                 {
-                    kh_del(points_hash, cache.dir_points, itr);
-                    if (val.pts.buf) free(val.pts.buf);
+                    kh_del(points_hash, cache.dir_points, k);
+                    if (val.pts.alloc) free(val.pts.buf);
                 }
             }
         }
         khint_t new_size = kh_size(cache.dir_points);
-        pthread_mutex_unlock(&cache.dir_points_mtx);
+        pthread_rwlock_unlock(&cache.dir_points_rwlock);
 
         cache.c.n_items = new_size;
-        cache.c.n_last_cleared_entries = old_size - new_size;
+        cache.c.n_permanent_items = new_size;
         ++cache.c.n_times_cleared;
 
         time_t cal = time(NULL);
         char *ts = strdup(ctime(&cal));
         ts[strlen(ts)-1] = '\0';
-        fprintf(stderr, "%s: cache.n_last_cleared_entries = %lu\n",
-                ts, cache.c.n_last_cleared_entries);
+        fprintf(stderr, "%s: cache.c.n_items = %lu\ncache.c.n_permanent_items = %lu\n", 
+                ts, cache.c.n_items, cache.c.n_permanent_items);
         free(ts);
     }
 
     pthread_mutex_unlock(&cache.c.mtx);
 }
-
-
-/* remove low hit entries from the bounds hash */
-#if 0
-void winnow_bounds_hash()
-{
-    pthread_mutex_lock(&cache.b.mtx);
-
-    if (cache.b.n_items >= cache.b.max_items
-        && cache.b.n_last_cleared_entries > MIN_LAST_CLEARED_BOUNDS_ENTRIES
-        && cache.b.n_times_cleared < MAX_TIMES_CLEARED)
-    {
-        struct binomial_est_bounds beb;
-        khiter_t itr;
-
-        pthread_mutex_lock(&cache.bounds_mtx);
-        khint_t old_size = kh_size(cache.bounds);
-        for (itr = kh_begin(cache.bounds);
-             itr != kh_end(cache.bounds); ++itr)
-        {
-            if (kh_exist(cache.bounds, itr))
-            {
-                cb = kh_value(cache.bounds, itr);
-                if (cb.n_hit < cache.min_n_hit_to_keep)
-                    kh_del(bounds_hash, cache.bounds, itr);
-            }
-        }
-        khint_t new_size = kh_size(cache.bounds);
-        pthread_mutex_unlock(&cache.bounds_mtx);
-
-        cache.b.n_items = new_size;
-        cache.b.n_last_cleared_entries = old_size - new_size;
-        ++cache.b.n_times_cleared;
-
-        time_t cal = time(NULL);
-        char *ts = strdup(ctime(&cal));
-        ts[strlen(ts)-1] = '\0';
-        fprintf(stderr, "%s: cache.b.n_last_cleared_entries = %lu\n",
-                ts, cache.b.n_last_cleared_entries);
-        free(ts);
-    }
-
-    pthread_mutex_unlock(&cache.b.mtx);
-}
-#endif
 
 
 /* synchronize points with the points hash.  if points->size < cached
@@ -757,11 +582,13 @@ void sync_points(union alpha_large_key key,
                  struct points_buf *points,
                  unsigned hash_frozen)
 {
-    khiter_t k;
+    if (cache.disable_points_hash)
+        return;
 
     pthread_mutex_t *grp_mtx = 
         &cache.dir_points_vals_mtx[dir_points_key_group(key)];
 
+    khiter_t k;
     if (hash_frozen)
     {
         k = kh_get(points_hash, cache.dir_points, key.raw);
@@ -1057,12 +884,12 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
 
     /* Find Mode.  (consider [0, xmode) and [xmode, cache.max1) as the
        upward and downward phase intervals */
-    unsigned xmode = noisy_mode(0, cache.max_depth, bpar);
+    unsigned xmode = noisy_mode(0, cache.pseudo_depth, bpar);
 
     bpar->use_low_beta = 0;
     bpar->query_beta = 1.0 - cache.post_confidence;
     beb->ambiguous[0] = virtual_lower_bound(0, xmode, elem_is_less, bpar);
-    beb->ambiguous[1] = virtual_upper_bound(xmode, cache.max_depth, elem_is_less, bpar);
+    beb->ambiguous[1] = virtual_upper_bound(xmode, cache.pseudo_depth, elem_is_less, bpar);
 
     bpar->use_low_beta = 1;
     bpar->query_beta = cache.post_confidence;
@@ -1082,10 +909,6 @@ union bounds_key {
 };
 
 
-#define MAX_ALPHA1_PREPOP 2000
-#define MAX_ALPHA2_PREPOP 200
-
-
 #define BOUNDS_INDEX(a2, b1, b2) \
     ((a2) * MAX_ALPHA1_PREPOP * MAX_ALPHA2_PREPOP   \
      + (b1) * MAX_ALPHA2_PREPOP                     \
@@ -1093,6 +916,7 @@ union bounds_key {
 
 struct init_bounds_input {
     struct binomial_est_bounds *buf;
+    struct binomial_est_bounds *pseudo_buf;
     unsigned start_offset, jump;
 };
 
@@ -1109,14 +933,18 @@ void *init_bounds_func(void *args)
     bpar.dist[0] = &dist[0];
     bpar.dist[1] = &dist[1];
 
-    unsigned i, a2, b1, b2 = ib->start_offset;
-    for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2)
-        for (b1 = 0; b1 != MAX_ALPHA1_PREPOP; ++b1)
-            for (b2 = ib->start_offset; b2 < MAX_ALPHA2_PREPOP; b2 += ib->jump)
+    unsigned i, b1, b2, a2;
+    for (b1 = ib->start_offset; b1 < MAX_ALPHA1_PREPOP; b1 += ib->jump)
+        for (b2 = 0; b2 != MAX_ALPHA2_PREPOP; ++b2)
+            for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2)
             {
                 i = BOUNDS_INDEX(a2, b1, b2);
                 initialize_est_bounds(a2, b1, b2, &bpar, ib->buf + i);
             }
+
+    for (a2 = ib->start_offset; a2 < MAX_ALPHA2_PSEUDO_PREPOP; a2 += ib->jump)
+        initialize_est_bounds(a2, cache.pseudo_depth, 0, &bpar, ib->pseudo_buf + a2);
+
     free_distrib_points(&dist[0]);
     free_distrib_points(&dist[1]);
     pthread_exit(NULL);
@@ -1130,13 +958,15 @@ void prepopulate_bounds_keys(unsigned n_threads)
     /* buf[a2][b1][b2] */
     unsigned sz = MAX_ALPHA2_PREPOP * MAX_ALPHA1_PREPOP * MAX_ALPHA2_PREPOP;
     struct binomial_est_bounds *buf = malloc(sz * sizeof(struct binomial_est_bounds));
+    struct binomial_est_bounds *pseudo_buf = 
+        malloc(MAX_ALPHA2_PSEUDO_PREPOP * sizeof(struct binomial_est_bounds));
     struct init_bounds_input *ib = malloc(n_threads * sizeof(struct init_bounds_input));
     pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
 
     unsigned t;
     for (t = 0; t != n_threads; ++t)
     {
-        ib[t] = (struct init_bounds_input){ buf, t, n_threads };
+        ib[t] = (struct init_bounds_input){ buf, pseudo_buf, t, n_threads };
         pthread_create(&threads[t], NULL, init_bounds_func, &ib[t]);
     }
 
@@ -1144,31 +974,49 @@ void prepopulate_bounds_keys(unsigned n_threads)
         (void)pthread_join(threads[t], NULL);
 
     /* populate the hash */
-    unsigned i, a2, b1, b2 = ib->start_offset;
+    unsigned i, a2, b1, b2;
     union bounds_key bk;
     khiter_t k;
     int ret;
-    for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2)
-        for (b1 = 0; b1 != MAX_ALPHA1_PREPOP; ++b1)
-            for (b2 = ib->start_offset; b2 < MAX_ALPHA2_PREPOP; ++b2)
+    /* want b1 and b2 to be slowly changing so that we can process all
+       of the {b1, b2, 0, 0} distributions consecutively, and in one
+       thread. */
+    for (b1 = 0; b1 != MAX_ALPHA1_PREPOP; ++b1)
+        for (b2 = ib->start_offset; b2 < MAX_ALPHA2_PREPOP; b2 += ib->jump)
+            for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2)
             {
                 i = BOUNDS_INDEX(a2, b1, b2);
                 bk = (union bounds_key){ .f = { a2, b1, b2 } };
                 k = kh_put(bounds_hash, cache.bounds, bk.val, &ret);
                 kh_val(cache.bounds, k) = buf[i];
             }
+    for (a2 = 0; a2 != MAX_ALPHA2_PSEUDO_PREPOP; ++a2)
+    {
+        bk = (union bounds_key){ .f = { a2, cache.pseudo_depth, 0 } };
+        k = kh_put(bounds_hash, cache.bounds, bk.val, &ret);
+        kh_val(cache.bounds, k) = pseudo_buf[a2];
+    }
     
     free(buf);
+    free(pseudo_buf);
     free(ib);
     free(threads);
 }
 
 
+/* tell whether this bounds key is prepopulated.  Either it is
+   low-coverage pair of alpha vectors, or it is a pair representing a
+   pseudo-difference. */
 unsigned bounds_key_prepopulated(union bounds_key bk)
 {
-    return bk.f.a2 < MAX_ALPHA2_PREPOP
-        && bk.f.b1 < MAX_ALPHA1_PREPOP
-        && bk.f.b2 < MAX_ALPHA2_PREPOP;
+    unsigned is_prepop = 
+        (bk.f.a2 < MAX_ALPHA2_PREPOP
+         && bk.f.b1 < MAX_ALPHA1_PREPOP
+         && bk.f.b2 < MAX_ALPHA2_PREPOP)
+        || (bk.f.b1 == cache.pseudo_depth
+            && bk.f.b2 == 0
+            && bk.f.a2 < MAX_ALPHA2_PSEUDO_PREPOP);
+    return is_prepop;
 }
 
 
@@ -1240,13 +1088,8 @@ get_fuzzy_state(struct binomial_est_params *bpar,
             
             *state = locate_cell(&beb, a1);
             state_unset = 0;
-
-            /* pthread_mutex_lock(&cache.b.mtx); */
-            /* cache.b.n_items = kh_size(cache.bounds); */
-            /* pthread_mutex_unlock(&cache.b.mtx); */
         }
     }
-    /* if (! hash_frozen) winnow_bounds_hash(); */
     return state_unset;
 }
 
@@ -1261,7 +1104,7 @@ cached_dirichlet_diff(unsigned *a,
                       unsigned *cacheable,
                       unsigned *cache_was_set)
 {
-    unsigned lim[] = { cache.max_depth + 1, cache.max_depth + 1, 1, 1 };
+    unsigned lim[] = { cache.pseudo_depth + 1, cache.pseudo_depth + 1, 1, 1 };
     unsigned p[4];
     enum fuzzy_state state = UNCHANGED;
     int state_unset;
@@ -1289,3 +1132,179 @@ cached_dirichlet_diff(unsigned *a,
     }
     return state;
 }
+
+
+
+
+#if 0
+void read_diststats_line(FILE *fh, 
+                         unsigned *a2,
+                         unsigned *b1,
+                         unsigned *b2,
+                         struct binomial_est_bounds *beb)
+{
+    int n;
+    n = fscanf(fh, 
+               "%u\t%u\t%u\t%"SCNd32"\t%"SCNd32"\t%"SCNd32"\t%"SCNd32"\n", 
+               a2, b1, b2,
+               &beb->ambiguous[0],
+               &beb->unchanged[0],
+               &beb->unchanged[1],
+               &beb->ambiguous[1]);
+    if (n != 7)
+    {
+        fprintf(stderr, "error reading diststats line at %s: %u\n", __FILE__, __LINE__);
+        exit(1);
+    }
+}
+
+
+void write_diststats_line(FILE *fh,
+                          unsigned a2,
+                          unsigned b1,
+                          unsigned b2,
+                          struct binomial_est_bounds *beb)
+{
+    fprintf(fh,
+            "%i\t%i\t%i\t%i\t%i\t%i\t%i\n", 
+            a2, b1, b2,
+            beb->ambiguous[0], beb->unchanged[0], 
+            beb->unchanged[1], beb->ambiguous[1]);
+}
+
+
+/* remove low hit entries from the bounds hash */
+void winnow_bounds_hash()
+{
+    pthread_mutex_lock(&cache.b.mtx);
+
+    if (cache.b.n_items >= cache.b.max_items
+        && cache.b.n_last_cleared_entries > MIN_LAST_CLEARED_BOUNDS_ENTRIES
+        && cache.b.n_times_cleared < MAX_TIMES_CLEARED)
+    {
+        struct binomial_est_bounds beb;
+        khiter_t k;
+
+        pthread_mutex_lock(&cache.bounds_mtx);
+        khint_t old_size = kh_size(cache.bounds);
+        for (k = kh_begin(cache.bounds);
+             k != kh_end(cache.bounds); ++k)
+        {
+            if (kh_exist(cache.bounds, k))
+            {
+                cb = kh_value(cache.bounds, k);
+                if (cb.n_hit < cache.min_n_hit_to_keep)
+                    kh_del(bounds_hash, cache.bounds, k);
+            }
+        }
+        khint_t new_size = kh_size(cache.bounds);
+        pthread_mutex_unlock(&cache.bounds_mtx);
+
+        cache.b.n_items = new_size;
+        cache.b.n_last_cleared_entries = old_size - new_size;
+        ++cache.b.n_times_cleared;
+
+        time_t cal = time(NULL);
+        char *ts = strdup(ctime(&cal));
+        ts[strlen(ts)-1] = '\0';
+        fprintf(stderr, "%s: cache.b.n_last_cleared_entries = %lu\n",
+                ts, cache.b.n_last_cleared_entries);
+        free(ts);
+    }
+
+    pthread_mutex_unlock(&cache.b.mtx);
+}
+
+
+/* parse diststats header, initializing fields of pset and max1 and max2  */
+void parse_diststats_header(FILE *diststats_fh, double *prior_alpha)
+{
+    int n;
+    n = fscanf(diststats_fh, 
+               "# max1: %u\n"
+               "# max2: %u\n"
+               "# max_sample_points: %u\n"
+               "# min_dirichlet_dist: %lf\n"
+               "# post_confidence: %lf\n"
+               "# beta_confidence: %lf\n"
+               "# prior_alpha: %lf\n",
+               &cache.max1, 
+               &cache.max2, 
+               &cache.max_sample_points,
+               &cache.min_dirichlet_dist,
+               &cache.post_confidence,
+               &cache.beta_confidence,
+               prior_alpha);
+    if (n != 7)
+    {
+        fprintf(stderr, "error parsing diststats header at %s: %ul\n", __FILE__, __LINE__);
+        exit(1);
+    }
+               
+}
+
+
+void write_diststats_header(FILE *diststats_fh)
+{
+    fprintf(diststats_fh, 
+            "# max1: %u\n"
+            "# max2: %u\n"
+            "# max_sample_points: %u\n"
+            "# min_dirichlet_dist: %lf\n"
+            "# post_confidence: %lf\n"
+            "# beta_confidence: %lf\n"
+            "# prior_alpha: %g\n",
+            cache.max1, 
+            cache.max2, 
+            cache.max_sample_points,
+            cache.min_dirichlet_dist,
+            cache.post_confidence,
+            cache.beta_confidence,
+            get_alpha_prior());
+}
+
+/* initialize internal bounds_cache */
+void parse_diststats_body(FILE *diststats_fh, unsigned max1, unsigned max2)
+{
+    struct binomial_est_bounds beb;
+    unsigned a2, b1, b2;
+    while (! feof(diststats_fh))
+    {
+        read_diststats_line(diststats_fh, &a2, &b1, &b2, &beb);
+        if (a2 < max2 && b2 < max2 && b1 < max1)
+            cache.bounds[a2][b2][b1] = beb;
+        else
+        {
+            fprintf(stderr, 
+                    "Error at %s: %u\n"
+                    "Indices exceed limits.  A2 = %u, B2 = %u, B1 = %u, MAX1 = %u, MAX2 = %u\n",
+                    __FILE__, __LINE__,
+                    a2, b2, b1, max1, max2);
+            exit(1);
+        }
+    }
+}
+
+
+struct {
+    unsigned long hit, miss;
+} cache_stats;
+
+
+void print_cache_stats()
+{
+    pthread_mutex_lock(&cache.dir_points_mtx);
+    time_t cal = time(NULL);
+    char *ts = strdup(ctime(&cal));
+    ts[strlen(ts)-1] = '\0';
+    fprintf(stderr, "%s: Dirichlet cache: %lu hits, %lu misses, %5.3f hit rate\n",
+            ts,
+            cache_stats.hit, cache_stats.miss,
+            100.0 * (float)cache_stats.hit 
+            / (float)(cache_stats.hit + cache_stats.miss));
+    cache_stats.hit = 0;
+    cache_stats.miss = 0;
+    free(ts);
+    pthread_mutex_unlock(&cache.dir_points_mtx);
+}
+#endif
