@@ -8,6 +8,7 @@
 #include "dirichlet_points_gen.h"
 #include "khash.h"
 #include "cache.h"
+#include "yepLibrary.h"
 
 #include <math.h>
 #include <string.h>
@@ -227,6 +228,8 @@ void dirichlet_diff_init(unsigned pseudo_depth,
     for (i = 0; i != cache.n_vals_mtx; ++i)
         pthread_mutex_init(&cache.dir_points_vals_mtx[i], NULL);
 
+    enum YepStatus status = yepLibrary_Init();
+    assert(status == YepStatusOk);
 }
 
 

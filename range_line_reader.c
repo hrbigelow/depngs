@@ -23,26 +23,53 @@ struct off_pair {
     off_t beg, end;
 };
 
+/* tallys statistics that allow the reader to adjust its strategy
+   during program execution. one of two strategies is used:
+
+   1.  if do_range_estimation is set, we have been given a list of
+       locus ranges to process.  n_loci_total is initialized at the
+       start. n_loci_left, n_bytes_read are maintained.  number of
+       bytes left is estimated from these in rl_scanner.
+
+   2.  otherwise, we are processing the whole file.  n_bytes_total is
+       initialized at the start.  n_bytes_left is maintained directly.
+       n_loci_total and n_loci_left are not used.
+
+ */
+
+static struct {
+    /* marker that informs all threads where to resume reading */
+    struct pair_ordering pos;
+
+    unsigned do_range_estimation;
+
+    unsigned long *n_bytes_total;
+    unsigned long *n_bytes_read;
+    unsigned long n_loci_total;
+    unsigned long n_loci_left; /* updated by range_line_aux */
+} reader_state;
+
+
 /* Read as much of several files as possible while reading less than
    max_bytes of any one file.  Start at logical position 'beg' and
    find a new logical position upper bound. Return an array of arrays
    of physical offsets off_ranges[r * n_s + s] = { beg, end }, r is
    range, s is sample. par describes the files and logical ranges from
-   those files. pos defines the starting logical position. return the
-   end logical position found. */
-struct pair_ordering range_line_aux(void *par,
-                                    unsigned max_bytes,
-                                    void *pos,
-                                    struct off_pair **off_ranges, 
-                                    unsigned *n_off_ranges,
-                                    unsigned do_free,
-                                    unsigned *n_loci_scanned)
+   those files. pos defines the starting logical position. sets
+   reader_state fields n_bytes_read, n_loci_left. */
+void range_line_aux(void *par,
+                    unsigned max_bytes,
+                    struct off_pair **off_ranges, 
+                    unsigned *n_off_ranges,
+                    unsigned do_free)
 {
     struct range_line_reader_par *rr = par;
     size_t n_ix = rr->n_ix;
 
-    struct pair_ordering *pbeg = pos;
-    struct pair_ordering_range *qcur, cur_rng = { *pbeg, *pbeg };
+    struct pair_ordering_range 
+        *qcur, 
+        cur_rng = { reader_state.pos, reader_state.pos };
+
     unsigned n_ranges = rr->qend - rr->qbeg;
 
     /* find the range that contains cur_rng */
@@ -62,16 +89,12 @@ struct pair_ordering range_line_aux(void *par,
     /* must re-set on each call */
     rr->new_query = 1;
 
-    /* initialize this just so that the function returns *pbeg when
-       there is no more input to process.  i'm not clear whether this
-       makes sense ... */
     ptrdiff_t max_space_used;
-    *n_loci_scanned = 0;
 
     while (rr->new_query && qcur != rr->qend)
     {
         cur_rng = (struct pair_ordering_range){ 
-            MAX_PAIR_ORD(qcur->beg, *pbeg), qcur->end
+            MAX_PAIR_ORD(qcur->beg, reader_state.pos), qcur->end
         };
 
         max_span = 0;
@@ -95,11 +118,12 @@ struct pair_ordering range_line_aux(void *par,
                 off[oi].beg = off_lower_bound(&rr->ix[i], cur_rng.beg);
                 off[oi].end = off_lower_bound(&rr->ix[i], cur_rng.end);
                 ptrdiff_t used = off[oi].end - off[oi].beg;
+                reader_state.n_bytes_read[i] += used;
                 max_space_used = MAX(used, max_space_used);
             }
             assert(max_space_used <= space_left);
             space_left -= max_space_used;
-            *n_loci_scanned += qcur->end.lo - cur_rng.beg.lo;
+            reader_state.n_loci_left -= qcur->end.lo - cur_rng.beg.lo;
             cur_rng.beg = qcur->end;
             ++qcur;
             rr->new_query = 1;
@@ -133,11 +157,12 @@ struct pair_ordering range_line_aux(void *par,
                 off[oi].beg = off_lower_bound(&rr->ix[i], cur_rng.beg);
                 off[oi].end = off_lower_bound(&rr->ix[i], trunc_pos);
                 ptrdiff_t used = off[oi].end - off[oi].beg;
+                reader_state.n_bytes_read[i] += used;
                 max_space_used = MAX(used, max_space_used);
             }
             assert(max_space_used <= space_left);
             space_left -= max_space_used;
-            *n_loci_scanned += trunc_pos.lo - cur_rng.beg.lo;
+            reader_state.n_loci_left -= trunc_pos.lo - cur_rng.beg.lo;
             cur_rng.beg = trunc_pos;
             rr->new_query = 0;
         }
@@ -156,7 +181,40 @@ struct pair_ordering range_line_aux(void *par,
     *off_ranges = off;
     *n_off_ranges = n_off;
 
-    return cur_rng.beg;
+    reader_state.pos = cur_rng.beg;
+}
+
+/* call this if a range file is given */
+void rl_init_by_range(unsigned n_loci_total, unsigned n_files)
+{
+    reader_state.pos = (struct pair_ordering){ 0, 0 };
+    reader_state.do_range_estimation = 1;
+    reader_state.n_bytes_total = NULL;
+    reader_state.n_bytes_read = calloc(n_files, sizeof(reader_state.n_bytes_read[0]));
+    reader_state.n_loci_total = n_loci_total;
+    reader_state.n_loci_left = n_loci_total;
+}
+
+/* call this if no range file is given */
+void rl_init_whole_file(struct file_bsearch_index *ix, unsigned n_files)
+{
+    reader_state.pos = (struct pair_ordering){ 0, 0 };
+    reader_state.do_range_estimation = 0;
+    reader_state.n_bytes_total = malloc(n_files * sizeof(reader_state.n_bytes_total[0]));
+    reader_state.n_bytes_read = calloc(n_files, sizeof(reader_state.n_bytes_read[0]));
+    reader_state.n_loci_total = 0;
+    reader_state.n_loci_left = 0;
+
+    unsigned f;
+    for (f = 0; f != n_files; ++f)
+        reader_state.n_bytes_total[f] = 
+            ix[f].root->end_offset - ix[f].root->start_offset;
+}
+
+void rl_free()
+{
+    if (reader_state.n_bytes_total) free(reader_state.n_bytes_total);
+    free(reader_state.n_bytes_read);
 }
 
 /* read data starting at beg, using ranges and file handles specified
@@ -190,38 +248,46 @@ void rl_reader(void *par, struct managed_buf *bufs)
    bulk data, thus saving bandwidth. thread safe.  does not require
    any mutex locking. */
 
-/* */
-
 /* This size is big enough for a pileup line and small enough to be a
    quickly-processed chunk, increasing the chance that multiple
    threads can keep working until the end of the input. */
-#define MAX_LOCI_SMALL_CHUNK 50e6
+
+/* See comments on struct reader_state for description of chunking
+   strategy. */
+
+/* If we have less than 1GB of input to go, switch to using small
+   chunks of SMALL_CHUNK size */
+#define MAX_BYTES_SMALL_CHUNK 1e9
 #define SMALL_CHUNK 5e6
+
+/* If in do_range_estimation mode, and we don't yet have an estimate
+   for n_bytes_per_locus, use this as a default value. */
+#define DEFAULT_BYTES_PER_LOCUS 100
 void rl_scanner(void *par, unsigned max_bytes)
 {
     struct range_line_reader_par *rr = par;
-    unsigned n_loci_scanned;
-    unsigned bytes = rr->n_loci_left > MAX_LOCI_SMALL_CHUNK ? max_bytes : SMALL_CHUNK;
-    rr->end_pos = range_line_aux(par, bytes, &rr->start_pos, 
-                                 &rr->offset_pairs, &rr->n_offsets, 0, &n_loci_scanned);
-    rr->n_loci_left -= n_loci_scanned;
-}
+    unsigned f;
+    unsigned long most_bytes_left = 0;
+    if (reader_state.do_range_estimation)
+    {
+        unsigned long loci_read = reader_state.n_loci_total - reader_state.n_loci_left;
+        for (f = 0; f != rr->n_ix; ++f)
+        {
+            unsigned n_bytes_per_locus = 
+                loci_read == 0
+                ? DEFAULT_BYTES_PER_LOCUS
+                : reader_state.n_bytes_read[f] / loci_read;
+            
+            most_bytes_left = MAX(reader_state.n_loci_left * n_bytes_per_locus, 
+                                  most_bytes_left);
+        }
+    }
+    else
+        for (f = 0; f != rr->n_ix; ++f)
+            most_bytes_left = MAX(most_bytes_left,
+                                  reader_state.n_bytes_total[f]
+                                  - reader_state.n_bytes_read[f]);
 
-
-/* transfer thread-local value to global value */
-void rl_set_global_state(void *par, void *state)
-{
-    struct range_line_reader_par *rr = par;
-    *(struct reader_state *)state = 
-        (struct reader_state){ rr->end_pos, rr->n_loci_left };
-}
-
-
-/* transfer global value to thread-local value */
-void rl_get_global_state(void *par, void *state)
-{
-    struct range_line_reader_par *rr = par;
-    struct reader_state *rs = state;
-    rr->start_pos = rs->pos;
-    rr->n_loci_left = rs->n_loci_left;
+    unsigned bytes_wanted = most_bytes_left > MAX_BYTES_SMALL_CHUNK ? max_bytes : SMALL_CHUNK;
+    range_line_aux(par, bytes_wanted, &rr->offset_pairs, &rr->n_offsets, 0);
 }

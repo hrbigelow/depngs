@@ -25,15 +25,11 @@
 struct thread_queue;
 
 /* 'read' uses par to instruct it which ranges of which files to read
-   into bufs. beg is passed
-   thread_queue.global_read_start. thread_queue_free deallocates these
-   buffers.  'scan' scans the same files described by par, starting at
-   beg, and then updates global_read_start via its beg parameter. */
+   into bufs. thread_queue_free deallocates these buffers.  'scan'
+   scans the same files described by par. */
 typedef struct {
     void (*read)(void *par, struct managed_buf *bufs);
     void (*scan)(void *par, unsigned max_bytes);
-    void (*get_global_state)(void *par, void *state);
-    void (*set_global_state)(void *par, void *state);
 } thread_queue_reader_t;
 
 /* the client-provided worker consumes the input (one or more in_bufs)
@@ -76,7 +72,6 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
                   thread_queue_worker_t worker, void **worker_par,
                   thread_queue_offload_t offload, void *offload_par,
                   thread_queue_exit_t onexit,
-                  void *global_read_start,
                   unsigned n_threads,
                   unsigned n_extra_in_pool,
                   unsigned n_readers,

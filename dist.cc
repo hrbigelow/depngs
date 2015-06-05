@@ -65,6 +65,38 @@ int dist_usage()
 extern char *optarg;
 extern int optind;
 
+
+/* attempts to convert nptr to a double value using strtod.  if strtod
+   doesn't consume exactly the entire contents of nptr, prints a
+   message to standard error using conv_name as a tag, and then
+   exits. */
+double strtod_errmsg(const char *nptr, const char *conv_name)
+{
+    char *end;
+    double rv = strtod(nptr, &end);
+    if (*nptr == '\0' || end != nptr + strlen(nptr))
+    {
+        fprintf(stderr, "Error: %s: couldn't convert %s with value \"%s\" to a double\n",
+                __func__, conv_name, nptr);
+        exit(1);
+    }
+    return rv;
+}
+
+
+long int strtol_errmsg(const char *nptr, const char *conv_name)
+{
+    char *end;
+    long int rv = strtol(nptr, &end, 10);
+    if (*nptr == '\0' || end != nptr + strlen(nptr))
+    {
+        fprintf(stderr, "Error: %s: couldn't convert %s with value \"%s\" to a long int\n",
+                __func__, conv_name, nptr);
+        exit(1);
+    }
+    return rv;
+}
+
 int main_dist(int argc, char **argv)
 {
     size_t n_threads = 1;
@@ -100,16 +132,18 @@ int main_dist(int argc, char **argv)
         case 'r': query_range_file = optarg; break;
         case 'x': summary_stats_file = optarg; break;
 
-        case 'f': max_sample_points = (size_t)atof(optarg); break;
-        case 'y': min_dirichlet_dist = sqrt(2.0) * atof(optarg); break;
-        case 'X': post_confidence = atof(optarg); break;
-        case 'Z': beta_confidence = atof(optarg); break;
-        case 'p': prior_alpha = atof(optarg); break;
+        case 'f': max_sample_points = 
+                (unsigned)strtod_errmsg(optarg, "-f (max_sample_points)"); break;
+        case 'y': min_dirichlet_dist = 
+                sqrt(2.0) * strtod_errmsg(optarg, "-y (min_dirichlet_dist)"); break;
+        case 'X': post_confidence = strtod_errmsg(optarg, "-X (post_confidence)"); break;
+        case 'Z': beta_confidence = strtod_errmsg(optarg, "-Z (beta_confidence)"); break;
+        case 'p': prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
 
-        case 't': n_threads = (size_t)atof(optarg); break;
-        case 'R': n_readers = (unsigned)atof(optarg); break;
-        case 'm': max_mem = (size_t)atof(optarg); break;
-        case 'q': min_quality_score = (size_t)atoi(optarg); break;
+        case 't': n_threads = strtol_errmsg(optarg, "-t (n_threads)"); break;
+        case 'R': n_readers = strtol_errmsg(optarg, "-R (n_readers)"); break;
+        case 'm': max_mem = (size_t)strtod_errmsg(optarg, "-m (max_mem)"); break;
+        case 'q': min_quality_score = strtol_errmsg(optarg, "-q (min_quality_score)"); break;
         case 'F': fastq_type = optarg; break;
         case 'Q': quantiles_string = optarg; break;
         case 'g': print_pileup_fields = 1; break;

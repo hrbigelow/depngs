@@ -9,8 +9,7 @@
 enum buf_status {
     EMPTY,
     LOADING,
-    FULL,
-    UNLOADING
+    FULL
 };
 
 /* managed output buffers.  There will be T + E of these and they will
@@ -43,18 +42,21 @@ struct thread_queue {
     thread_queue_offload_t *offload;
     thread_queue_exit_t *onexit;
 
-    /* parameters to be used by the reader within the read_mtx lock */
+    pthread_mutex_t io_mtx;
+    pthread_cond_t reader_free_cond;
+
+    /* protected by io_mtx */
     void **reader_par;
-    void *global_reader_state; /* allows threads to communicate reader
-                                  progress. */
     unsigned *reader_in_use, n_readers, n_readers_free;
-    pthread_mutex_t read_mtx;
-    pthread_cond_t read_cond;
+
     void *offload_par;
+
+    pthread_mutex_t out_mtx;
+    pthread_cond_t out_free_cond;
     struct output_node *out_pool, *out_head, *out_tail;
-    unsigned pool_status[4]; /* number of output nodes in each of the states */
+
+    unsigned pool_status[3]; /* number of output nodes in each of the states */
     struct thread_comp_input *input;
-    pthread_mutex_t pool_mtx;
     pthread_t *threads;
     unsigned n_threads, n_extra, n_inputs, n_outputs;
 };
@@ -69,7 +71,6 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
                   thread_queue_worker_t worker, void **worker_par,
                   thread_queue_offload_t offload, void *offload_par,
                   thread_queue_exit_t onexit,
-                  void *global_reader_state,
                   unsigned n_threads,
                   unsigned n_extra,
                   unsigned n_readers,
@@ -84,8 +85,8 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
     tq->n_readers = n_readers;
     tq->n_readers_free = n_readers;
     tq->reader_in_use = calloc(n_readers, sizeof(tq->reader_in_use[0]));
-    pthread_mutex_init(&tq->read_mtx, NULL);
-    pthread_cond_init(&tq->read_cond, NULL);
+    pthread_mutex_init(&tq->io_mtx, NULL);
+    pthread_cond_init(&tq->reader_free_cond, NULL);
     tq->worker = worker;
     tq->offload = offload;
     tq->offload_par = offload_par;
@@ -95,11 +96,10 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
     tq->out_tail = NULL;
     memset(tq->pool_status, 0, sizeof(tq->pool_status));
     tq->pool_status[EMPTY] = n_pool;
-    tq->global_reader_state = global_reader_state;
     tq->input = calloc(n_threads, sizeof(struct thread_comp_input));
 
-    pthread_mutex_init(&tq->pool_mtx, NULL);
-    pthread_mutex_init(&tq->read_mtx, NULL);
+    pthread_mutex_init(&tq->out_mtx, NULL);
+    pthread_cond_init(&tq->out_free_cond, NULL);
     tq->threads = malloc(n_threads * sizeof(pthread_t));
     tq->n_threads = n_threads;
     tq->n_extra = n_extra;
@@ -173,8 +173,11 @@ int thread_queue_run(struct thread_queue *tq)
 /* release resources */
 void thread_queue_free(struct thread_queue *tq)
 {
-    pthread_mutex_destroy(&tq->pool_mtx);
-    pthread_mutex_destroy(&tq->read_mtx);
+    pthread_mutex_destroy(&tq->out_mtx);
+    pthread_mutex_destroy(&tq->io_mtx);
+    pthread_cond_destroy(&tq->reader_free_cond);
+    pthread_cond_destroy(&tq->out_free_cond);
+
     free(tq->threads);
 
     unsigned t, b;
@@ -197,12 +200,11 @@ void thread_queue_free(struct thread_queue *tq)
 
 
 /* safely change the status flag of the 'out' node. */
-void mutex_change_status(struct thread_queue *tq,
+void set_outnode_status(struct thread_queue *tq,
                          struct output_node *out,
                          enum buf_status status)
 {
-    int rc = pthread_mutex_lock(&tq->pool_mtx);
-    CHECK_THREAD(rc);
+    pthread_mutex_lock(&tq->out_mtx);
     --tq->pool_status[out->status];
     out->status = status;
     ++tq->pool_status[out->status];
@@ -211,8 +213,7 @@ void mutex_change_status(struct thread_queue *tq,
         for (b = 0; b != tq->n_outputs; ++b)
             out->buf[b].size = 0;
 
-    rc = pthread_mutex_unlock(&tq->pool_mtx);
-    CHECK_THREAD(rc);
+    pthread_mutex_unlock(&tq->out_mtx);
 }
 
 
@@ -232,7 +233,7 @@ void mutex_change_status(struct thread_queue *tq,
     do {                                                                \
     clock_gettime(CLOCK_REALTIME, &beg_time);                           \
     fprintf(stderr,                                                     \
-            "START\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\t%u\n",          \
+            "START\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\n",              \
             (category),                                                 \
             TIME_MS(beg_time),                                          \
             TIME_MS(beg_time),                                          \
@@ -240,8 +241,7 @@ void mutex_change_status(struct thread_queue *tq,
             0l,                                                         \
             tq->pool_status[EMPTY],                                     \
             tq->pool_status[LOADING],                                   \
-            tq->pool_status[FULL],                                      \
-            tq->pool_status[UNLOADING]);                                \
+            tq->pool_status[FULL]);                                     \
     fflush(stderr);                                                     \
     } while (0)
 
@@ -251,7 +251,7 @@ void mutex_change_status(struct thread_queue *tq,
     do {                                                                \
         clock_gettime(CLOCK_REALTIME, &end_time);                       \
         fprintf(stderr,                                                 \
-                "END\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\t%u\n",        \
+                "END\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\n",            \
                 (category),                                             \
                 TIME_MS(beg_time),                                      \
                 TIME_MS(end_time),                                      \
@@ -259,8 +259,7 @@ void mutex_change_status(struct thread_queue *tq,
                 ELAPSED_MS,                                             \
                 tq->pool_status[EMPTY],                                 \
                 tq->pool_status[LOADING],                               \
-                tq->pool_status[FULL],                                  \
-                tq->pool_status[UNLOADING]);                            \
+                tq->pool_status[FULL]);                                 \
         fflush(stderr);                                                 \
     } while (0)
 #else
@@ -281,44 +280,58 @@ static void *worker_func(void *args)
 
     while (1)
     {
-        int rc;
-        /* read chunk into input buffer.  this step can be done
-           independent of any locking of the out-buffer pool. */
         PROGRESS_START("WAIT");
-        (void)pthread_mutex_lock(&tq->read_mtx);
-
-        /* wait for a reader to free up. */
+        pthread_mutex_lock(&tq->io_mtx);
         while (! tq->n_readers_free)
-            pthread_cond_wait(&tq->read_cond, &tq->read_mtx);
+            pthread_cond_wait(&tq->reader_free_cond, &tq->io_mtx);
 
-        /* find the first free reader */
+        /* reserve first free reader */
         unsigned r;
         for (r = 0; r != tq->n_readers; ++r)
             if (! tq->reader_in_use[r]) break;
         
         tq->reader_in_use[r] = 1;
         --tq->n_readers_free;
-
-        tq->reader.get_global_state(tq->reader_par[r], tq->global_reader_state);
         PROGRESS_MSG("WAIT");
 
+        /* reserve next input range */
         PROGRESS_START("SCAN");
         tq->reader.scan(tq->reader_par[r], in->buf[0].alloc);
         PROGRESS_MSG("SCAN");
 
-        tq->reader.set_global_state(tq->reader_par[r], tq->global_reader_state);
-        (void)pthread_mutex_unlock(&tq->read_mtx);
+        /* reserve the first empty out buffer */
+        pthread_mutex_lock(&tq->out_mtx);
+        if (! tq->pool_status[EMPTY])
+            pthread_cond_wait(&tq->out_free_cond, &tq->out_mtx);
+
+        for (p = 0; p != n_pool; ++p)
+            if (tq->out_pool[p].status == EMPTY)
+            {
+                in->out = &tq->out_pool[p];
+                --tq->pool_status[EMPTY];
+                in->out->status = LOADING;
+                ++tq->pool_status[LOADING];
+                in->out->next = NULL;
+                    
+                if (! tq->out_head)
+                    tq->out_head = tq->out_tail = in->out;
+                else
+                    tq->out_tail->next = in->out, tq->out_tail = in->out;
+
+                break;
+            }
+        pthread_mutex_unlock(&tq->out_mtx);
+        pthread_mutex_unlock(&tq->io_mtx);
 
         PROGRESS_START("READ");
         tq->reader.read(tq->reader_par[r], in->buf);
         PROGRESS_MSG("READ");
 
-        (void)pthread_mutex_lock(&tq->read_mtx);
+        pthread_mutex_lock(&tq->io_mtx);
         tq->reader_in_use[r] = 0;
         ++tq->n_readers_free;
-        (void)pthread_mutex_unlock(&tq->read_mtx);
-
-        pthread_cond_signal(&tq->read_cond);
+        pthread_cond_signal(&tq->reader_free_cond);
+        pthread_mutex_unlock(&tq->io_mtx);
 
         /* no need to free any resources here */
         unsigned sz = 0, b;
@@ -330,62 +343,27 @@ static void *worker_func(void *args)
             }
         if (sz == 0)
         {
+            /* need to free up output buffer. setting it to full just
+               has the effect of holding onto one extra buffer
+               unnecessarily. when it comes time to output it, the
+               length will be zero, so it will have no effect. */
+            set_outnode_status(tq, in->out, FULL);
             tq->onexit(in->worker_par);
             pthread_exit(NULL);
         }
-        else 
-
-        /* search for EMPTY output buf, append, set status to
-           LOADING */
-        /* PROGRESS_START("BS"); */
-        while (1)
-        {
-            rc = pthread_mutex_lock(&tq->pool_mtx); /* ########## POOL LOCK ########## */
-            CHECK_THREAD(rc);
-            for (p = 0; p != n_pool; ++p)
-                if (tq->out_pool[p].status == EMPTY)
-                {
-                    in->out = &tq->out_pool[p];
-                    --tq->pool_status[in->out->status];
-                    in->out->status = LOADING;
-                    ++tq->pool_status[in->out->status];
-                    in->out->next = NULL;
-                    
-                    if (! tq->out_head)
-                        tq->out_head = tq->out_tail = in->out;
-                    else
-                        tq->out_tail->next = in->out, tq->out_tail = in->out;
-
-                    break;
-                }
-            rc = pthread_mutex_unlock(&tq->pool_mtx); /* ######### POOL UNLOCK ######### */
-            CHECK_THREAD(rc);
-            if (in->out)
-                break;
-            sleep(1); 
-            /* one second is long enough not to cause too many
-               locks/unlocks, but frequent enough compared to the time
-               it takes for the main loop */
-        }
-        /* PROGRESS_MSG("BS"); */
 
         /* load the output buffer. */
         PROGRESS_START("WORK");
         tq->worker(in->worker_par, in->buf, in->out->buf);
         PROGRESS_MSG("WORK");
 
-        mutex_change_status(tq, in->out, FULL);
+        set_outnode_status(tq, in->out, FULL);
         in->out = NULL;
         
-        /* PROGRESS_START("U"); */
+        pthread_mutex_lock(&tq->out_mtx);
         while (tq->out_head && tq->out_head->status == FULL)
         {
-            mutex_change_status(tq, tq->out_head, UNLOADING);
             tq->offload(tq->offload_par, tq->out_head->buf);
-
-            rc = pthread_mutex_lock(&tq->pool_mtx);
-            CHECK_THREAD(rc);
-
             --tq->pool_status[tq->out_head->status];
             tq->out_head->status = EMPTY;
             ++tq->pool_status[tq->out_head->status];
@@ -394,10 +372,7 @@ static void *worker_func(void *args)
                 tq->out_head->buf[b].size = 0;
 
             tq->out_head = tq->out_head->next;
-
-            rc = pthread_mutex_unlock(&tq->pool_mtx);
-            CHECK_THREAD(rc);
         }
-        /* PROGRESS_MSG("U"); */
+        pthread_mutex_unlock(&tq->out_mtx);
     }
 }

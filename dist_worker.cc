@@ -4,6 +4,7 @@
 #include "dist_worker.h"
 #include "sampling.h"
 #include "yepLibrary.h"
+#include "yepCore.h"
 
 #include <gsl/gsl_math.h>
 #include <gsl/gsl_randist.h>
@@ -17,6 +18,7 @@ extern "C" {
 #include "dirichlet_diff_cache.h"
 #include "khash.h"
 #include "range_line_reader.h"
+#include "geometry.h"
 }
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -77,7 +79,6 @@ static struct {
     void **reader_par;
     unsigned n_readers;
     struct pair_ordering_range *ranges;
-    struct reader_state rstate;
     unsigned n_ranges;
     struct dist_worker_input *w;
     void **wp;
@@ -417,9 +418,6 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
             samples.n,
             thread_params.ranges, 
             thread_params.ranges + thread_params.n_ranges,
-            n_total_loci,
-            thread_params.ranges[0].beg,
-            thread_params.ranges[0].beg,
             NULL,
             0,
             init_locus,
@@ -431,11 +429,13 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
 
         thread_params.reader_par[r] = &thread_params.reader_buf[r];
     }
+
+    if (query_range_file)
+        rl_init_by_range(n_total_loci, samples.n);
+    else
+        rl_init_whole_file(thread_params.reader_buf[0].ix, samples.n);
     
     thread_params.offload_par = { dist_fh, comp_fh, indel_fh };
-
-    enum YepStatus status = yepLibrary_Init();
-    assert(status == YepStatusOk);
 
     /* To avoid a stall, n_extra / n_threads should be greater than
        Max(work chunk time) / Avg(work chunk time). */
@@ -443,17 +443,13 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
     size_t n_output_files = 
         (dist_fh ? 1 : 0) + (comp_fh ? 1 : 0) + (indel_fh ? 1 : 0);
 
-    thread_queue_reader_t reader = { rl_reader, rl_scanner, 
-                                     rl_get_global_state, 
-                                     rl_set_global_state };
-    thread_params.rstate = 
-        (struct reader_state){ thread_params.ranges[0].beg, n_total_loci };
+    thread_queue_reader_t reader = { rl_reader, rl_scanner };
+
     struct thread_queue *tqueue =
         thread_queue_init(reader, thread_params.reader_par,
                           dist_worker, thread_params.wp,
                           dist_offload, &thread_params.offload_par,
                           dist_on_exit,
-                          &thread_params.rstate,
                           n_threads, n_extra, n_readers, samples.n,
                           n_output_files, max_input_mem);
 
@@ -580,11 +576,12 @@ void print_basecomp_quantiles(COMP_QV quantile_values,
 }
 
 
+
+
 /* populates square_dist_buf with squares of euclidean distances
-   between points1 and points2 in the normalized [0,1] x 4 space.
-   here, the maximum squared distance will be 2 (e.g. (1,0,0,0) and
-   (0,1,0,0).  This will yield a maximum distance of sqrt(2).
-   populates weights_buf with product of weights1 and weights2. */
+   between points1 and points2 in the barycentric space (R4,
+   normalized positive components).  populates weights_buf with
+   product of weights1 and weights2. */
 void compute_wsq_dist(const POINT *points1,
                       const double *weights1,
                       const POINT *points2,
@@ -593,38 +590,8 @@ void compute_wsq_dist(const POINT *points1,
                       double *square_dist_buf,
                       double *weights_buf)
 {
-    int d;
-    double *sd = square_dist_buf, *w = weights_buf;
-    size_t np = n_points;
-    while (np-- > 0)
-    {
-        *sd = 0;
-        for (d = 0; d != NUM_NUCS; ++d) *sd += gsl_pow_2((*points1)[d] - (*points2)[d]);
-        *w++ = *weights1++ * *weights2++;
-        sd++;
-        points1++;
-        points2++;
-    }
-}
-
-
-/* unlike previous, this does not require the points to have NUM_NUCS
-   components. */
-void compute_sq_dist(const double *points1,
-                     const double *points2,
-                     size_t n_points,
-                     size_t n_dims,
-                     double *square_dist_buf)
-{
-    unsigned d;
-    double *sd = square_dist_buf;
-    size_t np = n_points;
-    while (np-- > 0)
-    {
-        *sd = 0;
-        for (d = 0; d != n_dims; ++d) *sd += gsl_pow_2(*points1++ - *points2++);
-        ++sd;
-    }
+    compute_square_dist((const double *)points1, (const double *)points2, n_points, 4, square_dist_buf);
+    (void)yepCore_Multiply_V64fV64f_V64f(weights1, weights2, weights_buf, n_points);
 }
 
 
@@ -1152,8 +1119,8 @@ void next_indel_distance_quantiles_aux(struct dist_worker_input *dw,
                 p2 += n_events;
             }
 
-            compute_sq_dist(points1, points2, max_sample_points, n_events,
-                            dw->square_dist_buf);
+            compute_square_dist(points1, points2, max_sample_points, n_events,
+                                dw->square_dist_buf);
 
             double test_quantile = 1.0 - posterior_confidence, test_quantile_value;
             
@@ -1290,9 +1257,11 @@ void dist_worker(void *par,
     locus_sampling null_sd;
     alloc_pileup_locus(&null_sd);
 
-    char null_pileup[] = "chr1\t1\tA\t0\t\t\n";
+    char null_pileup[50];
+    strcpy(null_pileup, dw->lslist[0].locus.reference);
+    strcat(null_pileup, "\t1\tA\t0\t\t\n");
     null_sd.current = null_pileup;
-    null_sd.end = null_pileup + sizeof(null_pileup);
+    null_sd.end = null_pileup + strlen(null_pileup);
         
     update_pileup_locus(&samples.atts[0].nuc_stats, &null_sd);
 

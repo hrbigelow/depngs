@@ -1,5 +1,7 @@
 #include "binomial_est.h"
 
+#include "geometry.h"
+
 #include <gsl/gsl_cdf.h>
 #include <gsl/gsl_sf_gamma.h>
 #include <gsl/gsl_math.h>
@@ -264,6 +266,8 @@ enum bound_class {
 };
 
 
+
+
 /* Sample pairs of points from dist_pair up to max_points, classifying
    each pair as 'success' if distance is less than min_dist, 'failure'
    otherwise.  From the set of successes and failures, use the Beta
@@ -300,7 +304,8 @@ binomial_quantile_est(unsigned max_points,
     struct binomial_est_state est;
     est.beta_qval_lo = 0;
     est.beta_qval_hi = 1;
-    float dist_squared, min_dist_squared = gsl_pow_2(min_dist);
+    double min_dist_squared = gsl_pow_2(min_dist);
+    double *square_dist_buf = malloc(batch_size * sizeof(double));
 
     assert(max_points % batch_size == 0);
     assert(points1->alloc >= max_points);
@@ -351,17 +356,12 @@ binomial_quantile_est(unsigned max_points,
         
         /* measure distances, threshold, and classify successes.
            success means non-change */
-        for (p = 0; p != batch_size; ++p)
-        {
-            dist_squared = 0;
-            int d;
-            for (d = 0; d != NUM_NUCS; ++d)
-                dist_squared += gsl_pow_2((*pcur1)[d] - (*pcur2)[d]);
+        compute_square_dist((const double *)pcur1, 
+                            (const double *)pcur2, 
+                            batch_size, NUM_NUCS, square_dist_buf);
 
-            s += (dist_squared < min_dist_squared ? 1 : 0);
-            ++pcur1;
-            ++pcur2;
-        }
+        for (p = 0; p != batch_size; ++p)
+            s += (square_dist_buf[p] < min_dist_squared ? 1 : 0);
 
         /* regardless of est, we need to calculate est.beta_qval_lo */
         est.beta_qval_lo = jeffreys_beta_lo(n, s);
@@ -401,6 +401,7 @@ binomial_quantile_est(unsigned max_points,
         fprintf(stderr, "%s:%i: low and hi bounds cross each other\n", __FILE__, __LINE__);
         exit(1);
     }
+    free(square_dist_buf);
     return est;
 }
 
