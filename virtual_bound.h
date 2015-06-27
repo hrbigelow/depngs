@@ -10,12 +10,14 @@
    than the query value.
   */
 unsigned virtual_lower_bound(unsigned beg, unsigned end, 
-                             int (*elem_is_less)(unsigned pos, void *par), void *par);
+                             int (*elem_is_less)(unsigned pos, void *par),
+                             void *par);
 
 /* find the lowest position p in [beg, end) s.t. query_is_less(p, par)
    = 1 */
 unsigned virtual_upper_bound(unsigned beg, unsigned end, 
-                             int (*query_is_less)(unsigned pos, void *par), void *par);
+                             int (*query_is_less)(unsigned pos, void *par),
+                             void *par);
 
 
 #endif /* _VIRTUAL_BOUND_H */

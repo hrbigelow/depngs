@@ -19,6 +19,7 @@ extern "C" {
 #include "khash.h"
 #include "range_line_reader.h"
 #include "geometry.h"
+#include "chunk_strategy.h"
 }
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -431,10 +432,18 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
     }
 
     if (query_range_file)
-        rl_init_by_range(n_total_loci, samples.n);
+        cs_init_by_range(n_total_loci, samples.n);
     else
-        rl_init_whole_file(thread_params.reader_buf[0].ix, samples.n);
-    
+    {
+        cs_init_whole_file(samples.n);
+        struct file_bsearch_index *ix = thread_params.reader_buf[0].ix;
+        for (s = 0; s != samples.n; ++s)
+            cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset);
+    }
+    cs_set_defaults(MAX_BYTES_SMALL_CHUNK,
+                    SMALL_CHUNK, 
+                    DEFAULT_BYTES_PER_LOCUS);
+
     thread_params.offload_par = { dist_fh, comp_fh, indel_fh };
 
     /* To avoid a stall, n_extra / n_threads should be greater than
@@ -618,6 +627,7 @@ void compute_dist_wquantiles(double *square_dist_buf,
    one if its pair index is equal to PSEUDO_SAMPLE */
 void print_distance_quantiles(const char *contig,
                               size_t position,
+                              char ref_base,
                               struct dist_worker_input *dw,
                               size_t pair_index,
                               double *dist_quantile_values,
@@ -631,10 +641,12 @@ void print_distance_quantiles(const char *contig,
     ALLOC_GROW_TYPED(buf->buf, buf->size + space, buf->alloc);
 
     buf->size += sprintf(buf->buf + buf->size, 
-                         "%s\t%s\t%s\t%Zu", 
+                         "%s\t%s\t%s\t%Zu\t%c", 
                          samples.atts[s1].label,
                          s2 == PSEUDO_SAMPLE ? "REF" : samples.atts[s2].label,
-                         contig, position);
+                         contig,
+                         position,
+                         ref_base);
     
     for (size_t q = 0; q != n_quantiles; ++q)
         buf->size += sprintf(buf->buf + buf->size, "\t%7.4f", dist_quantile_values[q]);
@@ -973,7 +985,9 @@ void next_distance_quantiles_aux(struct dist_worker_input *dw,
                         dw->dist_quantile_values[q] *= ONE_OVER_SQRT2;
                     
                     print_distance_quantiles(dw->lslist[gs].locus.reference, 
-                                             dw->lslist[gs].locus.position, dw, 
+                                             dw->lslist[gs].locus.position, 
+                                             dw->lslist[gs].locus.reference_base,
+                                             dw, 
                                              pi, dw->dist_quantile_values, 
                                              out_buf);
                 }
@@ -1049,12 +1063,14 @@ indel_event *count_indel_types(struct locus_sampling *sd1,
         unsigned nindel1 = 0, nindel2 = 0;
         while (ee != e) nindel1 += ee->count1, nindel2 += ee++->count2;
 
-        // now count the non-indel 'events', by definition the
-        // remaining reads that do not have any indels.  only count
-        // this as an event if it occurs in at least one of the two
-        // pairs.
-        if ((e->count1 = sd1->locus.read_depth - nindel1) +
-            (e->count2 = sd2->locus.read_depth - nindel2) > 0)
+        /* now count the non-indel 'events', by definition the
+        remaining reads that do not have any indels.  only count this
+        as an event if it occurs in at least one of the two pairs.
+        read_depth_match are the number of reads with an 'M' base at
+        this position.  these may be low-quality basecalls, but the
+        call confidence is not relevant here */
+        if ((e->count1 = sd1->locus.read_depth_match - nindel1) +
+            (e->count2 = sd2->locus.read_depth_match - nindel2) > 0)
         {
             e->seq = NULL;
             ++e;

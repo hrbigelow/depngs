@@ -1,0 +1,322 @@
+/* 
+   Notes on hts_itr_query.
+
+   bin = hts_bin_first(idx->n_lvls) + (beg>>idx->min_shift)
+
+   This gives the smallest-size bin that contains beg. Strangely, the
+   next part hinges on whether or not there happen to be records in
+   that bin.  If there are, then there also will be an loff field
+   initialized, which actually has nothing whatsoever to do with the
+   records in the bin.
+
+   If the bin is empty, then a strange thing happens.  We search the
+   bin on the adjacent level, to the left. This bin, by definition,
+   will *not* contain any records that overlap beg.  Yet, its loff
+   field will point to the voffset of the earliest record in the file
+   that overlaps it.
+
+   The following notions are key:
+
+   1. A record that overlaps a given bin must either be contained in
+      the bin or contained in a parent of the bin.
+
+   2. A bin's loff field is the voffset of the earliest record that
+      overlaps that bin.
+
+   3. the loff fields of two bins on the same level must be
+      non-decreasing with bin number.
+
+   Proof of 3: The set of records overlapping two bins on the same
+   level, L and R, is OLAP(L) and OLAP(R).  OLAP(L) consists of a
+   subset of records contained entirely in L, plus the set that
+   overlap L but are not contained. Similarly, OLAP(R) consists of
+   records contained in R plus those not contained but overlapping.
+   Among those records contained in L, the smallest voffset must be
+   smaller than those contained in R.  The set of records not
+   contained in R may either overlap L or not.  If none overlap L, but
+   overrun R to the left, the voffset of one of them becomes R's loff.
+   If they all overlap L, then L's non-contained records are a
+   superset of R's non-contained records, and thus L's loff must be
+   less than or equal to R.
+
+   In other words, the minimum start position of a superset of records
+   is <= the minimum start position among a subset.
+
+   4. the loff field of a bin is greater than or equal to the loff
+      field of its parent.
+
+   Proof of 4: By (1), The set of records OLAP(B) overlapping a bin B
+   is a subset of those overlapping its parent, OLAP(P).  The voffset
+   of the earliest record in this set is the loff field of the bin.
+   If OLAP(B) is the same as OLAP(P), then B and P have the same loff.
+   Otherwise, OLAP(P) has one or more records not in OLAP(B). If the
+   left bound of P is less than B, then there may be records in P that
+   overrun B to the left, and thus those would reside upstream in the
+   file, and thus give a lower loff for P.  If, on the other hand, the
+   left bound of B and P are the same, it still may happen that P
+   contains a more upstream record than B, one that starts before loff
+   and overruns B to the right.
+
+   So, the traversal order of previous siblings and then parents gives
+   us the monotonically increasing loff sequence.
+
+   The next section computes min_off.  min_off is set to loff of the
+   first non-empty bin, when traversing them backwards and up.  the
+   loff field of a particular bin tells us the voffset of the first
+   record that overlaps the bin.  This record may or may not fit
+   entirely within bin.  If it doesn't, it will be assigned to a
+   different, earlier bin.
+
+
+
+   min_off is a lower bound voffset.  It means
+   we do not have to scan anywhere in the BAM file before this point.
+
+   Now, reg2bins is called using the [beg, end) range, which
+   initializes iter to the total set of bins that overlap with [beg,
+   end).  It does not query whether these bins are actually populated
+   in the index, merely produces a list of bins based on their fixed
+   geometry.
+
+   The next section attempts to retrieve the actual entries in the
+   index of each of these bins.  Any bin that is non-empty causes
+   n_off to be incremented by the number of chunks in that bin.
+   Ultimatey, n_off gives us the total number of non-empty chunks in
+   bins that overlap our range.  This is the total number of chunks
+   that need to be considered as overlapping the given range.
+
+   Now, we again iterate through that set of chunks, collecting the
+   subset of chunks whose upper bound falls past min_off.  This is the
+   subset of chunks that possibly overlap our range of interest.
+
+   At this point, the set of chunks is now stored in off, and n_off is
+   the total number of chunks under consideration.  We now sort and
+   consolidate the chunks.
+
+   hts_size_to_range should start by identifying the 16kb interval
+   containing beg, and from that identify the relevant bins.
+
+   It then needs to traverse the hash, find the intervals and add them
+
+   A khtree of non-overlapping intervals.  Upon inserting the newest
+   interval, find its insertion point, then modify it so that it does
+   not overlap.  If it is completely contained by existing nodes, do
+   not insert it.
+
+   After insertion, update the tally of total 
+   
+   
+   update_loff:
+
+   first, grab the bidx and lidx of the chosen contig (i).  find the
+   key for the meta_bin.  (the meta_bin is a special bin not
+   corresponding to a logical region. if it is non-empty, set offset0
+   to the position of the voffset of the first chunk.  otherwise
+   offset0 is set to 0.
+
+   At this point, for any empty contigs l *before* a non-empty contig,
+   set lidx->offset[l] to offset0.  For any empty contigs occuring
+   *after* a non-empty contig, set lid->offset[l] = lid->offset[l-1].
+   iterate through the bidx, setting the loff to the virtual offset of
+   the very first alignment within the first 16kb window inside that
+   bin.
+
+
+
+
+   A bins_t struct has n (u,v) pairs in its list field, which are
+   virtual file offsets.  Each (u,v) pair is called a 'chunk', and
+   represents a contiguous set of bgzf blocks.  loff is 
+
+level   bin_first  (range at this level)
+0       0          [0,1)  1 bin of size 512 Mbp
+1       1          [1,9)  8 bins of size 64 Mbp
+2       9          [9,73) 64 bins of size 8 Mbp
+3       73         [73,585) 512 bins of size 1 Mbp
+4       585        [585,4681) 4096 bins of size 128 Kbp
+5       4681       [4681,37449) 32768 bins of size 16Kb
+6       37449
+
+
+
+idx->min_shift equals 14.  Note, 1<<14 = 16384, the minimum bin size
+
+beg>>idx->min_shift (
+
+
+*/
+
+
+/*
+
+
+
+/*
+The bam mpileup function proceeds as follows:
+
+1. An array of n mplp_aux_t structs called 'data' is allocated and
+   initialized.  For each element, the hts_idx_t index is
+   loaded. Then, sam_itr_querys is called with the region of interest,
+   which initializes the data[i]->iter (hts_itr_t) field.  The
+   hts_idx_t are not needed after this.
+
+   Somewhat oddly, the tid0, beg0, and end0 are initializes to the
+   specific values for sample 0.  (Not sure if they are known to be
+   the same for other samples or what...)
+
+2. bam_mplp_init is called, with mplp_func as the function argument,
+   returning a bam_mplp_t structure.  
+
+
+3. The main loop starts.  Each call to bam_mplp_auto initializes a
+   bam_pileup_t *plp[] and another int *n_plp[].  Each of these has n
+   entries.  The bam_pileup_t structure represents a single read's
+   contribution to a specific locus, and an array of them gives
+   sufficient information to construct the pileup string, with all of
+   the filters and thresholds provided.
+
+How it works:
+
+bam_mplp_auto
+  bam_plp_auto
+    bam_plp_next (if enough records previously loaded)
+      iter->func (mplp_func) (loads one more record)
+        hts_itr_next (sam_itr_next)
+          bgzf_seek
+            iter->readrec
+              bam_readrec
+                bam_read1
+                  bgzf_read (block length)
+                  bgzf_read (x[8])
+                  bgzf_read (varlength data)
+            
+    bam_plp_push (maintains the linked list of stored records)
+      overlap_remove
+        kh_get, kh_del, kh_exist (olap_hash, modifies bam_plp_t::overlaps)
+      bam_copy1
+        realloc
+        memcpy
+      overlap_push
+        kh_get, kh_put, kh_val (olap_hash, using qname as the keys)
+
+
+Longer descriptions:
+
+struct __bam_plp_t {
+// these four fields store bam1_t records embellished with extra range information.
+    mempool_t *mp;
+    lbnode_t *head, *tail, *dummy;
+
+// current transcript id and position of the iterator
+    int32_t tid, pos;
+
+    int32_t max_tid, max_pos;
+
+    int is_eof, max_plp, error, maxcnt;
+    uint64_t id;
+    bam_pileup1_t *plp;
+    // for the "auto" interface only
+    bam1_t *b;
+    bam_plp_auto_f func;
+    void *data;
+    olap_hash_t *overlaps;
+};
+
+
+bam_plp_next: Iterates through the stored bam1_t records using the
+linked list.  Checks if the record's end position is less than the
+current position and removes it if so.  If instead it overlaps
+iter->pos, add the record to iter->plp array.
+
+Then, update iter->tid and iter->pos according to the coordinates of
+iter->head->next.
+
+
+
+bam_plp_push:  
+ 
+
+It seems that there is no place in the code where unmapped reads would
+ever be added to iter->overlaps.  So, why call overlap_remove on
+unmapped reads?
+
+Secondly, why call overlap_remove on the bam1_t that you are trying to
+push?  It seems that the likely pattern here is that each bam1_t
+record will be encountered sequentially, and only once during the life
+of the program, so there doesn't seem to be any chance that the bam1_t
+argument to bam_plp_push will be in the overlap hash.
+
+What use is cstate_t?
+
+mp_init simply returns a new mempool_t initialized to zero.
+
+mp_destroy destroys all items in the mempool up to n.
+
+mp_alloc updates its argument.  cnt is incremented, if n is zero, it
+returns a single zeroed-out lbnode_t.  otherwise, it pops the last
+element (stack-style)
+
+mp_free decrements cnt, then it grows the buffer if it is full (?).
+Then, it pushes p onto the stack.
+
+bam_plp_reset calls mp_free on all members of the linked list.
+
+bam_plp_push makes a copy of its bam1_t *b argument, and then stores
+it into the overlaps hash. it then updates the beg, end, and s fields
+of iter->tail.  then it updates iter's max_tid and max_pos fields to
+the beginning of the newly added bam1_t record.  This is consistent
+with the notion that the bam records are sorted ascending by start
+position, and that iter->max_tid and iter->max_pos must be the maximum
+logical position that a pileup can be generated.
+
+Finally, a strange thing happens.  If the tail record's end position
+falls beyond the current position being processed, it appends to the
+tail by a call to mp_alloc, which will pop the last record in the
+pool. What is this last record?
+
+But, bam_plp_push is called whenever bam_plp_next runs out of records,
+which is when the linked list shrinks to zero size.  It always appends
+this new record onto the tail.
+
+
+So, mp_free is called on the record when that record is 'passed up'.
+mp_alloc is called when the last record in the linked list (tail)
+overlaps the current pileup position.
+
+
+In order to understand what's going on, we need to look at bam_plp_next.
+
+bam_plp_next traverses the linked list, as long as the current
+position (tid, pos) is less than the maximum available complete
+position (max_tid, max_pos), or is_eof (meaning there are no more
+records that could affect the produced pileups).  
+
+Here is the interesting bit: If the current node in the linked list is
+found to be 'passed up' (the current position (tid, pos) has passed
+the range of the current node (node->b.core.tid, node->end),
+bam_plp_next calls overlap_remove, which makes sense: the node no
+longer overlaps the range of interest [(tid, pos), (max_tid,
+max_pos)).  Then it calls mp_free(iter->mp, p), which pushes p onto
+the stack.
+
+The question is, what conditions lead to a record being passed up?
+The only place where bam_plp_t::pos and tid are being set is in
+bam_plp_next, and they either are set to the start coordinates of
+iter->head, or in the case where the current position is at or beyond
+the head start position, the position is incremented.
+
+Now, at this point in the code, iter->head->end > iter->pos, so
+incrementing iter->pos can at best, make it so that iter->pos ==
+iter->head->end.  
+
+
+
+bamp_plp_destroy 
+
+
+Seems like cstate_t lbnode_t::s is all-but unused.  The 'end' field
+seems to be used but totally redundant, since it is only ever equal to
+lbnode_t::end - 1.  The k, x, and y fields are never accessed.
+
+
+*/

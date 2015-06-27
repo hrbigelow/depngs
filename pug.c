@@ -177,6 +177,11 @@ int main_pug(int argc, char ** argv)
             cur_beg = cur_end;
         }
         ++q;
+        if (ix.n_nodes > 1000)
+            (void)file_bsearch_range_free(&ix, 
+                                          (struct pair_ordering){ 0, 0 },
+                                          (struct pair_ordering)
+                                          { ix.root->span_end.hi, ix.root->span_end.lo - 1 });
     }
 
     free(queries);

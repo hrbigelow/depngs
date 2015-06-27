@@ -14,18 +14,29 @@ INSTALL = /usr/bin/install -c
 INSTALLDATA = /usr/bin/install -c -m 644
 OBJDIR = obj
 YEPLIBDIR = $(HOME)/cc/yeppp/library/binaries/x64-linux-sysv-default
+
+
 GSLDEBUGLIB = /usr/lib
 #GSLDEBUGLIB = /usr/lib/debug/usr/lib
 #GSLDEBUGLIB= $(HOME)/usr/lib/
-YEPHEADERS = $(HOME)/cc/yeppp/library/headers
-CPPFLAGS = -I. -I.. -I$(YEPHEADERS) $(EXTRA_CPPFLAGS)
+
+# This isn't set up to use 'yeppp/bla.h'.  Instead, the headers are
+# prefixed with 'yep'
+YEPDIR = $(HOME)/cc/yeppp/library/headers
+
+# These are set so that we can say 'klib/bla.h' or 'htslib/bla.h'
+SDGDIR = $(HOME)/cc/
+HTSDIR = $(HOME)/cc/htslib
+HTSLIBDIR = $(HTSDIR)
+
+CPPFLAGS = -I. -I$(YEPDIR) -I$(SDGDIR) -I$(HTSDIR) $(EXTRA_CPPFLAGS)
 OPT = -O0 -ggdb3
 PROF = 
 CXXFLAGS = $(OPT) $(PROF) -Wall -std=gnu++0x
 CFLAGS = $(OPT) $(PROF) -Wall -std=gnu99
 LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -lm -lgmp -lz -lpthread -lrt $(PROF)
 
-DEPLIBS = -lgsl -lgslcblas -lm -lyeppp -lz -lpthread -lrt
+DEPLIBS = -lgsl -lgslcblas -lm -lyeppp -lz -lpthread -lrt -lhts
 #LDFLAGS = -L$(HOME)/usr/lib -lgsl -lgslcblas -llevmar -lm -lgmpxx -lgmp -llapack -lblas -lgfortran -lcblas -latlas
 
 SOURCES = $(shell find $(srcdir) -name "*.cc")
@@ -39,15 +50,16 @@ EXE = dep test_dirichlet
 .PHONY : all
 all : $(EXE)
 
+# temporarily rename to dep_dev so as not to interfere with running binary.
 dep : $(addprefix $(OBJDIR)/, dep.o dict.o bqs.o bqs2jpd.o sampling.o	\
 	tools.o nucleotide_stats.o pileup_tools.o metropolis_sampling.o		\
 	usage_strings.o dist.o dist_worker.o binomial_est.o					\
 	dirichlet_points_gen.o dirichlet_diff_cache.o pug.o file_utils.o	\
 	file_binary_search.o ordering.o locus.o range_line_reader.o			\
 	thread_queue.o virtual_bound.o simp.o gen_pair_comp.o geometry.o	\
-	simplex.o)
-	$(CC) -L$(YEPLIBDIR) -L$(GSLDEBUGLIB) \
-	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB) \
+	simplex.o chunk_strategy.o bam_reader.o)
+	$(CC) -L$(YEPLIBDIR) -L$(HTSLIBDIR)									\
+	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB),-rpath,$(HTSLIBDIR)	\
 	$(PROF) -o $@ $^ $(DEPLIBS)
 
 test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)
@@ -56,22 +68,11 @@ test_distance : $(addprefix $(OBJDIR)/, test_distance.o spatial_search.o)
 test_likelihood : $(addprefix $(OBJDIR)/, test_likelihood.o likelihood.o)
 	$(C) $(CFLAGS) -o $@ $^ -lgsl -lgslcblas -lm
 
-testopt : $(addprefix $(OBJDIR)/, pow_int.o testopt.o)
-	$(C) $(CFLAGS) -L$(YEPLIBDIR) -o $@ $^ -lgsl -lgslcblas -lm -lyeppp
-
-
-
 quantile_test : quantile_test.o sampling.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
-1dhist : 1dhist.o ../samutil/obj/file_utils.o
-	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
-
 window_average : window_average.o histo.o ../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
-
-#strip_pileup : strip_pileup.o ../samutil/obj/file_utils.o
-#	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt
 
 pileup_to_bindepth : obj/pileup_to_bindepth.o obj/bindepth.o ../samutil/obj/file_utils.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lz -lrt

@@ -1,0 +1,169 @@
+Okay, so here's the approach:
+
+Do not support pileups directly.  This will make it difficult to
+produce simulated data, but it is simply too complicated to
+support both pileups and bams.  The code paths are so different
+that it would be too painful.
+
+And, at least, it is possible to envision solving the inverse
+problem of pileup -> BAM.
+
+
+For each input BAM, find some logical range that yields a desired
+total bytes of uncompressed BAM records.  (This could be a binary
+search through the index)
+
+Load the BAM records into a single buffer (one buffer per
+sample).
+
+s: sample index
+bam_buf[s]: the raw buffer with uncompressed BAM record contents
+end[s]: smallest non-record-complete locus
+cur: current locus position ready for dist/comp/idist processing
+stats_head: linked-list of plp_stats_block nodes
+olap: kbtree of retained BAM records whose mates possibly overlap them
+
+rec: the current BAM record
+
+The BAM records are sorted on start coordinate in each input
+file.
+
+Initialize: 
+end[s] = 0 for all samples s
+s_min = 0
+cur = something (?)
+
+We will use a structure for local tallying of the 
+
+
+Main loop:
+
+1. For each sample, resolve all overlapping read pairs using
+   htslib/sam.c:tweak_overlap_quality
+
+2. For each sample, tally as many BAM records as needed until P -
+   n_unpaired[s] complete positions are tallied in the bqs hash (see
+   step 5). P will be a fixed value such as 10000.  This is a value
+   that will be estimated to fit within L1 cache.
+
+3. Consolidate the hash into a new variable-length bqs_hybrid
+   array. From step 2, we will know the value of the first incomplete
+   position IP. All entries with pos >= IP will be left alone.  Others
+   will be deleted.  Then, the hash will be ready for the next chunk
+   of work.
+
+4. Using consolidated counts for each sample pair, compute dist,
+   idist, and comp progressively. Maintain a marker for each sample of
+   the smallest position that could not be processed.  A position in
+   one sample cannot be processed if it is beyond the last position in
+   its paired sample.
+
+5. Using the S last markers, memmove them into the beginning of the
+   consolidated array.  Record the count of n_unpaired[s] for each
+   sample s.
+
+6. 
+
+1. Parse the next BAM record in bam_buf[s_min] into rec.
+
+2. Test whether the record overlaps with its mate, using the mpos and
+   other fields.
+   
+   if no overlap:
+       1. process stats for this record
+       2. set end[s] to this record's start position
+       
+   else:  
+       if the mate is downstream of this record:
+           1. put this record into olap (do not update end[s])
+
+       else: /* the mate is upstream */
+           1. retrieve the matching upstream record from olap
+           2. fix both up a la htslib/sam.c:tweak_overlap_quality
+           3. process stats for both records
+           4. delete upstream record from kbtree
+           5. if kbtree is empty:
+                  set end[s] to start of downstream record
+              else
+                  set end[s] to kbtree's first node position
+
+3. Find s_min, such that end[s_min] is lowest among samples. Traverse
+   [cur, end[s_min]) of stats in all samples in tandem, producing
+   dist, comp, and idist output.
+
+4. Delete the [cur, end[s_min]) stats from linked list.
+
+5. Set cur to end[s_min]
+   
+*/
+
+The stats should be collected in hashes as follows:
+
+1: (pos) => count[sample_id][base]
+2: (pos) => {(base, qual, strand) => count[sample_id]}
+3: (pos) => {indel_key => count[sample_id]}
+
+struct tally {
+    unsigned[4] *basecount;
+    khash_t(bqs_tally) bqs_hash;
+    khash_t(indel_tally) indel_hash;
+};
+
+
+
+The first is used by the 'dist' functionality.  A given position has a
+count of each basecall for each sample, which can be used directly by
+the cached_dirichlet_diff functionality.
+
+The second is needed in the rare cases where there is sufficient
+mutational distance established by the raw counts.  In this case, we
+do a secondary step using weight ratios, which depend on the (base,
+qual, strand) counts.
+
+For idist functionality, we only need to look at the counts of each
+type of indel, whether it be a insertion of a particular sequence, a
+deletion of a particular sequence, or a match position (represented by
+'@').  Each of these types is represented by the 'indel_key' in the
+hash map of indels.
+
+This map is cleared at the beginning of each chunk.
+
+the indel_key is just a key for a hash map of indel sequences.  we can
+use a flex_array here:
+
+struct indel_seq {
+    char ins;
+    char seq[FLEX_ARRAY];
+};
+
+This simply allows us the convenience of naming the individual fields.
+
+Once we have these four hash maps, we have sufficient statistics for
+doing dist, comp and idist, almost.  we need to know the actual
+reference base at this position.  This is not stored in the BAM file
+itself, so we need to load it independently.
+
+
+
+The first can be traversed in dist_worker's
+next_distance_quantiles_aux function to populate the pair of samples'
+four base counts.  If distance is sufficient, the second one can be
+traversed as well for that pair and converted into packed statistics
+for the two samples.
+
+
+/* As you traverse the BAM record, traverse the plp_stats_block linked
+   list in tandem, either walking an individual block or jumping to
+   the next one, or creating a new one.  blocks should be created with
+   some practical minimum size. once the appropriate sparse_plp_stat
+   element is located, update it either by incrementing ct or by
+   updating the string hash and the ins/del fields.
+
+   Problem: When should entries in the string hash be cleared? Perhaps
+   they can be private to just one block? This would provide a clear
+   moment when the hash would need to be cleared. The liability to
+   this is that these hashes would be frequently destroyed and
+   re-created.  This is lightweight however.  It is just a call to
+   kcalloc, and four calls to kfree.  
+   
+*/

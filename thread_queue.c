@@ -221,7 +221,7 @@ void set_outnode_status(struct thread_queue *tq,
     ((((end_time).tv_sec * 1000000000 + (end_time).tv_nsec) -           \
       ((beg_time).tv_sec * 1000000000 + (beg_time).tv_nsec)) / 1000000)
 
-#ifdef _THREAD_QUEUE_DEBUG
+#ifdef TQ_DBG
 #define PROGRESS_DECL() struct timespec beg_time, end_time;
 
 #define TIME_MS(t) \
