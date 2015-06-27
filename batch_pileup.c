@@ -29,6 +29,9 @@ for each sample pair:
                 compute weighted difference using PBQT hash (enumerate all
                 possible keys at position)
 
+
+this is the clear_finished() function:
+
 Delete all entries in each PBQT hash that fall before the next
 processed position.
 
@@ -83,6 +86,21 @@ union pbqt_key {
     struct pbqt v;
 };
 
+struct pos_base_count {
+    unsigned pos;
+    unsigned basecount[4];
+};
+
+
+struct indel_count {
+    khint_t key;
+    unsigned ct;
+};
+
+struct pos_indel_count {
+    unsigned pos;
+    struct indel_count i;
+};
 
 /* hash type for storing bqt (basecall, quality, strand) counts at
    position */
@@ -91,21 +109,30 @@ KHASH_MAP_INIT_INT64(pbqt_h, unsigned);
 /* hash type for storing basecall counts at position */
 KHASH_MAP_INIT_INT(p_h, unsigned[4]);
 
-/* hash type for storing distinct indels */
+/* hash type for storing distinct indels at position */
 KHASH_MAP_INIT_INT(indel_h, struct indel_seq *);
 
 /* hash type for tallying indel events */
-KHASH_MAP_INIT_INT(indel_ct_h, khint_t);
+KHASH_MAP_INIT_INT(indel_ct_h, struct indel_count);
 
+
+struct tally_stats {
+    khash_t(pbqt_h) *pbqt_hash;
+    khash_t(indel_ct_h) *indel_ct_hash;
+
+    khash_t(p_h) *p_hash;
+    struct pos_base_count *base_ct_ary;
+    struct pos_indel_count *indel_ct_ary;
+
+    unsigned tally_beg; /* beginning of range of positions still being
+                           tallied. */
+};
 
 __thread struct tls {
     khash_t(indel_h) *indel_hash;
-    khash_t(pbqt_h) **pbqt_hash;
-    khash_t(p_h) **p_hash;
-    khash_t(indel_ct_h) **indel_ct_hash;
-    unsigned *tally_beg; /* beginning of range of positions still
-                            being tallied. tally_beg[s] for sample
-                            s. */
+    unsigned n_samples;
+    struct tally_stats *ts; /* ts[s] is the tally stats for a given sample */
+    unsigned cur_summary_pos; /* current position being summarized */
 } tls;
 
 
@@ -123,8 +150,8 @@ void summarize_base_counts(unsigned s)
 {
     union pbqt_key k;
     unsigned ct;
-    khash_t(pbqt_h) *h_src = tls.pbqt_hash[s];
-    khash_t(p_h) *h_trg = tls.p_hash[s];
+    khash_t(pbqt_h) *h_src = tls.ts[s].pbqt_hash;
+    khash_t(p_h) *h_trg = tls.ts[s].p_hash;
     kh_clear(p_h, h_trg);
     khint_t i, j;
     for (i = kh_begin(h_src); i != kh_end(h_src); ++i)
@@ -143,11 +170,6 @@ void summarize_base_counts(unsigned s)
 }
 
 
-struct pos_base_count {
-    unsigned pos;
-    unsigned basecount[4];
-};
-
 int pos_base_count_less(struct pos_base_count a, struct pos_base_count b)
 {
     return a.pos < b.pos;
@@ -156,11 +178,12 @@ int pos_base_count_less(struct pos_base_count a, struct pos_base_count b)
 KSORT_INIT(pbc_sort, struct pos_base_count, pos_base_count_less);
 
 /* create a sorted array from sample s's p_hash */
-struct pos_base_count *make_p_array(unsigned s)
+void make_p_array(unsigned s)
 {
-    khash_t(p_h) *ph = tls.p_hash[s];
+    khash_t(p_h) *ph = tls.ts[s].p_hash;
     unsigned n = kh_size(ph);
     struct pos_base_count *ary = malloc(n * sizeof(struct pos_base_count));
+
     khint_t k;
     unsigned i;
     for (k = kh_begin(ph), i = 0; k != kh_end(ph); ++k)
@@ -168,19 +191,67 @@ struct pos_base_count *make_p_array(unsigned s)
             ary[i++] = (struct pos_base_count){ kh_key(ph, k), kh_val(ph, k) };
     
     ks_introsort(pbc_sort, n, ary);
-    return ary;
+    tls.ts[s].base_ct_ary = ary;
 }
 
-struct pos_indel_count {
-    unsigned pos;
-    khint_t indel_key;
-    unsigned count;
-};
+int pos_indel_count_less(struct pos_indel_count a, struct pos_indel_count b)
+{
+    return a.pos < b.pos;
+}
+
+KSORT_INIT(pi_sort, struct pos_indel_count, pos_indel_count_less);
 
 /* create a sorted array from sample s's indel_hash */
-struct pos_indel_count *make_indel_array(unsigned s)
+void make_indel_array(unsigned s)
 {
-    khash_t 
-    struct pos_indel_count *ary;
+    khash_t(indel_h) *ih = tls.ts[s].indel_hash;
+    unsigned n = kh_size(ih);
+    struct pos_indel_count *ary = malloc(n * sizeof(struct pos_indel_count));
+    khint_t k;
+    unsigned i;
+    for (k = kh_begin(ih), i = 0; k != kh_end(ih); ++k)
+        if (kh_exist(ih, k))
+            ary[i++] = (struct pos_indel_count){ kh_key(ih, k), kh_val(ih, k) };
+
+    ks_introsort(pi_sort, n, ary);
+    tls.ts[s].indel_ct_ary = ary;
 }
 
+
+/* clear statistics that are no longer needed */
+void clear_finished_stats()
+{
+    khiter_t i;
+    khint_t pos;
+    unsigned s;
+    union pbqt_key pk;
+    
+    for (s = 0; s != tls.n_samples; ++s)
+    {
+        /* clear finished entries in pbqt hash */
+        khash_t(pbqt_h) *h = tls.ts[s].pbqt_hash;
+        for (i = kh_begin(h); i != kh_end(h); ++i)
+        {
+            if (! kh_exist(h, i)) continue;
+            pk.k = kh_key(h, i);
+            if (pk.v.pos < tls.cur_summary_pos) kh_del(h, i);
+        }
+
+        /* clear finished entries in indel counts hash */
+        khash_t(indel_ct_h) *ih = tls.ts[s].indel_ct_hash;
+        for (i = kh_begin(ih); i != kh_end(ih); ++i)
+        {
+            if (! kh_exist(ih, i)) continue;
+            pos = kh_key(ih, i);
+            if (pos < tls.cur_summary_pos) kh_del(ih, i);
+        }
+
+        /* completely clear temporary data */
+        kh_clear(p_h, tls.ts[s].p_hash);
+        free(tls.ts[s].base_ct_ary);
+        free(tls.ts[s].indel_ct_ary);
+    }
+}
+
+
+/* sample pairwise calculations */
