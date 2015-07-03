@@ -3,6 +3,15 @@
    record at a time and updating all single locus statistics that it
    affects.
 
+PK is 'position, key'.  key is the key of the indel hash.  There is
+one indel hash per thread, which gets cleared after each chunk.
+
+PBQT is 'position, basecall, quality, strand'
+
+PB is 'position, basecall'.  It is derived by marginalizing the PBQT
+hash, and is used to quickly detect possible pairwise differences.
+
+
 Approach:
 
 "Tally phase"
@@ -254,4 +263,9 @@ void clear_finished_stats()
 }
 
 
-/* sample pairwise calculations */
+/* compute dist output from tls statistics from lowest position to
+   tls.cur_summary_pos */
+void dist(struct managed_buf *dist_buf)
+{
+    unsigned s, p;
+}
