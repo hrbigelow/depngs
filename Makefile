@@ -57,7 +57,7 @@ dep : $(addprefix $(OBJDIR)/, dep.o dict.o bqs.o bqs2jpd.o sampling.o	\
 	dirichlet_points_gen.o dirichlet_diff_cache.o pug.o file_utils.o	\
 	file_binary_search.o ordering.o locus.o range_line_reader.o			\
 	thread_queue.o virtual_bound.o simp.o gen_pair_comp.o geometry.o	\
-	simplex.o chunk_strategy.o bam_reader.o)
+	simplex.o chunk_strategy.o)
 	$(CC) -L$(YEPLIBDIR) -L$(HTSLIBDIR)									\
 	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB),-rpath,$(HTSLIBDIR)	\
 	$(PROF) -o $@ $^ $(DEPLIBS)
