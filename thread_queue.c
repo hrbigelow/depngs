@@ -26,7 +26,6 @@ struct output_node {
 /* There will be one of these for each thread, and each thread will
    use the same one for its lifespan. */
 struct thread_comp_input {
-    void *worker_par; /* generic parameters to be passed to the worker */
     struct managed_buf *buf;
     size_t n_buf;
     struct output_node *out;
@@ -40,7 +39,8 @@ struct thread_queue {
     thread_queue_reader_t reader;
     thread_queue_worker_t *worker;
     thread_queue_offload_t *offload;
-    thread_queue_exit_t *onexit;
+    thread_queue_create_t *on_create;
+    thread_queue_exit_t *on_exit;
 
     pthread_mutex_t io_mtx;
     pthread_cond_t reader_free_cond;
@@ -68,9 +68,10 @@ struct timespec program_start_time;
 /* initialize resources */
 struct thread_queue *
 thread_queue_init(thread_queue_reader_t reader, void **reader_par,
-                  thread_queue_worker_t worker, void **worker_par,
+                  thread_queue_worker_t worker,
                   thread_queue_offload_t offload, void *offload_par,
-                  thread_queue_exit_t onexit,
+                  thread_queue_create_t on_create,
+                  thread_queue_exit_t on_exit,
                   unsigned n_threads,
                   unsigned n_extra,
                   unsigned n_readers,
@@ -90,7 +91,8 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
     tq->worker = worker;
     tq->offload = offload;
     tq->offload_par = offload_par;
-    tq->onexit = onexit;
+    tq->on_create = on_create;
+    tq->on_exit = on_exit;
     tq->out_pool = calloc(n_pool, sizeof(struct output_node));
     tq->out_head = NULL;
     tq->out_tail = NULL;
@@ -110,7 +112,6 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
     unsigned p, t, b;
     for (t = 0; t != n_threads; ++t)
     {
-        tq->input[t].worker_par = worker_par[t];
         tq->input[t].buf = malloc(n_inputs * sizeof(struct managed_buf));
         for (b = 0; b != n_inputs; ++b)
         {
@@ -269,6 +270,9 @@ void set_outnode_status(struct thread_queue *tq,
 #endif
 
 
+/* the very notion of having n_threads input objects in the global
+   space is wasteful.  */
+
 /* this function is run by the thread */
 static void *worker_func(void *args)
 {
@@ -277,6 +281,7 @@ static void *worker_func(void *args)
     unsigned p, n_pool = tq->n_threads + tq->n_extra;
 
     PROGRESS_DECL();
+    tq->on_create();
 
     while (1)
     {
@@ -348,7 +353,7 @@ static void *worker_func(void *args)
                unnecessarily. when it comes time to output it, the
                length will be zero, so it will have no effect. */
             set_outnode_status(tq, in->out, FULL);
-            tq->onexit(in->worker_par);
+            tq->on_exit();
             pthread_exit(NULL);
         }
 

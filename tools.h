@@ -204,8 +204,6 @@ enum FastqType {
 size_t FastqTypeOffset(FastqType ftype);
 
 
-int fastq_type_to_offset(const char *type);
-
 //determine the fastq type from the string of quality_codes
 FastqType get_fastq_type(char const* quality_codes);
 
@@ -266,10 +264,6 @@ float BinarySearchFunctional(float start, float end, float target_value,
 //parse a file with space-separated numbers, allocating a pointer
 //of doubles and returning the number of numbers parsed
 double * ParseNumbersFile(char const* numbers_file, size_t * num_numbers);
-
-
-FILE * open_if_present(char const* file, char const* mode);
-int close_if_present(FILE * fh);
 
 
 // Given a range [begin, end) and a number of chunks num_chunks to

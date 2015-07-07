@@ -51,7 +51,9 @@ typedef void (thread_queue_offload_t)(void *par,
                                       const struct managed_buf *bufs);
 
 
-typedef void (thread_queue_exit_t)(void *par);
+typedef void (thread_queue_create_t)();
+
+typedef void (thread_queue_exit_t)();
 
 /* initialize resources.
 
@@ -69,9 +71,10 @@ typedef void (thread_queue_exit_t)(void *par);
 */
 struct thread_queue *
 thread_queue_init(thread_queue_reader_t reader, void **reader_par,
-                  thread_queue_worker_t worker, void **worker_par,
+                  thread_queue_worker_t worker,
                   thread_queue_offload_t offload, void *offload_par,
-                  thread_queue_exit_t onexit,
+                  thread_queue_create_t on_create,
+                  thread_queue_exit_t on_exit,
                   unsigned n_threads,
                   unsigned n_extra_in_pool,
                   unsigned n_readers,

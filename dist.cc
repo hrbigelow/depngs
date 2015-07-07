@@ -9,6 +9,7 @@ extern "C" {
 #include "range_line_reader.h"
 #include "locus.h"
 #include "dirichlet_points_gen.h"
+#include "pair_stats.h"
 }
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))

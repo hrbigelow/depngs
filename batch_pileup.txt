@@ -152,18 +152,78 @@ traversed as well for that pair and converted into packed statistics
 for the two samples.
 
 
-/* As you traverse the BAM record, traverse the plp_stats_block linked
-   list in tandem, either walking an individual block or jumping to
-   the next one, or creating a new one.  blocks should be created with
-   some practical minimum size. once the appropriate sparse_plp_stat
-   element is located, update it either by incrementing ct or by
-   updating the string hash and the ins/del fields.
+/* 
 
-   Problem: When should entries in the string hash be cleared? Perhaps
-   they can be private to just one block? This would provide a clear
-   moment when the hash would need to be cleared. The liability to
-   this is that these hashes would be frequently destroyed and
-   re-created.  This is lightweight however.  It is just a call to
-   kcalloc, and four calls to kfree.  
-   
+PK is 'position, key'.  key is the key of the indel hash.  There is
+one indel hash per thread, which gets cleared after each chunk.
+
+PBQT is 'position, basecall, quality, strand'
+
+PB is 'position, basecall'.  It is derived by marginalizing the PBQT
+hash, and is used to quickly detect possible pairwise differences.
+
+
+Approach:
+
+"Tally phase"
+for each sample: 
+   for each BAM record:
+       update endpos[s] to start of BAM record
+       for each position:
+           add to PBQT hash
+           add to main indel hash
+           add to PK hash
+
+   Create a PB hash from the PBQT hash
+   Create a PB array from PB hash
+   Sort PB array by position
+
+   Create a PK array from the PK hash
+   Sort PK array by position
+
+"Summary Phase"
+for each sample pair:
+    for each position in pair of pb_ct arrays:
+        compute the cached difference
+            if above-threshold
+                compute weighted difference using PBQT hash (enumerate all
+                possible keys at position)
+
+
+this is the clear_finished() function:
+
+Delete all entries in each PBQT hash that fall before the next
+processed position.
+
+Delete all entries in PK hashes that fall before next processed
+position
+
+Delete PB arrays
+Delete PK arrays
+Clear PB hashes
+
+
+
+NOTE: The residual entries left over in each PBQT hash and PK hash
+contain the information from the BAM records for positions that are
+not yet complete.  By saving this information, we can avoid doing
+re-tally on any BAM records.  They will become complete once more BAM
+records are processed.
+
+During the tally phase, each sample's PBQT hash takes on average 160
+bytes per position, and is populated fully all in one tight loop,
+allowing good cache usage.  The PK hash will be much smaller but
+follows the same approach.
+
+Then, the two hashes are efficiently traversed from start to finish
+and summarized into more compact structures.  The resulting P hash has
+~1000 positions.  The array compiled from it then is sorted, which,
+for such a small array, is negligible cost.
+
+More importantly, the array is now only about 5kb, and pairs of these
+arrays will very efficiently fit in the smallest caches during the
+summary phase, where they are used together in pairs.
+
+thread-local storage will be used for these hashes for convenience.
+
 */

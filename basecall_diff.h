@@ -4,18 +4,18 @@
 #include <gsl/gsl_rng.h>
 
 #include "defs.h"
-#include "pileup_tools.h"
+#include "cache.h"
+// #include "pileup_tools.h"
 
-extern "C" {
-#include "binomial_est.h"
-#include "ordering.h"
+/* #include "binomial_est.h" */
+/* #include "ordering.h" */
 #include "thread_queue.h"
 #include "dirichlet_diff_cache.h"
-}
 
 /* instantiate one of these for each thread and each sample.  holds
    the information for the locus currently being processed in this
    thread and sample. */
+/*
 struct locus_sampling
 {
     PileupSummary locus;
@@ -25,6 +25,7 @@ struct locus_sampling
     char *current, *end;
     pair_ordering locus_ord;
 };
+*/
 
 void dist_worker_init(double _post_confidence, 
                       double _min_dirichlet_dist,
@@ -51,7 +52,6 @@ dist_worker_tq_init(const char *query_range_file,
 
 void dist_worker_tq_free();
 
-void print_pair_stats(const char *stats_file);
 
 
 /* there will be one of these instantiated for each thread.  Each of
@@ -71,7 +71,7 @@ struct dist_worker_input
         unsigned total, cacheable, cache_was_set;
     } metrics;
 
-    struct locus_sampling pseudo_sample, *lslist;
+    /* struct locus_sampling pseudo_sample, *lslist; */
     struct pair_dist_stats *pair_stats;
     gsl_rng *randgen;
     double *square_dist_buf; /* holds squares of distances for distance calculation */
@@ -94,8 +94,6 @@ void dist_worker(void *par,
 
 /* conforms to thread_queue_offload_t */
 void dist_offload(void *par, const struct managed_buf *bufs);
-
-void dist_on_exit(void *par);
 
 #define PSEUDO_DEPTH 100000
 

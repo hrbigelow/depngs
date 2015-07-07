@@ -144,80 +144,6 @@ size_t FastqTypeOffset(FastqType ftype)
 }
 
 
-static struct {
-    const char *type;
-    int offset;
-} fastq_offsets[] = { 
-    { "Sanger", 33 },
-    { "Illumina18", 33 },
-    { "Solexa", 64 },
-    { "Illumina13", 64 },
-    { "Illumina15", 64 }
-};
-
-int fastq_type_to_offset(const char *type)
-{
-    unsigned i;
-    for (i = 0; i != sizeof(fastq_offsets) / sizeof(fastq_offsets[0]); ++i)
-        if (! strcmp(type, fastq_offsets[i].type)) return fastq_offsets[i].offset;
-    return -1;
-}
-
-//determine the fastq type from the string of quality_codes
-/*
-FastqType get_fastq_type(char const* quality_codes)
-{
-    char const* qual;
-
-    //try to eliminate other files by finding
-    bool ft[] = { true, true, true, true, true };
-    char const* min_qualcodes = "!;@B#";
-    char const* bound_qualcodes = "JiiiK";
-    int f;
-
-    bool legal_values[sizeof(ft) / sizeof(ft[0])][256];
-    for (size_t st = 0; st != sizeof(ft) / sizeof(ft[0]); ++st)
-    {
-        for (size_t vt = 0; vt != 256; ++vt)
-        {
-            legal_values[st][vt] = 
-                min_qualcodes[st] <= static_cast<char>(vt) 
-                && static_cast<char>(vt) < bound_qualcodes[st];
-        }
-    }
-
-    FastqType file_type = None;
-
-    for (qual = quality_codes; *qual != '\0'; ++qual)
-        for (size_t qc = 0; qc != sizeof(ft) / sizeof(ft[0]); ++qc)
-        {
-            ft[qc] = 
-                ft[qc] && legal_values[qc][static_cast<size_t>(*qual)];
-        }
-
-    if (ft[0] && ! (ft[1] || ft[2] || ft[3] || ft[4]))
-        file_type = Sanger;
-
-    else if ((ft[1] || ft[2] || ft[3]) && ! (ft[0] || ft[4]))
-        file_type = Solexa;
-
-    else if (ft[4])
-        file_type = Sanger;
-
-    else
-    {
-        fprintf(stderr, "Error: get_fastq_type: found quality codes:\n%s\n"
-                "in this file which does not match any of the known quality code ranges.\n"
-                "The valid ranges of quality codes are\n", quality_codes);
-        for (f = 0; f != sizeof(ft) / sizeof(ft[0]); ++f)
-            fprintf(stderr, "%s: %c to %c\n", 
-                    fastq_type_strings[f], min_qualcodes[f], bound_qualcodes[f] - 1);
-        //do nothing
-    }
-    return file_type;
-}
-*/
-
 //Translates Phred quality into error probability
 float QualityToErrorProb(int quality)
 {
@@ -326,46 +252,6 @@ double * ParseNumbersFile(char const* numbers_file, size_t * num_numbers)
 }
 
 
-// if file is not NULL and not '/dev/null', attempts to
-// open the file.  In this case, it is an error if it cannot open the file.
-// otherwise, returns NULL
-FILE * open_if_present(char const* file, char const* mode)
-{
-    if (file == NULL
-        || strcmp(file, "/dev/null") == 0
-        || strcmp(file, "") == 0)
-    {
-        return NULL;
-    }
-    else
-    {
-        FILE * fh = fopen(file, mode);
-        if (fh == NULL)
-        {
-            fprintf(stderr, "Error: open_if_present: file %s not blank or '/dev/null' but"
-                    " still couldn't open it\n", file);
-            exit(1);
-        }
-        else
-        {
-            return fh;
-        }
-    }
-}
-
-
-
-int close_if_present(FILE * fh)
-{
-    if (fh != NULL)
-    {
-        return fclose(fh);
-    }
-    else
-    {
-        return 0;
-    }
-}
 
 
 
