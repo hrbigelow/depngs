@@ -61,14 +61,24 @@ struct pos_indel {
 
 union indel_ct_key {
     khint64_t k;
-    struct pos_indel v;
+    struct contig_pos v;
 };
 
-struct pos_indel_count {
-    struct contig_pos c;
+struct indel_count {
     khint_t indel_key;
     unsigned ct;
 };
+
+struct indel_count_node {
+    struct indel_count_node *next;
+    struct indel_count c;
+};
+
+struct pos_indel_count {
+    struct contig_pos p;
+    struct indel_count c;
+};
+
 
 /* hash type for storing bqt (basecall, quality, strand) counts at
    position */
@@ -80,8 +90,8 @@ KHASH_MAP_INIT_INT(p_h, struct base_count);
 /* hash type for storing distinct indel types */
 KHASH_MAP_INIT_INT(indel_h, struct indel_seq *);
 
-/* hash type for tallying indel events */
-KHASH_MAP_INIT_INT64(indel_ct_h, unsigned);
+/* hash type for tallying indel events. use  */
+KHASH_MAP_INIT_INT64(indel_ct_h, struct indel_count_node *);
 
 
 /* complete tally statistics for the set of BAM records overlapping a
@@ -335,6 +345,30 @@ static void make_indel_array(unsigned s, struct contig_pos tally_end)
     tls.ts[s].indel_end = ary + i;
 }
 
+
+static void free_indel_counts(struct indel_count_node *nd)
+{
+    assert(nd != NULL);
+    struct indel_count_node *t = nd->next;
+    do {
+        free(nd);
+        nd = t;
+        t = t->next;
+    } while (t);
+}
+
+
+/* increment a count of a particular indel, represented by indel_key,
+   in a sample s at pos. */
+static void incr_indel_count(unsigned s, struct contig_pos pos, khint_t indel_key)
+{
+    struct tally_stats *ts = &tls.ts[s];
+    khiter_t i;
+    union indel_ct_key k = { .v = pos };
+    if ((i = kh_get(indel_ct_h, ts->indel_ct_hash, k.k)) == kh_end(ts->indel_ct_hash))
+        i = kh_put(indel_ct_h, ts->indel_ct_hash, k.k);
+    kh_val(ts->indel_ct_hash, i) =
+}
 
 /* clear statistics that are no longer needed */
 static void clear_finished_stats(struct contig_pos tally_end)
