@@ -3,6 +3,7 @@
 
 #include "htslib/hts.h"
 #include "htslib/bgzf.h"
+#include "htslib/sam.h"
 
 #include "cache.h"
 
@@ -37,5 +38,12 @@ void bam_reader(void *par, struct managed_buf *bufs);
    max_bytes.  updates par with settings to help accelerate the
    bam_reader call.  */
 void bam_scanner(void *par, unsigned max_bytes);
+
+
+/* parse the next record of an uncompressed raw bam buffer into b,
+   reallocating fields in b as necessary. return position of next bam
+   record in the raw bam memory. adapted from
+   htslib/sam.c:bam_read1. */
+char *bam_parse(char *bam_buf, bam1_t *b);
 
 #endif /* _BAM_READER_H */

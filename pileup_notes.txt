@@ -1,0 +1,107 @@
+bam_plcmd.c: pileup_seq
+
+This is the function that outputs the base contribution of a single
+read to a single locus position in a pileup line.  it uses
+bam_get_seq, bam_seqi, seq_nt16_str, etc in order to properly
+interpret the BAM record.  The BAM record and position within the BAM
+record are specified by bam_pileup1_t::qpos.  The is_head, is_del,
+is_refskip, indel, is_tail flags all control the output.
+
+htslib/sam.c: resolve_cigar2
+
+This function modifies its bam_pileup1_t p argument.  It sets the
+is_del, indel, is_refskip, qpos, is_head, is_tail fields by traversing
+the b->cigar field.  it also uses a cstate_t somehow.  This function
+is called from within bam_plp_next.
+
+This is key: the reason that resolve_cigar2 requires a cstate_t object
+is because it is called in a very suboptimal way: the reference
+alignment position is held constant while it is called alternately on
+all reads that overlap.  After finishing a cycle of these reads, the
+reference position is advanced, and almost the identical set of reads
+are processed again, but at an adjacent position.  So, the parts of
+the cigar in each of these reads that have been consumed up until now
+are still consumed, which is reflected in the state object.
+
+Since we are traversing each read one-at-a-time, progressively, we
+don't need this sort of state tracking.
+
+Understanding resolve_cigar2:
+
+                 QUERY  REFERENCE
+---------------------------------
+M BAM_CMATCH     1      1
+I BAM_CINS       1      0
+D BAM_CDEL       0      1
+N BAM_CREF_SKIP  0      1
+S BAM_CSOFT_CLIP 1      0
+H BAM_CHARD_CLIP 0      0
+P BAM_CPAD       0      0
+
+
+= BAM_CEQUAL     1      1
+X BAM_CDIFF      1      1
+B BAM_CBACK      0      0
+
+
+We will traverse the alignment, parsing the CIGAR and consuming the
+read and reference according to each operation.  Each operation has a
+length, and together with the length and the starting position, and
+the instructions for whether or not the reference or query are
+consumed, we maintain a current position on both.  The position on the
+query will start from zero, while the position on the reference starts
+from the given 'pos' field.
+
+So we have the following operations, each consumes one cigar
+operation.  At the end, we repeat this with the next cigar operation.
+
+Initialization:
+
+rpos = pos
+qpos = 0
+cln stands for the current length of the cigar operation
+cop stands for the current operation itself
+
+Process cigar operation
+
+op = cigar[c].op
+ln = cigar[c].ln
+++c
+
+op:
+M: tally each (b,q,s) in [qpos, qpos + ln).  qpos += ln, rpos += ln
+I: tally insertion of query in [qpos, qpos + ln). qpos += ln
+D: tally deletion of ref in [rpos, rpos + ln). rpos += ln
+N: do not tally anything.  rpos += ln
+S: do not tally anything.  qpos += ln
+H: do nothing
+P: do nothing
+=: same as M
+X: same as M
+
+
+Total size of contigs will be 3GB, not too bad.  
+
+
+
+The vagueness around TLEN is a problem.  I don't want to double-count
+bases, and it's not clear that that is a reliable test for it.  In any
+case, a reliable test could be as follows:
+
+1. upstream record:
+
+if (! b.core.flag & BAM_FPROPER_PAIR)
+{ 
+  /* b can't be inferred to overlap because we just don't have the alignment information */
+}
+
+(! b.core.flag & BAM_FPROPER_PAIR) || b.pos <= b.mpos && b.pos + end_pos(&b) < b.mpos
+
+
+2. downstream record:
+
+b.mpos < b.pos && 
+
+
+
+1. 

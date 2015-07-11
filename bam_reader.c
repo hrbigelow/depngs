@@ -422,6 +422,35 @@ void bam_reader(void *par, struct managed_buf *bufs)
 
 
 
+/* parse a raw record into b. return the position of the next record
+   in the block */
+char *bam_parse(char *raw, struct bam1_t *b)
+{
+    struct bam1_core_t *c = &b->core;
+    b->data = raw + 36;
+    int32_t block_len = *(int32_t *)raw;
+    
+    uint32_t x[8];
+
+#ifdef DEP_BIG_ENDIAN
+    ed_swap_4p(&block_len);
+    unsigned i;
+    memcpy(x, raw + 4, 32);
+    for (i = 0; i != 8; ++i) ed_swap_4p(x + i);
+    swap_data(&c, block_len - 32, raw, 0);
+#endif
+
+    c->tid = x[0]; c->pos = x[1];
+    c->bin = x[2]>>16; c->qual = x[2]>>8&0xff; c->l_qname = x[2]&0xff;
+    c->flag = x[3]>>16; c->n_cigar = x[3]&0xffff;
+    c->l_qseq = x[4];
+    c->mtid = x[5]; c->mpos = x[6]; c->isize = x[7];
+
+    b->l_data = b->m_data = block_len - 32;
+    return raw + block_len + 4;
+}
+
+
 #if 0
 void bam_reader(void *par, struct managed_buf *bufs)
 {
