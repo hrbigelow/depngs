@@ -270,9 +270,6 @@ void set_outnode_status(struct thread_queue *tq,
 #endif
 
 
-/* the very notion of having n_threads input objects in the global
-   space is wasteful.  */
-
 /* this function is run by the thread */
 static void *worker_func(void *args)
 {
@@ -359,7 +356,7 @@ static void *worker_func(void *args)
 
         /* load the output buffer. */
         PROGRESS_START("WORK");
-        tq->worker(in->worker_par, in->buf, in->out->buf);
+        tq->worker(in->buf, in->out->buf);
         PROGRESS_MSG("WORK");
 
         set_outnode_status(tq, in->out, FULL);

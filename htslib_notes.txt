@@ -141,15 +141,6 @@ level   bin_first  (range at this level)
 
 idx->min_shift equals 14.  Note, 1<<14 = 16384, the minimum bin size
 
-beg>>idx->min_shift (
-
-
-*/
-
-
-/*
-
-
 
 /*
 The bam mpileup function proceeds as follows:

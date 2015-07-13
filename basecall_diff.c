@@ -865,6 +865,169 @@ void dist_worker(const struct managed_buf *in_bufs,
 }
 
 
+#if 0
+/* The original dist_worker */
+void dist_worker(const struct managed_buf *in_bufs,
+                 struct managed_buf *out_bufs)
+{
+    struct timespec worker_start_time;
+    clock_gettime(CLOCK_REALTIME, &worker_start_time);
+    tls_dw.metrics = { 0, 0, 0 };
+
+    unsigned i = 0;
+    struct managed_buf 
+        *dist_buf = worker_options.do_dist ? &out_bufs[i++] : NULL,
+        *comp_buf = worker_options.do_comp ? &out_bufs[i++] : NULL,
+        *indel_buf = worker_options.do_indel ? &out_bufs[i++] : NULL;
+
+    size_t gs = 0, s;
+    struct locus_sampling *ls;
+    for (s = 0; s != sample_attrs.n; ++s)
+    {    
+        ls = &tls_dw.lslist[s];
+        ls->current = in_bufs[s].buf;
+        ls->end = in_bufs[s].buf + in_bufs[s].size;
+        ((struct points_gen_par *)ls->distp.pgen.points_gen_par)->post_counts = 
+            &ls->locus.counts;
+    }
+
+    // before main loop, initialize loci and sample_attrs
+    for (s = 0; s != sample_attrs.n; ++s)
+    {
+        if (tls_dw.lslist[s].current == tls_dw.lslist[s].end) continue;
+        update_pileup_locus(&sample_attrs.atts[s].nuc_stats, &tls_dw.lslist[s]);
+    }
+
+    init_pseudo_locus(&tls_dw.pseudo_sample);
+
+    gs = init_global_and_next(tls_dw.lslist);
+
+    update_pseudo_locus(tls_dw.lslist[gs].locus.reference_base, &tls_dw.pseudo_sample);
+
+    /* zero out the pair_stats */
+    unsigned pi;
+    for (pi = 0; pi != sample_pairs.n; ++pi)
+        memset(&tls_dw.pair_stats[pi], 0, sizeof(tls_dw.pair_stats[0]));
+
+    // main loop for computing pairwise distances
+    // though slightly inefficient, just construct null_points here
+    // !!! here, use worker[0] as a proxy.  this is a design flaw
+    // owing to the fact that there are multiple workers used, all with the same
+    // basic settings
+    locus_sampling null_sd;
+    alloc_pileup_locus(&null_sd);
+
+    char null_pileup[50];
+    strcpy(null_pileup, tls_dw.lslist[0].locus.reference);
+    strcat(null_pileup, "\t1\tA\t0\t\t\n");
+    null_sd.current = null_pileup;
+    null_sd.end = null_pileup + strlen(null_pileup);
+        
+    update_pileup_locus(&sample_attrs.atts[0].nuc_stats, &null_sd);
+
+    COMP_QV comp_quantile_values;
+    double comp_means[NUM_NUCS];
+
+    while (tls_dw.lslist[gs].current != tls_dw.lslist[gs].end)
+    {
+        /* this will strain the global mutex, but only during the hash
+           loading phase. */
+        if (! tls_dw.bep.points_hash_frozen)
+            tls_dw.bep.points_hash_frozen = freeze_points_hash();
+
+        if (! tls_dw.bep.bounds_hash_frozen)
+            tls_dw.bep.bounds_hash_frozen = freeze_bounds_hash();
+
+        if (dist_buf || comp_buf)
+            next_distance_quantiles_aux(gs, dist_buf);
+
+        if (indel_buf)
+            next_indel_distance_quantiles_aux(gs, indel_buf);
+
+        if (comp_buf)
+        {
+            for (s = 0; s != sample_attrs.n; ++s)
+            {
+                struct locus_sampling *sam = &tls_dw.lslist[s];
+                if (sam->is_next && sam->confirmed_changed)
+                {
+                    unsigned d;
+                    for (d = 0; d != NUM_NUCS; ++d)
+                    {
+                        compute_marginal_wquantiles((double *)sam->distp.points.buf,
+                                                    sam->distp.weights.buf,
+                                                    max_sample_points,
+                                                    NUM_NUCS,
+                                                    d,
+                                                    quantiles,
+                                                    n_quantiles,
+                                                    comp_quantile_values[d]);
+                        comp_means[d] = 
+                            compute_marginal_mean((double *)sam->distp.points.buf,
+                                                  sam->distp.weights.buf,
+                                                  max_sample_points,
+                                                  NUM_NUCS,
+                                                  d);
+                    }
+                    
+                    print_basecomp_quantiles(comp_quantile_values,
+                                             comp_means,
+                                             n_quantiles,
+                                             sample_attrs.atts[s].label,
+                                             &tls_dw.lslist[s],
+                                             comp_buf);
+                }
+            }
+        }
+        for (s = 0; s != sample_attrs.n; ++s)
+            if (tls_dw.lslist[s].is_next) 
+                refresh_locus(&sample_attrs.atts[s].nuc_stats, &tls_dw.lslist[s]);
+
+        gs = init_global_and_next(tls_dw.lslist);
+
+        /* refresh the pseudo sample */
+        update_pseudo_locus(tls_dw.lslist[gs].locus.reference_base, &tls_dw.pseudo_sample);
+    }   
+
+    if (tls_dw.do_print_progress)
+    {
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        unsigned elapsed = now.tv_sec - start_time.tv_sec;
+
+        time_t cal = time(NULL);
+        char *ts = strdup(ctime(&cal));
+        ts[strlen(ts)-1] = '\0';
+        fprintf(stdout, 
+                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i\n", 
+                ts,
+                elapsed / 3600,
+                (elapsed % 3600) / 60,
+                elapsed % 60,
+                tls_dw.lslist[gs].locus.reference,
+                tls_dw.lslist[gs].locus.position);
+        fflush(stdout);
+        free(ts);
+    }
+
+    accumulate_pair_stats(tls_dw.pair_stats);
+
+    // struct timespec worker_end_time;
+    // clock_gettime(CLOCK_REALTIME, &worker_end_time);
+    // unsigned elapsed = worker_end_time.tv_sec - worker_start_time.tv_sec;
+
+    // fprintf(stderr, "%Zu\t%u\t%u\t%u\t%u\n", 
+    //         tls_dw.thread_num, elapsed, tls_dw.metrics.total,
+    //         tls_dw.metrics.cacheable, tls_dw.metrics.cache_was_set);
+
+    // print_primary_cache_size();
+    // print_cache_stats();
+
+    free_pileup_locus(&null_sd);
+}
+#endif
+
+
 void dist_offload(void *par, const struct managed_buf *bufs)
 {
     struct dist_worker_offload_par *ol = (struct dist_worker_offload_par *)par;

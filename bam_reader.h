@@ -46,4 +46,15 @@ void bam_scanner(void *par, unsigned max_bytes);
    htslib/sam.c:bam_read1. */
 char *bam_parse(char *bam_buf, bam1_t *b);
 
+
+/* inflate bgzf data stored in bgzf buffer, which contains the set of
+   blocks defined by blocks and n_blocks.  store inflated BAM records
+   in bam.  manage the size of bam.  only copy the portions of blocks
+   defined by the virtual offsets. */
+void bam_inflate(hts_pair64_t *blocks,
+                 unsigned n_blocks, 
+                 struct managed_buf *bgzf,
+                 struct managed_buf *bam);
+
+
 #endif /* _BAM_READER_H */

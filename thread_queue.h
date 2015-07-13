@@ -37,8 +37,7 @@ typedef struct {
    managing out_size and out_alloc.  the number of in_bufs and
    out_bufs need not match, and the relation between them is
    determined by the worker logic. */
-typedef void (thread_queue_worker_t)(void *par, 
-                                     const struct managed_buf *in_bufs,
+typedef void (thread_queue_worker_t)(const struct managed_buf *in_bufs,
                                      struct managed_buf *out_bufs);
 
 /* this function will be called on each output chunk in input order,

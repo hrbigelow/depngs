@@ -15,7 +15,7 @@ extern struct chunk_strategy cs_stats;
 
 /* This is the conservative estimate, assuming the last block is the
    maximal size of 0x10000 */
-unsigned tally_bgzf_bytes(hts_pair64_t *chunks, unsigned n_chunks)
+static unsigned tally_bgzf_bytes(hts_pair64_t *chunks, unsigned n_chunks)
 {
     unsigned n, sz = 0;
     for (n = 0; n != n_chunks; ++n)
@@ -28,7 +28,7 @@ unsigned tally_bgzf_bytes(hts_pair64_t *chunks, unsigned n_chunks)
    difference between reg2bins(0, ti * 16384) and reg2bins(0, (ti-1) *
    16384).  Thus, ti is the zero-based index of a 16kb tiling
    window. Return the number of new bins found. */
-int next_bins_aux(int ti, int *bins, int firstbin0, int n_small_bins)
+static int next_bins_aux(int ti, int *bins, int firstbin0, int n_small_bins)
 {
     if (ti == n_small_bins) return 0;
     bins[0] = firstbin0 + ti;
@@ -41,7 +41,7 @@ int next_bins_aux(int ti, int *bins, int firstbin0, int n_small_bins)
 
 /* intervals are sorted in the usual way.  those which have a full
    containment relationship are deemed equal.*/
-int cmp_ival(hts_pair64_t a, hts_pair64_t b)
+static int cmp_ival(hts_pair64_t a, hts_pair64_t b)
 {
     if (a.v <= b.u) return -1;
     if (b.v <= a.u) return 1;
@@ -54,8 +54,8 @@ KBTREE_INIT(itree, hts_pair64_t, cmp_ival);
 
 /* add an interval to the itree, resolving overlaps. return the total
    interval length gained. */
-uint64_t add_chunk_to_itree(kbtree_t(itree) *itree,
-                            hts_pair64_t q)
+static uint64_t add_chunk_to_itree(kbtree_t(itree) *itree,
+                                   hts_pair64_t q)
 {
     hts_pair64_t *lw, *hi, *pk[2];
     uint64_t ins_sz = 0, del_sz = 0;
@@ -384,6 +384,30 @@ void bam_scanner(void *par, unsigned max_bytes)
 }
 
 
+/* serialize chunks into buf */
+static void write_voffset_chunks(hts_pair64_t *chunks, unsigned n_chunks, struct managed_buf *buf)
+{
+    buf->size = sizeof(unsigned) + n_chunks * sizeof(hts_pair64_t);
+    ALLOC_GROW(buf->buf, buf->size, buf->alloc);
+    void *bp = buf->buf;
+
+    memcpy(bp, &n_chunks, sizeof(unsigned));
+    bp += sizeof(unsigned);
+    memcpy(bp, &chunks, n_chunks * sizeof(chunks[c]));
+}
+
+
+/* reads the virtual offset ranges serialized in buf */
+static void read_voffset_chunks(struct managed_buf *buf, hts_pair64_t **chunks, unsigned *n_chunks)
+{
+    void *bp = buf->buf;
+    memcpy(n_chunks, bp, sizeof(*n_chunks));
+    bp += sizeof(*n_chunks);
+    *chunks = realloc(*chunks, *n_chunks * sizeof(*chunks));
+    memcpy(*chunks, bp, *n_chunks * sizeof(*chunks));
+}
+
+
 /* read recorded compressed blocks into bufs. assume bufs has enough
    space for all blocks */
 void bam_reader(void *par, struct managed_buf *bufs)
@@ -393,9 +417,14 @@ void bam_reader(void *par, struct managed_buf *bufs)
     int block_span, bgzf_block_len, remain;
     char *wp;
 
+    /* prepend the virtual offset chunk information to the buffer, in terms of */
+
     for (s = 0; s != bp->n_idx; ++s)
     {
         wp = bufs[s].buf;
+        write_voffset_chunks(bp->chunks[s], bp->n_chunks[s], bufs[s].buf);
+        
+
         hFILE *fp = bp->bgzf[s]->fp;
 
         for (c = 0; c != bp->n_chunks[s]; ++c)
@@ -420,6 +449,77 @@ void bam_reader(void *par, struct managed_buf *bufs)
     }
 }
 
+
+/* inflate bgzf data stored in bgzf buffer, which contains the set of
+   blocks defined by blocks and n_blocks.  store inflated BAM records
+   in bam.  manage the size of bam.  only copy the portions of blocks
+   defined by the virtual offsets. */
+void bam_inflate(hts_pair64_t *blocks,
+                 unsigned n_blocks, 
+                 struct managed_buf *bgzf,
+                 struct managed_buf *bam)
+{
+    unsigned b;
+    int64_t b_beg, b_end; /* sub-regions in a block that we want */
+    size_t n_copy;
+    uint64_t bs; /* compressed block size */
+
+    uint64_t coff, coff_end; /* current and end coffset as we traverse
+                                the blocks within our block ranges */
+    bam->size = 0;
+    char *in = bgzf->buf, *out = bam->buf;
+
+    for (b = 0; b != n_blocks; ++b)
+    {
+        coff_beg = blocks[b].u>>16;
+        coff_end = blocks[b].v>>16;
+        coff = coff_beg;
+        do
+        {
+            ALLOC_GROW_REMAP(bam->buf, out, bam->size + BGZF_MAX_BLOCK_SIZE, bam->alloc);
+            bs = bgzf_block_size(in);
+            coff += bs;
+            in += bs;
+
+            n_bytes = inflate_bgzf_block(in, bs, out);
+            b_beg = (coff == coff_beg ? blocks[b].u & 0xff : 0);
+            b_end = (coff == coff_end ? blocks[b].v & 0xff : n_bytes);
+            n_copy = b_end - b_beg; /* number of bytes to copy to output buffer */
+
+            if (b_beg != 0) memmove(out, out + b_beg, n_copy);
+
+            bam->size += n_copy;
+            out += n_copy;
+        } while (coff != coff_end);
+    }
+}
+
+
+static size_t inflate_bgzf_block(char *in, int block_length, char *out)
+{
+    z_stream zs;
+    zs.zalloc = NULL;
+    zs.zfree = NULL;
+    zs.next_in = (Bytef*)in + 18;
+    zs.avail_in = block_length - 16;
+    zs.next_out = (Bytef*)out;
+    zs.avail_out = BGZF_MAX_BLOCK_SIZE;
+
+    if (inflateInit2(&zs, -15) != Z_OK) {
+        fp->errcode |= BGZF_ERR_ZLIB;
+        return -1;
+    }
+    if (inflate(&zs, Z_FINISH) != Z_STREAM_END) {
+        inflateEnd(&zs);
+        fp->errcode |= BGZF_ERR_ZLIB;
+        return -1;
+    }
+    if (inflateEnd(&zs) != Z_OK) {
+        fp->errcode |= BGZF_ERR_ZLIB;
+        return -1;
+    }
+    return zs.total_out;
+}
 
 
 /* parse a raw record into b. return the position of the next record
