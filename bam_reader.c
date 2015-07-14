@@ -385,7 +385,9 @@ void bam_scanner(void *par, unsigned max_bytes)
 
 
 /* serialize chunks into buf */
-static void write_voffset_chunks(hts_pair64_t *chunks, unsigned n_chunks, struct managed_buf *buf)
+static size_t write_voffset_chunks(hts_pair64_t *chunks,
+                                   unsigned n_chunks,
+                                   struct managed_buf *buf)
 {
     buf->size = sizeof(unsigned) + n_chunks * sizeof(hts_pair64_t);
     ALLOC_GROW(buf->buf, buf->size, buf->alloc);
@@ -393,37 +395,42 @@ static void write_voffset_chunks(hts_pair64_t *chunks, unsigned n_chunks, struct
 
     memcpy(bp, &n_chunks, sizeof(unsigned));
     bp += sizeof(unsigned);
-    memcpy(bp, &chunks, n_chunks * sizeof(chunks[c]));
+    size_t sz = n_chunks * sizeof(chunks[c]);
+    memcpy(bp, &chunks, sz);
+    return sizeof(unsigned) + sz;
 }
 
 
-/* reads the virtual offset ranges serialized in buf */
-static void read_voffset_chunks(struct managed_buf *buf, hts_pair64_t **chunks, unsigned *n_chunks)
+/* reads the virtual offset ranges serialized in buf.  returns the
+   size of information consumed, in bytes */
+static size_t read_voffset_chunks(struct managed_buf *buf,
+                                  hts_pair64_t **chunks,
+                                  unsigned *n_chunks)
 {
     void *bp = buf->buf;
     memcpy(n_chunks, bp, sizeof(*n_chunks));
     bp += sizeof(*n_chunks);
-    *chunks = realloc(*chunks, *n_chunks * sizeof(*chunks));
-    memcpy(*chunks, bp, *n_chunks * sizeof(*chunks));
+    unsigned sz = *n_chunks * sizeof(*chunks);
+    *chunks = realloc(*chunks, sz);
+    memcpy(*chunks, bp, sz);
+    return sizeof(*n_chunks) + sz;
 }
 
 
 /* read recorded compressed blocks into bufs. assume bufs has enough
-   space for all blocks */
+   space for all blocks, plus space for the initial voffset
+   information */
 void bam_reader(void *par, struct managed_buf *bufs)
 {
     struct bam_reader_par *bp = par;
     unsigned s, c;
     int block_span, bgzf_block_len, remain;
     char *wp;
-
-    /* prepend the virtual offset chunk information to the buffer, in terms of */
-
+    
     for (s = 0; s != bp->n_idx; ++s)
     {
         wp = bufs[s].buf;
-        write_voffset_chunks(bp->chunks[s], bp->n_chunks[s], bufs[s].buf);
-        
+        wp += write_voffset_chunks(bp->chunks[s], bp->n_chunks[s], wp);
 
         hFILE *fp = bp->bgzf[s]->fp;
 
@@ -454,25 +461,28 @@ void bam_reader(void *par, struct managed_buf *bufs)
    blocks defined by blocks and n_blocks.  store inflated BAM records
    in bam.  manage the size of bam.  only copy the portions of blocks
    defined by the virtual offsets. */
-void bam_inflate(hts_pair64_t *blocks,
-                 unsigned n_blocks, 
-                 struct managed_buf *bgzf,
+void bam_inflate(struct managed_buf *bgzf,
                  struct managed_buf *bam)
 {
-    unsigned b;
-    int64_t b_beg, b_end; /* sub-regions in a block that we want */
+    unsigned c;
+    int64_t c_beg, c_end; /* sub-regions in a chunk that we want */
     size_t n_copy;
     uint64_t bs; /* compressed block size */
 
     uint64_t coff, coff_end; /* current and end coffset as we traverse
-                                the blocks within our block ranges */
-    bam->size = 0;
-    char *in = bgzf->buf, *out = bam->buf;
+                                the chunks within our block ranges */
 
-    for (b = 0; b != n_blocks; ++b)
+    hts_pair64_t *chunks;
+    unsigned n_chunks;
+    size_t sz = read_voffset_chunks(bgzf, &chunks, &n_chunks);
+
+    bam->size = 0;
+    char *in = bgzf->buf + sz, *out = bam->buf;
+
+    for (c = 0; c != n_chunks; ++c)
     {
-        coff_beg = blocks[b].u>>16;
-        coff_end = blocks[b].v>>16;
+        coff_beg = chunks[c].u>>16;
+        coff_end = chunks[c].v>>16;
         coff = coff_beg;
         do
         {
@@ -482,11 +492,11 @@ void bam_inflate(hts_pair64_t *blocks,
             in += bs;
 
             n_bytes = inflate_bgzf_block(in, bs, out);
-            b_beg = (coff == coff_beg ? blocks[b].u & 0xff : 0);
-            b_end = (coff == coff_end ? blocks[b].v & 0xff : n_bytes);
-            n_copy = b_end - b_beg; /* number of bytes to copy to output buffer */
+            c_beg = (coff == coff_beg ? chunks[c].u & 0xff : 0);
+            c_end = (coff == coff_end ? chunks[c].v & 0xff : n_bytes);
+            n_copy = c_end - c_beg; /* number of bytes to copy to output buffer */
 
-            if (b_beg != 0) memmove(out, out + b_beg, n_copy);
+            if (c_beg != 0) memmove(out, out + c_beg, n_copy);
 
             bam->size += n_copy;
             out += n_copy;

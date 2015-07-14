@@ -53,6 +53,17 @@ dist_worker_tq_init(const char *query_range_file,
 void dist_worker_tq_free();
 
 
+struct locus_data {
+    struct managed_buf call, qual;
+    unsigned read_depth_high_qual;
+    unsigned read_depth;
+    unsigned used_depth;
+    unsigned char confirmed_changed;
+    struct distrib_points distp;
+    
+};
+
+
 
 /* there will be one of these instantiated for each thread.  Each of
    these holds the parameters needed by the thread that can be shared
@@ -71,7 +82,7 @@ struct dist_worker_input
         unsigned total, cacheable, cache_was_set;
     } metrics;
 
-    /* struct locus_sampling pseudo_sample, *lslist; */
+    struct locus_data pseudo_sample, *lslist;
     struct pair_dist_stats *pair_stats;
     gsl_rng *randgen;
     double *square_dist_buf; /* holds squares of distances for distance calculation */

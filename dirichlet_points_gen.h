@@ -14,7 +14,9 @@ struct points_gen_par
     unsigned alpha_counts[NUM_NUCS];
     unsigned alpha_perm[NUM_NUCS]; /* the permutation that was applied to get alpha_counts */
     gsl_rng *randgen;
-    struct packed_counts *post_counts;
+    struct bqs_count *observed;
+    unsigned n_observed;
+    /* struct packed_counts *post_counts; */
 };
 
 void init_dirichlet_points_gen(double _alpha_prior);
