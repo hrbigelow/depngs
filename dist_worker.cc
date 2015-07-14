@@ -373,7 +373,7 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
             (struct pair_dist_stats *)calloc(sample_pairs.n, sizeof(struct pair_dist_stats));
         thread_params.w[t].square_dist_buf = (double *)malloc(sizeof(double) * max_sample_points);
         thread_params.w[t].weights_buf = (double *)malloc(sizeof(double) * max_sample_points);
-        thread_params.w[t].do_print_progress = (t == n_threads - 1); /* last thread prints progress */
+        thread_params.w[t].do_print_progress = 1; /* all threads print progress now */
         thread_params.w[t].bep.points_hash_frozen = 0;
         thread_params.wp[t] = &thread_params.w[t];
     }
