@@ -16,7 +16,6 @@
 #include "dirichlet_points_gen.h"
 #include "dirichlet_diff_cache.h"
 #include "khash.h"
-#include "range_line_reader.h"
 #include "geometry.h"
 #include "chunk_strategy.h"
 #include "nucleotide_stats.h"
@@ -127,7 +126,7 @@ void dist_worker_free()
 void dist_on_create()
 {
     tls_dw.randgen = gsl_rng_alloc(gsl_rng_taus);
-    tls_dw.lslist = malloc(samples.n * sizeof(struct locus_data));
+    tls_dw.lslist = malloc(sample_attrs.n * sizeof(struct locus_data));
 
     tls_dw.pair_stats = calloc(sample_pairs.n, sizeof(struct pair_dist_stats));
     tls_dw.square_dist_buf = malloc(sizeof(double) * max_sample_points);
@@ -274,6 +273,16 @@ void dist_worker_tq_free()
 
 typedef double COMP_QV[NUM_NUCS][MAX_NUM_QUANTILES];
 
+struct dim_mean {
+    unsigned dim;
+    double mean;
+};
+
+int less_mean(struct dim_mean *a, struct dim_mean *b)
+{
+    return a->mean < b->mean;
+}
+
 void print_basecomp_quantiles(COMP_QV quantile_values,
                               const double *means,
                               size_t n_quantiles,
@@ -293,17 +302,18 @@ void print_basecomp_quantiles(COMP_QV quantile_values,
             ls->read_depth_high_qual
             );
 
-    std::multimap<double, size_t, std::greater<double> > dim_to_mean;
-    unsigned d, q;
+    struct dim_mean dim_to_mean[NUM_NUCS];
+
+    unsigned d;
     for (d = 0; d != NUM_NUCS; ++d)
-        dim_to_mean.insert(std::make_pair(means[d], d));
+        dim_to_mean[d] = { means[d], d };
+
+    qsort(dim_to_mean, NUM_NUCS, sizeof(dim_to_mean[0]), dim_mean);
 
     /* calculate mean rank order */
     size_t mean_rank_order[NUM_NUCS];
-    std::multimap<double, size_t, std::greater<double> >::iterator dtm;
-    d = 0;
-    for (dtm = dim_to_mean.begin(); dtm != dim_to_mean.end(); ++dtm)
-        mean_rank_order[(*dtm).second] = d++;
+    for (d = 0; d != NUM_NUCS; ++d)
+        mean_rank_order[dim_to_mean[d].dim] = d;
 
     unsigned grow = NUM_NUCS * (sizeof(line_label) + 30 + (11 * MAX_NUM_QUANTILES));
     ALLOC_GROW_TYPED(mb->buf, mb->size + grow, mb->alloc);
