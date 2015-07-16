@@ -50,7 +50,7 @@ struct set_flag {
 
 struct counted_points {
     struct points_buf pts;
-    unsigned n_hit;
+    unsigned n_hit; /* */
 };
 
 KHASH_MAP_INIT_INT64(fuzzy_hash, enum fuzzy_state)
@@ -540,7 +540,8 @@ void winnow_points_hash()
 {
     pthread_mutex_lock(&cache.c.mtx);
 
-    if (cache.c.n_items >= cache.c.max_items)
+    if (cache.c.n_items >= cache.c.max_items
+        && cache.c.n_times_cleared < MAX_TIMES_CLEARED)
     {
         struct counted_points val;
         khiter_t k;
@@ -569,8 +570,13 @@ void winnow_points_hash()
         time_t cal = time(NULL);
         char *ts = strdup(ctime(&cal));
         ts[strlen(ts)-1] = '\0';
-        fprintf(stderr, "%s: cache.c.n_items = %lu\ncache.c.n_permanent_items = %lu\n", 
-                ts, cache.c.n_items, cache.c.n_permanent_items);
+        fprintf(stderr, 
+                "%s: cache.c: n_items = %lu, "
+                "n_permanent_items = %lu, "
+                "n_times_cleared = %u\n", 
+                ts, cache.c.n_items, 
+                cache.c.n_permanent_items,
+                cache.c.n_times_cleared);
         free(ts);
     }
 
@@ -1179,6 +1185,9 @@ void write_diststats_line(FILE *fh,
 /* remove low hit entries from the bounds hash */
 void winnow_bounds_hash()
 {
+
+bla
+
     pthread_mutex_lock(&cache.b.mtx);
 
     if (cache.b.n_items >= cache.b.max_items

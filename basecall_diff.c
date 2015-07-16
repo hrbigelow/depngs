@@ -12,6 +12,7 @@
 #include <assert.h>
 
 #include "basecall_diff.h"
+#include "bam_reader.h"
 #include "locus.h"
 #include "dirichlet_points_gen.h"
 #include "dirichlet_diff_cache.h"
@@ -46,7 +47,7 @@ static struct {
 
 
 static struct {
-    struct range_line_reader_par *reader_buf;
+    struct bam_reader_par *reader_buf;
     void **reader_par;
     unsigned n_readers;
     struct pair_ordering_range *ranges;
@@ -169,7 +170,7 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
     file_bsearch_init(init_locus, scan_thresh_size);
 
     thread_params.reader_buf = 
-        malloc(n_readers * sizeof(struct range_line_reader_par));
+        malloc(n_readers * sizeof(struct bam_reader_par));
 
     thread_params.reader_par = (void **)malloc(n_readers * sizeof(void *));
 
@@ -200,31 +201,29 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
     unsigned s;
     for (r = 0; r != n_readers; ++r)
     {
-        thread_params.reader_buf[r] = (struct range_line_reader_par){
-            malloc(sample_attrs.n * sizeof(struct file_bsearch_index)),
+        thread_params.reader_buf[r] = (struct bam_reader_par){
+            malloc(sample_attrs.n * sizeof(struct bam_stats)),
             sample_attrs.n,
+            
             thread_params.ranges, 
-            thread_params.ranges + thread_params.n_ranges,
-            NULL,
-            0,
-            init_locus,
-            1
+            thread_params.ranges + thread_params.n_ranges
         };
         for (s = 0; s != sample_attrs.n; ++s)
-            thread_params.reader_buf[r].ix[s] =
-                file_bsearch_make_index(sample_attrs.atts[s].file);
-
+        {
+            thread_params.reader_buf[r].s[s].idx = NULL/* parse BAM index */;
+            thread_params.reader_buf[r].s[s].bgzf = NULL/* open bam file */;
+        }
         thread_params.reader_par[r] = &thread_params.reader_buf[r];
     }
 
     if (query_range_file)
         cs_init_by_range(n_total_loci, sample_attrs.n);
+
     else
     {
         cs_init_whole_file(sample_attrs.n);
-        struct file_bsearch_index *ix = thread_params.reader_buf[0].ix;
-        for (s = 0; s != sample_attrs.n; ++s)
-            cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset);
+        /* for (s = 0; s != sample_attrs.n; ++s) */
+        /*     cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset); */
     }
     cs_set_defaults(MAX_BYTES_SMALL_CHUNK,
                     SMALL_CHUNK, 

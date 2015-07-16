@@ -14,17 +14,19 @@
 /* One instance for each of thread_queue's n_readers
    thread_queue_reader_t instances. It retains state between calls of
    bam_reader and bam_scanner.  */
+struct bam_stats {
+    hts_idx_t idx;
+    BGZF *bgzf;
+    hts_pair64_t *chunks;
+    unsigned n_chunks;
+};
+
 struct bam_reader_par {
-    hts_idx_t *idx;
-    unsigned n_idx;
-    
-    BGZF **bgzf;
+    struct bam_stats *s;
+    unsigned n_s;
 
     /* set of defined logical ranges */
     struct pair_ordering_range *qbeg, *qend;
-
-    hts_pair64_t **chunks; /* chunks[s]: set of chunks for sample s */
-    unsigned *n_chunks; /* n_chunks[s]: number of chunks for sample s */
 };
 
 /* called by up to n_readers threads at a time. par instructs the
