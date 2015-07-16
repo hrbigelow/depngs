@@ -7,8 +7,8 @@
    iterator.
 */
 
+#include "batch_pileup.h"
 #include "compat_util.h"
-#include "khash.h"
 #include "ksort.h"
 #include "cache.h"
 #include "bam_reader.h"
@@ -59,7 +59,7 @@ struct pos_base_count {
 struct pos_indel {
     unsigned pos: 32;
     unsigned tid: 22;
-    unsigned indel_key: 10; /* 1024 distinct indel types */
+    unsigned indel_itr: 10; /* 1024 distinct indel types */
 };
 
 union pos_key {
@@ -95,6 +95,7 @@ KHASH_MAP_INIT_INT64(indel_ct_h, struct indel_count_node *);
    BAM records. */
 KHASH_MAP_INIT_STR(olap_h, char *);
 
+
 /* complete tally statistics for the set of BAM records overlapping a
    given set of locus ranges. */
 struct tally_stats {
@@ -117,33 +118,45 @@ struct tally_stats {
 
 static __thread struct tls {
     khash_t(indel_h) *indel_hash;
+
     unsigned n_samples;
 
     struct contig_pos tally_end;
     struct tally_stats *ts; /* tally stats for each sample */
-    struct contig_pos base_cur_pos; /* current base position being
-                                       queried. Initialized in ? */
-    struct contig_pos indel_cur_pos; /* current indel position being queried */
+    struct contig_pos cur_pos; /* current position being queried */
 } tls;
 
 
-static char **reference_seq;
-static unsigned n_reference_seq;
+struct contig_name {
+    char name[REFNAME_MAXLEN + 1];
+};
+
+KHASH_MAP_INIT_INT(contig_h, struct contig_name);
+
+
+static struct refseq {
+    khash_t(contig_h) *name;
+    char **seq;
+    unsigned n_seq;
+} refseq;
+
 
 void reference_seq_init(char *fasta_file)
 {
+    
 }
 
 void reference_seq_free()
 {
+    kh_destroy(contig_h, refseq.name);
     unsigned r;
-    for (r = 0; r != n_reference_seq; ++r)
-        free(reference_seq[r]);
-    free(reference_seq);
+    for (r = 0; r != refseq.n_seq; ++r)
+        free(refseq.seq[r]);
+    free(refseq.seq);
 }
 
-
-void batch_pileup_init(unsigned n_samples)
+/* */
+void batch_pileup_thread_init(unsigned n_samples)
 {
     tls.n_samples = n_samples;
     tls.ts = malloc(n_samples * sizeof(struct tally_stats));
@@ -167,7 +180,7 @@ void batch_pileup_init(unsigned n_samples)
 }
 
 
-void batch_pileup_free()
+void batch_pileup_thread_free()
 {
     unsigned s;
     for (s = 0; s != tls.n_samples; ++s)
@@ -187,7 +200,7 @@ static void make_p_array(unsigned s);
 static void make_indel_array(unsigned s, struct contig_pos tally_end);
 struct contig_pos process_bam_block(char *raw, char *end, struct tally_stats *ts);
 static void incr_indel_count(struct tally_stats *ts, struct contig_pos pos,
-                             khint_t indel_iter);
+                             khiter_t indel_itr);
 
 
 static inline int less_contig_pos(struct contig_pos a, struct contig_pos b)
@@ -241,7 +254,7 @@ struct base_count basecall_stats(unsigned s)
     static struct base_count null_ct = { { 0, 0, 0, 0 } };
     struct tally_stats *ts = &tls.ts[s];
     if (ts->base_cur == ts->base_end
-        || less_contig_pos(tls.base_cur_pos, ts->base_cur->cpos))
+        || less_contig_pos(tls.cur_pos, ts->base_cur->cpos))
         return null_ct;
     else return ts->base_cur->bct;
 }
@@ -258,13 +271,13 @@ void pileup_bqs_stats(unsigned s, struct bqs_count **cts, unsigned *n_cts)
     unsigned b, q, st;
     union pbqt_key pk;
     khint_t j;
-    pk.v.tid = tls.base_cur_pos.tid;
-    pk.v.pos = tls.base_cur_pos.pos;
+    pk.v.tid = tls.cur_pos.tid;
+    pk.v.pos = tls.cur_pos.pos;
     unsigned n = 0;
 
     /* should be about 4k.  is this too large? */
     struct bqs_count buf[(MAX_QUAL - MIN_QUAL) * 4 * 2];
-
+    
     struct tally_stats *ts = &tls.ts[s];
     for (st = 0; st != 2; ++st)
     {
@@ -299,7 +312,7 @@ void pileup_indel_stats(unsigned s, struct indel_count **cts, unsigned *n_cts)
     /* pre-scan to find total number of distinct indels (use linear
        scan since this will be very small) */
     while (pc != tls.ts[s].indel_end &&
-           equal_contig_pos(pc->cpos, tls.indel_cur_pos))
+           equal_contig_pos(pc->cpos, tls.cur_pos))
         ++n;
 
     *cts = realloc(*cts, n * sizeof(struct indel_count));
@@ -313,25 +326,30 @@ void pileup_indel_stats(unsigned s, struct indel_count **cts, unsigned *n_cts)
 
 static inline char bqs_count_to_call(struct bqs_count bc, unsigned refbase_i)
 {
-    static char calls[2][] = { "ACGT.", "acgt," };
+    static char *calls[] = { "ACGT.", "acgt," };
     return calls[bc.strand][bc.base == refbase_i ? 4 : bc.base];
 }
 
-/* produce pileup strings from current position for sample s */
-void pileup_strings(unsigned s,
-                    struct managed_buf *call,
-                    struct managed_buf *qual)
+/* convert a BAM quality to a character */
+static inline char qual_to_char(unsigned q)
 {
-    struct tally_stats *ts = &tls.ts[s];
+    return (char)(q - 33);
+}
+
+/* produce pileup data (calls, quals, and read depths) from current
+   position for sample s */
+void
+pileup_current_data(unsigned s, struct pileup_data *pd)
+{
     unsigned n_base_ct;
-    struct bqs_count *bct = NULL;
+    struct bqs_count *base_ct = NULL;
     pileup_bqs_stats(s, &base_ct, &n_base_ct);
     unsigned b, n_calls = 0;
     for (b = 0; b != n_base_ct; ++b)
         n_calls += base_ct[b].ct;
 
-    qual->size = n_calls;
-    ALLOC_GROW(qual->buf, qual->size, qual->alloc);
+    pd->quals->size = n_calls;
+    ALLOC_GROW(pd->quals->buf, pd->quals->size, pd->quals->alloc);
 
     struct indel_count *indel_ct = NULL;
     unsigned n_indel_ct, indel_len_total = 0;
@@ -340,43 +358,39 @@ void pileup_strings(unsigned s,
     struct indel_seq *isq;
     for (b = 0; b != n_indel_ct; ++b)
     {
-        isq = kh_val(indel_h, tls.indel_hash, indel_ct[b].indel_key);
+        isq = kh_key(tls.indel_hash, indel_ct[b].indel_itr);
         indel_len_total += indel_ct[b].ct * (strlen(isq->seq) + 10); /* reasonable upper bound */
     }
-    call->size = n_calls + indel_len_total;
-    ALLOC_GROW(call->buf, call->size, call->alloc);
+    pd->calls->size = n_calls + indel_len_total;
+    ALLOC_GROW(pd->calls->buf, pd->calls->size, pd->calls->alloc);
     
     /* print out the calls */
     char refbase = pileup_current_refbase();
     static char nucs[] = "ACGT";
     unsigned refbase_i = index(nucs, refbase) - nucs;
-    unsigned p = 0;
+    unsigned p = 0, p_end;
     for (b = 0; b != n_base_ct; ++b)
     {
         p_end = p + base_ct[b].ct;
-        char call = bqs_count_to_call(base_ct[b], refbase_i);
-        char qual = qual_to_char(base_ct[b].qual);
-        for (; p != p_end; ++p)
-        {
-            call->buf[p] = call;
-            qual->buf[p] = qual;
-        }
+        char bc = bqs_count_to_call(base_ct[b], refbase_i);
+        char qs = qual_to_char(base_ct[b].qual);
+        for (; p != p_end; ++p) pd->calls->buf[p] = bc;
+        for (; p != p_end; ++p) pd->quals->buf[p] = qs;
     }
-    qual->buf[p] = '\0';
-    qual->size = p;
+    pd->quals->buf[p] = '\0';
+    pd->quals->size = p;
 
     /* print out all indel representations */
-    int n;
     for (b = 0; b != n_indel_ct; ++b)
     {
-        isq = kh_val(indel_h, tls.indel_hash, indel_ct[b].indel_key);
-        call->buf[p++] = isq->is_ins ? '+' : '-';
-        p += sprintf(call->buf + p, "%Zu", strlen(isq->seq));
-        strcpy(call->buf + p, isq->seq);
+        isq = kh_key(tls.indel_hash, indel_ct[b].indel_itr);
+        pd->calls->buf[p++] = isq->is_ins ? '+' : '-';
+        p += sprintf(pd->calls->buf + p, "%Zu", strlen(isq->seq));
+        strcpy(pd->calls->buf + p, isq->seq);
         p += strlen(isq->seq);
     }
-    call->buf[p] = '\0';
-    call->size = p;
+    pd->calls->buf[p] = '\0';
+    pd->calls->size = p;
 }
 
 
@@ -390,7 +404,7 @@ static void process_bam_stats(bam1_t *b, struct tally_stats *ts)
     uint32_t *cigar = bam_get_cigar(b), op, ln;
     unsigned strand = bam_is_rev(b) ? 0 : 1;
     int ret;
-
+    
     for (c = 0; c != b->core.n_cigar; ++c)
     {
         op = bam_cigar_op(cigar[c]);
@@ -406,7 +420,7 @@ static void process_bam_stats(bam1_t *b, struct tally_stats *ts)
                     .v = {
                         r, tid, 
                         bam_seqi(bam_get_seq(b), q), 
-                        bam_get_qual(b)[q],
+                        bam_get_qual(b)[q] - 33, /* BAM stores ASCII of (Phred Qual - 33)*/
                         strand 
                     }
                 };
@@ -427,7 +441,7 @@ static void process_bam_stats(bam1_t *b, struct tally_stats *ts)
                     isq->seq[i] = seq_nt16_str[bam_seqi(bam_get_seq(b), q)];
 
             else
-                memcpy(isq->seq, reference_seq[tid] + rpos, ln);
+                memcpy(isq->seq, refseq.seq[tid] + rpos, ln);
 
             isq->seq[ln] = '\0';
 
@@ -520,14 +534,15 @@ struct contig_pos process_bam_block(char *raw, char *end, struct tally_stats *ts
 
 
 /* condense to p_hash */
-static void summarize_base_counts(unsigned s, struct contig_pos tally_end)
+static void
+summarize_base_counts(unsigned s, struct contig_pos tally_end)
 {
     union pbqt_key k;
     unsigned ct;
     khash_t(pbqt_h) *h_src = tls.ts[s].pbqt_hash;
     khash_t(p_h) *h_trg = tls.ts[s].p_hash;
     kh_clear(p_h, h_trg);
-    khint_t i, j;
+    khiter_t i, j;
     int ret;
     struct contig_pos kpos;
     for (i = kh_begin(h_src); i != kh_end(h_src); ++i)
@@ -558,8 +573,10 @@ static int pos_base_count_less(struct pos_base_count a, struct pos_base_count b)
 KSORT_INIT(pbc_sort, struct pos_base_count, pos_base_count_less);
 
 /* create a sorted array from sample s's p_hash.  Note: p_hash is only
-   summarized for all positions < tally_end). */
-static void make_p_array(unsigned s)
+   summarized for all positions < tally_end). also initialize base_ct,
+   base_cur, and base_end for this sample. */
+static void
+make_p_array(unsigned s)
 {
     khash_t(p_h) *ph = tls.ts[s].p_hash;
     unsigned n = kh_size(ph);
@@ -577,6 +594,7 @@ static void make_p_array(unsigned s)
         }
     
     ks_introsort(pbc_sort, n, ary);
+    tls.ts[s].base_ct = ary;
     tls.ts[s].base_cur = ary;
     tls.ts[s].base_end = ary + i;
 }
@@ -596,7 +614,7 @@ static void make_indel_array(unsigned s, struct contig_pos tally_end)
     unsigned n = tls.ts[s].n_indel_nodes;
     struct pos_indel_count *ary = 
         realloc(tls.ts[s].indel_ct, n * sizeof(struct pos_indel_count));
-
+    
     khiter_t it;
     unsigned i;
     struct indel_count_node *node;
@@ -639,7 +657,7 @@ static void free_indel_counts(struct indel_count_node *nd)
    in a sample s at pos. */
 static void incr_indel_count(struct tally_stats *ts,
                              struct contig_pos pos,
-                             khint_t indel_key)
+                             khiter_t indel_itr)
 {
     union pos_key k = { .v = pos };
     khash_t(indel_ct_h) *ih = ts->indel_ct_hash;
@@ -656,7 +674,7 @@ static void incr_indel_count(struct tally_stats *ts,
     head = node = kh_val(ih, i);
     
     /* find node with matching key, or NULL */
-    while (node && node->ict.indel_key != indel_key)
+    while (node && node->ict.indel_itr != indel_itr)
         node = node->next;
 
     if (node) ++node->ict.ct;
@@ -664,7 +682,7 @@ static void incr_indel_count(struct tally_stats *ts,
     {
         ++ts->n_indel_nodes;
         node = malloc(sizeof(struct indel_count_node));
-        *node = (struct indel_count_node){ head, { indel_key, 1 } };
+        *node = (struct indel_count_node){ head, { indel_itr, 1 } };
         kh_val(ih, i) = node;
     }
 }
@@ -674,7 +692,8 @@ static void incr_indel_count(struct tally_stats *ts,
 
 /* clear statistics that are no longer needed. call this function
    after next_base() and next_indel() return 1. */
-void clear_finished_stats()
+void
+pileup_clear_finished_stats()
 {
     khiter_t it;
     unsigned s;
@@ -716,61 +735,55 @@ void clear_finished_stats()
 }
 
 
-/* advance TYP (base or indel) iterator position. return 1 if reached
-   the end. */
-#define NEXT_AUX(TYP)                                                   \
-    int next_ ## TYP()                                                  \
-    {                                                                   \
-        unsigned s;                                                     \
-        struct tally_stats *ts;                                         \
-                                                                        \
-        /* update all TYP_cur pointers */                               \
-        struct contig_pos suc =                                         \
-            { tls.TYP ## _cur_pos.tid, tls.TYP ## _cur_pos.pos + 1 };   \
-        for (s = 0; s != tls.n_samples; ++s)                            \
-        {                                                               \
-            ts = &tls.ts[s];                                            \
-            if (ts->TYP ## _cur != ts->TYP ## _end                      \
-                && less_contig_pos(ts->TYP ## _cur->cpos, suc))         \
-                ++ts->TYP ## _cur;                                      \
-        }                                                               \
-        /* recalculate tls.TYP_cur_pos */                               \
-        struct contig_pos tmp = { UINT_MAX, UINT_MAX }, tmp2;           \
-        for (s = 0; s != tls.n_samples; ++s)                            \
-        {                                                               \
-            ts = &tls.ts[s];                                            \
-            tmp2 = (ts->TYP ## _cur == ts->TYP ## _end)                 \
-                ? tmp                                                   \
-                : ts->TYP ## _cur->cpos;                                \
-            tmp = MIN_CONTIG_POS(tmp, tmp2);                            \
-        }                                                               \
-        tls.TYP ## _cur_pos = tmp;                                      \
-            return                                                      \
-                less_contig_pos(tls.TYP ## _cur_pos,                    \
-                                (struct contig_pos){ UINT_MAX, UINT_MAX }); \
-    }                                                                   \
+/* advance tls.cur_pos to next position for which at least one sample
+   has base or indel entries. update base_cur and indel_cur pointers
+   for each sample so that calls to pileup_{basecall,bqs,indel}_stats
+   return the right values. return 1 if there is a next position, 0 if
+   reached the end. */
+int pileup_next_pos()
+{
+    unsigned s;
+    struct tally_stats *ts;
     
-
-NEXT_AUX(base)
-
-NEXT_AUX(indel)
-
-
-char *pileup_current_refname()
-{
-    khiter_t k = kh_get(str_h, refname_hash, tls.base_cur_pos.tid);
-    assert(k != kh_end(refname_hash));
-    return kh_val(refname_hash, k);
+    /* update all cur pointers */
+    struct contig_pos suc =
+        { tls.cur_pos.tid, tls.cur_pos.pos + 1 };
+    for (s = 0; s != tls.n_samples; ++s)
+    {
+        ts = &tls.ts[s];
+        /* increment base iterator */
+        if (ts->base_cur != ts->base_end
+            && less_contig_pos(ts->base_cur->cpos, suc))
+            ++ts->base_cur;
+        
+        /* increment indel iterator */
+        if (ts->indel_cur != ts->indel_end
+            && less_contig_pos(ts->indel_cur->cpos, suc))
+            ++ts->indel_cur;
+        
+    }
+    /* recalculate tls.cur_pos to be the minimum position of either an  */
+    struct contig_pos end_pos = { UINT_MAX, UINT_MAX }, 
+        tmp = end_pos, tmp_b, tmp_i;
+    for (s = 0; s != tls.n_samples; ++s)
+    {
+        ts = &tls.ts[s];
+        tmp_b = (ts->base_cur == ts->base_end) ? tmp : ts->base_cur->cpos;
+        tmp_i = (ts->indel_cur == ts->indel_end) ? tmp : ts->indel_cur->cpos;
+        tmp = MIN_CONTIG_POS(tmp, tmp_b);
+        tmp = MIN_CONTIG_POS(tmp, tmp_i);
+    }
+    tls.cur_pos = tmp;
+    return less_contig_pos(tls.cur_pos, end_pos);
 }
 
 
-char pileup_current_refbase()
+void
+pileup_current_info(struct pileup_locus_info *pli)
 {
-    return reference_seq[tls.base_cur_pos.tid][tls.base_cur_pos.pos];
-}
-
-
-unsigned pileup_current_pos()
-{
-    return tls.base_cur_pos.pos;
+    khiter_t k = kh_get(contig_h, refseq.name, tls.cur_pos.tid);
+    assert(k != kh_end(refseq.name));
+    strcpy(pli->refname, kh_val(refseq.name, k).name);
+    pli->refbase = refseq.seq[tls.cur_pos.tid][tls.cur_pos.pos];
+    pli->pos = tls.cur_pos.pos;
 }

@@ -54,13 +54,9 @@ void dist_worker_tq_free();
 
 
 struct locus_data {
-    struct managed_buf call, qual;
-    unsigned read_depth_high_qual;
-    unsigned read_depth;
-    unsigned used_depth;
+    unsigned char has_data;
     unsigned char confirmed_changed;
     struct distrib_points distp;
-    
 };
 
 
@@ -99,9 +95,9 @@ struct dist_worker_offload_par {
 };
 
 /* conforms to thread_queue_worker_t */
-void dist_worker(void *par,
-                 const struct managed_buf *in_bufs,
-                 struct managed_buf *out_bufs);
+void
+dist_worker(const struct managed_buf *in_bufs,
+            struct managed_buf *out_bufs);
 
 /* conforms to thread_queue_offload_t */
 void dist_offload(void *par, const struct managed_buf *bufs);

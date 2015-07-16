@@ -15,7 +15,7 @@
    thread_queue_reader_t instances. It retains state between calls of
    bam_reader and bam_scanner.  */
 struct bam_stats {
-    hts_idx_t idx;
+    hts_idx_t *idx;
     BGZF *bgzf;
     hts_pair64_t *chunks;
     unsigned n_chunks;
@@ -53,10 +53,17 @@ char *bam_parse(char *bam_buf, bam1_t *b);
    blocks defined by blocks and n_blocks.  store inflated BAM records
    in bam.  manage the size of bam.  only copy the portions of blocks
    defined by the virtual offsets. */
-void bam_inflate(hts_pair64_t *blocks,
-                 unsigned n_blocks, 
-                 struct managed_buf *bgzf,
-                 struct managed_buf *bam);
+void
+bam_inflate(const struct managed_buf *bgzf,
+            struct managed_buf *bam);
+
+/* initialize  */
+int
+bam_reader_par_init(const char *bam_file, struct bam_stats *bs);
+
+/* release the resources of this bam_stat */
+int
+bam_reader_par_free(struct bam_stats *bs);
 
 
 #endif /* _BAM_READER_H */

@@ -13,16 +13,21 @@
 
 #include "basecall_diff.h"
 #include "bam_reader.h"
-#include "locus.h"
-#include "dirichlet_points_gen.h"
-#include "dirichlet_diff_cache.h"
+#include "batch_pileup.h"
 #include "khash.h"
-#include "geometry.h"
-#include "chunk_strategy.h"
-#include "nucleotide_stats.h"
-#include "common_tools.h"
-#include "fastq_tools.h"
 #include "dist_aux.h"
+#include "common_tools.h"
+#include "locus.h"
+#include "chunk_strategy.h"
+#include "geometry.h"
+#include "dirichlet_points_gen.h"
+#include "indel_diff.h"
+#include "pair_stats.h"
+
+/* #include "dirichlet_diff_cache.h" */
+/* #include "nucleotide_stats.h" */
+/* #include "fastq_tools.h" */
+/* #include "dist_aux.h" */
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -57,7 +62,7 @@ static struct {
 } thread_params;
 
 
-__thread struct dist_worker_input tls_dw;
+static __thread struct dist_worker_input tls_dw;
 
 
 static double quantiles[MAX_NUM_QUANTILES];
@@ -166,9 +171,6 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
 {
     thread_params.n_threads = n_threads;
 
-    size_t scan_thresh_size = 1e5;
-    file_bsearch_init(init_locus, scan_thresh_size);
-
     thread_params.reader_buf = 
         malloc(n_readers * sizeof(struct bam_reader_par));
 
@@ -225,6 +227,11 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
         /* for (s = 0; s != sample_attrs.n; ++s) */
         /*     cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset); */
     }
+
+#define MAX_BYTES_SMALL_CHUNK 1e9
+#define SMALL_CHUNK 5e6
+#define DEFAULT_BYTES_PER_LOCUS 100
+
     cs_set_defaults(MAX_BYTES_SMALL_CHUNK,
                     SMALL_CHUNK, 
                     DEFAULT_BYTES_PER_LOCUS);
@@ -238,7 +245,7 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
     size_t n_output_files = 
         (dist_fh ? 1 : 0) + (comp_fh ? 1 : 0) + (indel_fh ? 1 : 0);
 
-    thread_queue_reader_t reader = { rl_reader, rl_scanner };
+    thread_queue_reader_t reader = { bam_reader, bam_scanner };
 
     struct thread_queue *tqueue =
         thread_queue_init(reader, thread_params.reader_par,
@@ -259,9 +266,9 @@ void dist_worker_tq_free()
     for (r = 0; r != thread_params.n_readers; ++r)
     {
         for (s = 0; sample_attrs.n; ++s)
-            file_bsearch_index_free(thread_params.reader_buf[r].ix[s]);
+            bam_reader_par_free(&thread_params.reader_buf[r].s[s]);
 
-        free(thread_params.reader_buf[r].ix);
+        free(thread_params.reader_buf[r].s);
     }
 
     free(thread_params.reader_buf);
@@ -277,37 +284,39 @@ struct dim_mean {
     double mean;
 };
 
-int less_mean(struct dim_mean *a, struct dim_mean *b)
+int
+less_mean(const void *ap, const void *bp)
 {
+    const struct dim_mean *a = ap, *b = bp;
     return a->mean < b->mean;
 }
-
+ 
 void print_basecomp_quantiles(COMP_QV quantile_values,
                               const double *means,
                               size_t n_quantiles,
                               const char *label_string,
-                              struct locus_data *ls, 
+                              struct pileup_locus_info *pli,
+                              struct pileup_data *pdat,
                               struct managed_buf *mb)
 {
     char line_label[2048];
 
     sprintf(line_label,
-            "%s\t%s\t%i\t%c\t%Zu\t%Zu",
+            "%s\t%s\t%i\t%c\t%u\t%u",
             label_string, 
-            pileup_current_refname(),
-            pileup_current_position(),
-            pileup_current_refbase(),
-            ls->read_depth, 
-            ls->read_depth_high_qual
-            );
+            pli->refname,
+            pli->pos,
+            pli->refbase,
+            pdat->used_read_depth, 
+            pdat->read_depth);
 
     struct dim_mean dim_to_mean[NUM_NUCS];
 
     unsigned d;
     for (d = 0; d != NUM_NUCS; ++d)
-        dim_to_mean[d] = { means[d], d };
+        dim_to_mean[d] = (struct dim_mean){ means[d], d };
 
-    qsort(dim_to_mean, NUM_NUCS, sizeof(dim_to_mean[0]), dim_mean);
+    qsort(dim_to_mean, NUM_NUCS, sizeof(dim_to_mean[0]), less_mean);
 
     /* calculate mean rank order */
     size_t mean_rank_order[NUM_NUCS];
@@ -324,6 +333,7 @@ void print_basecomp_quantiles(COMP_QV quantile_values,
                             "%s\t%c\t%Zu\t%10.8f", line_label, 
                             dimension_labels[d], mean_rank_order[d], means[d]);
         
+        unsigned q;
         for (q = 0; q != n_quantiles; ++q)
             mb->size += sprintf(mb->buf + mb->size, "\t%10.8f", quantile_values[d][q]);
 
@@ -336,15 +346,15 @@ void print_basecomp_quantiles(COMP_QV quantile_values,
    between points1 and points2 in the barycentric space (R4,
    normalized positive components).  populates weights_buf with
    product of weights1 and weights2. */
-void compute_wsq_dist(const POINT *points1,
+void compute_wsq_dist(const double *points1,
                       const double *weights1,
-                      const POINT *points2,
+                      const double *points2,
                       const double *weights2,
                       size_t n_points,
                       double *square_dist_buf,
                       double *weights_buf)
 {
-    compute_square_dist((const double *)points1, (const double *)points2, n_points, 4, square_dist_buf);
+    compute_square_dist(points1, points2, n_points, 4, square_dist_buf);
     (void)yepCore_Multiply_V64fV64f_V64f(weights1, weights2, weights_buf, n_points);
 }
 
@@ -397,36 +407,367 @@ void print_distance_quantiles(const char *contig,
         buf->size += sprintf(buf->buf + buf->size, "\t%7.4f",
                              dist_quantile_values[q]);
 
-    locus_data *ls1 = &tls_dw.lslist[s1], 
-        *ls2 = s2 == PSEUDO_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.lslist[s2];
-
     if (worker_options.do_print_pileup)
     {
-        pileup_strings(s1, &ls1->call, ls1->qual);
-        pileup_strings(s2, &ls2->call, ls2->qual);
+        struct pileup_data pd1, pd2;
+        pileup_current_data(s1, &pd1);
+        pileup_current_data(s2, &pd2);
         
         unsigned extra_space = 
-            ls1->call.size + ls1->qual.size
-            + ls2->call.size + ls2->qual.size
+            pd1.calls.size + pd1.quals.size
+            + pd2.calls.size + pd2.quals.size
             + 50;
         
         ALLOC_GROW_TYPED(buf->buf, buf->size + extra_space, buf->alloc);
         
         buf->size += sprintf(buf->buf + buf->size, 
                              "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
-                             ls1->qual.size,
-                             ls1->call.buf,
-                             ls1->qual.buf,
-                             ls2->qual.size,
-                             ls2->call.buf,
-                             ls2->qual.buf);
+                             pd1.quals.size,
+                             pd1.calls.buf,
+                             pd1.quals.buf,
+                             pd2.quals.size,
+                             pd2.calls.buf,
+                             pd2.quals.buf);
     }
     buf->size += sprintf(buf->buf + buf->size, "\n");
 }
 
+
+#define ONE_OVER_SQRT2 0.70710678118654752440
+
+/* for each sample pair, calculate whether the loci differ above the
+   given level and confidence. if a pair differs, set the
+   confirmed_changed flag for each sample in the pair. if out_buf is
+   not NULL, print out distance quantiles.  also generates sample
+   points for each sample as needed, both for the preliminary test and
+   more points for the final test */
+void
+distance_quantiles_aux(struct managed_buf *out_buf)
+{
+    struct locus_data *ls1, *ls2;
+    size_t pi, i;
+    enum fuzzy_state diff_state = AMBIGUOUS;
+
+    unsigned cacheable, cache_was_set;
+    struct base_count counts[2];
+
+    for (pi = 0; pi != sample_pairs.n; ++pi)
+    {
+        int s1 = sample_pairs.p[pi].s1,
+            s2 = sample_pairs.p[pi].s2;
+
+        ls1 = &tls_dw.lslist[s1];
+        ls2 = s2 == PSEUDO_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.lslist[s2];
+        
+        tls_dw.bep.dist[0] = &ls1->distp;
+        tls_dw.bep.dist[1] = &ls2->distp;
+
+        tls_dw.metrics.total++;
+        ++tls_dw.pair_stats[pi].total;
+
+        counts[0] = pileup_basecall_stats(s1);
+        counts[1] = pileup_basecall_stats(s2);
+        
+        diff_state = 
+            cached_dirichlet_diff(counts[0].ct, counts[1].ct, &tls_dw.bep,
+                                  &cacheable, &cache_was_set);
+
+        tls_dw.pair_stats[pi].dist_count[diff_state]++;
+        tls_dw.pair_stats[pi].cacheable += cacheable;
+        tls_dw.pair_stats[pi].cache_was_set += cache_was_set;
+
+        tls_dw.metrics.cacheable += cacheable;
+        tls_dw.metrics.cache_was_set += cache_was_set;
+
+        if (diff_state == CHANGED)
+        {
+            /* Finish sampling and do full distance marginal estimation */
+            int sp[] = { s1, s2 };
+            for (i = 0; i != 2; ++i)
+            {
+                unsigned perm[] = { 0, 1, 2, 3 };
+                struct distrib_points *dst = tls_dw.bep.dist[i];
+                struct points_gen_par *pgp = dst->pgen.points_gen_par;
+                pileup_bqs_stats(sp[i], &pgp->observed, &pgp->n_observed);
+                
+                /* Generate all points */
+                update_points_gen_params(dst, counts[i].ct, perm);
+                POINT *p,
+                    *pb = dst->points.buf,
+                    *pe = dst->points.buf + max_sample_points;
+                for (p = pb; p != pe; p += GEN_POINTS_BATCH)
+                    dst->pgen.gen_point(pgp, p);
+
+                dst->points.size = max_sample_points;
+                
+                /* Generate all weights */
+                double *w,
+                    *wb = dst->weights.buf,
+                    *we = dst->weights.buf + max_sample_points;
+                for (w = wb, p = pb; w != we; 
+                     w += GEN_POINTS_BATCH, p += GEN_POINTS_BATCH)
+                    dst->pgen.weight(p, pgp, w);
+
+                dst->weights.size = max_sample_points;
+            }
+            /* Compute weighted square distances (max value of 2).
+               e.g.
+               minimum simplex distance on [0,1.00] scale is 0.25.
+               minimum real    distance on [0,1.41] scale is 0.35355
+               minimum sq_real distance on [0,2.00] scale is 0.12499
+            */
+
+            compute_wsq_dist((const double *)tls_dw.bep.dist[0]->points.buf, 
+                             tls_dw.bep.dist[0]->weights.buf,
+                             (const double *)tls_dw.bep.dist[1]->points.buf, 
+                             tls_dw.bep.dist[1]->weights.buf,
+                             max_sample_points,
+                             tls_dw.square_dist_buf,
+                             tls_dw.weights_buf);
+
+            double test_quantile = 1.0 - posterior_confidence, test_quantile_value;
+
+            /* Compute the test distance quantile (relative to the
+               dist, not squared dist) */
+            compute_dist_wquantiles(tls_dw.square_dist_buf,
+                                    tls_dw.weights_buf,
+                                    max_sample_points,
+                                    &test_quantile,
+                                    1,
+                                    &test_quantile_value);
+
+            if (test_quantile_value > min_dirichlet_dist)
+            {
+                ++tls_dw.pair_stats[pi].confirmed_changed;
+                ls1->confirmed_changed = 1;
+                ls2->confirmed_changed = 1;
+
+                if (out_buf)
+                {
+                    compute_dist_wquantiles(tls_dw.square_dist_buf,
+                                            tls_dw.weights_buf,
+                                            max_sample_points,
+                                            quantiles,
+                                            n_quantiles,
+                                            tls_dw.dist_quantile_values);            
+                    
+                    /* quantile values are in squared distance terms, and
+                       in the [0, 1] x 4 space of points.  The maximum
+                       distance between such points is sqrt(2.0).  We want
+                       to re-scale it to be 1. */
+                    unsigned q;
+                    for (q = 0; q != n_quantiles; ++q)
+                        tls_dw.dist_quantile_values[q] *= ONE_OVER_SQRT2;
+                    
+                    struct pileup_locus_info pli;
+                    pileup_current_info(&pli);
+                    print_distance_quantiles(pli.refname,
+                                             pli.pos,
+                                             pli.refbase,
+                                             pi,
+                                             tls_dw.dist_quantile_values, 
+                                             out_buf);
+                }
+            }
+        }
+        
+    }
+}
+
+
+void comp_quantiles_aux(struct managed_buf *comp_buf)
+{
+    unsigned s;
+    struct pileup_data pdat;
+    struct pileup_locus_info ploc;
+    pileup_current_info(&ploc);
+
+    COMP_QV comp_quantile_values;
+    double comp_means[NUM_NUCS];
+
+    for (s = 0; s != sample_attrs.n; ++s)
+    {
+        struct locus_data *sam = &tls_dw.lslist[s];
+        if (sam->is_next && sam->confirmed_changed)
+        {
+            unsigned d;
+            for (d = 0; d != NUM_NUCS; ++d)
+            {
+                compute_marginal_wquantiles((double *)sam->distp.points.buf,
+                                            sam->distp.weights.buf,
+                                            max_sample_points,
+                                            NUM_NUCS,
+                                            d,
+                                            quantiles,
+                                            n_quantiles,
+                                            comp_quantile_values[d]);
+                comp_means[d] = 
+                    compute_marginal_mean((double *)sam->distp.points.buf,
+                                          sam->distp.weights.buf,
+                                          max_sample_points,
+                                          NUM_NUCS,
+                                          d);
+            }
+                    
+            pileup_current_data(s, &pdat);
+
+            print_basecomp_quantiles(comp_quantile_values,
+                                     comp_means,
+                                     n_quantiles,
+                                     sample_attrs.atts[s].label,
+                                     &ploc,
+                                     &pdat,
+                                     comp_buf);
+        }
+    }
+}
+
+
+
+/* receives a certain number of in_bufs and a certain number of
+   out_bufs.
+   
+   there is one struct locus_data for each input.  it's current
+   field points to the current line being processed. 'gs' is a single
+   index indicating the sample with the lowest 'current' among all of
+   them.  it is this position that must be fully processed before any
+   sample_attrs may advance.
+
+   any sample missing the locus defined by sample[gs].current has
+   null_sd substituted for it.
+*/
+void
+dist_worker(const struct managed_buf *in_bufs,
+            struct managed_buf *out_bufs)
+{
+    struct timespec worker_start_time;
+    clock_gettime(CLOCK_REALTIME, &worker_start_time);
+    tls_dw.metrics.total = 0;
+    tls_dw.metrics.cacheable = 0;
+    tls_dw.metrics.cache_was_set = 0;
+
+    unsigned i = 0;
+    struct managed_buf 
+        *dist_buf = worker_options.do_dist ? &out_bufs[i++] : NULL,
+        *comp_buf = worker_options.do_comp ? &out_bufs[i++] : NULL,
+        *indel_buf = worker_options.do_indel ? &out_bufs[i++] : NULL;
+
+    struct managed_buf bam = { NULL, 0, 0 };
+    unsigned s;
+    for (s = 0; s != sample_attrs.n; ++s)
+    {
+        bam_inflate(&in_bufs[s], &bam);
+        tally_pileup_stats(bam, s);
+    }
+
+    /* */
+    for (s = 0; s != sample_attrs.n; ++s)
+        summarize_pileup_stats(s);
+
+    free(bam.buf);
+
+    /* zero out the pair_stats */
+    unsigned pi;
+    for (pi = 0; pi != sample_pairs.n; ++pi)
+        memset(&tls_dw.pair_stats[pi], 0, sizeof(tls_dw.pair_stats[0]));
+
+    // main loop for computing pairwise distances
+
+    unsigned more_loci = 1;
+    while (more_loci)
+    {
+        /* this will strain the global mutex, but only during the hash
+           loading phase. */
+        if (! tls_dw.bep.points_hash_frozen)
+            tls_dw.bep.points_hash_frozen = freeze_points_hash();
+
+        if (! tls_dw.bep.bounds_hash_frozen)
+            tls_dw.bep.bounds_hash_frozen = freeze_bounds_hash();
+
+        if (dist_buf || comp_buf)
+            distance_quantiles_aux(dist_buf);
+        
+        if (indel_buf)
+            indel_distance_quantiles_aux(indel_buf);
+
+        if (comp_buf)
+            comp_quantiles_aux(comp_buf);
+
+        more_loci = pileup_next_pos();
+    }   
+
+    /* frees statistics that have already been used in one of the
+       distance calculations. */
+    pileup_clear_finished_stats();
+
+    if (tls_dw.do_print_progress)
+    {
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        unsigned elapsed = now.tv_sec - start_time.tv_sec;
+
+        struct pileup_locus_info ploc;
+        pileup_current_info(&ploc);
+
+        time_t cal = time(NULL);
+        char *ts = strdup(ctime(&cal));
+        ts[strlen(ts)-1] = '\0';
+        fprintf(stdout, 
+                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i\n", 
+                ts,
+                elapsed / 3600,
+                (elapsed % 3600) / 60,
+                elapsed % 60,
+                ploc.refname,
+                ploc.pos);
+        fflush(stdout);
+        free(ts);
+    }
+
+    accumulate_pair_stats(tls_dw.pair_stats);
+
+    // struct timespec worker_end_time;
+    // clock_gettime(CLOCK_REALTIME, &worker_end_time);
+    // unsigned elapsed = worker_end_time.tv_sec - worker_start_time.tv_sec;
+
+    // fprintf(stderr, "%Zu\t%u\t%u\t%u\t%u\n", 
+    //         tls_dw.thread_num, elapsed, tls_dw.metrics.total,
+    //         tls_dw.metrics.cacheable, tls_dw.metrics.cache_was_set);
+
+    // print_primary_cache_size();
+    // print_cache_stats();
+}
+
+
+void dist_offload(void *par, const struct managed_buf *bufs)
+{
+    struct dist_worker_offload_par *ol = (struct dist_worker_offload_par *)par;
+    unsigned i = 0;
+    if (ol->dist_fh)
+    {
+        fwrite(bufs[i].buf, 1, bufs[i].size, ol->dist_fh), i++;
+        fflush(ol->dist_fh);
+    }
+
+    if (ol->comp_fh)
+    {
+        fwrite(bufs[i].buf, 1, bufs[i].size, ol->comp_fh), i++;
+        fflush(ol->comp_fh);
+    }
+
+    if (ol->indel_fh)
+    {
+        fwrite(bufs[i].buf, 1, bufs[i].size, ol->indel_fh), i++;
+        fflush(ol->indel_fh);
+    }
+}
+
+
+
+#if 0
 /* update 'ls' fields to be consistent with sd->current */
 void update_pileup_locus(const struct nucleotide_stats *stats,
-                         locus_data *ls)
+                         struct locus_data *ls)
 {
     ls->locus.load_line(ls->current);
     ls->locus_ord = init_locus(ls->current);
@@ -502,345 +843,4 @@ void refresh_locus(const struct nucleotide_stats *stats,
         ls->confirmed_changed = 0;
     }
 }
-
-
-
-#define ONE_OVER_SQRT2 0.70710678118654752440
-
-/* for each sample pair, calculate whether the loci differ above the
-   given level and confidence. if a pair differs, set the
-   confirmed_changed flag for each sample in the pair. if out_buf is
-   not NULL, print out distance quantiles.  also generates sample
-   points for each sample as needed, both for the preliminary test and
-   more points for the final test */
-void next_distance_quantiles_aux(struct managed_buf *out_buf)
-{
-    locus_data *ls1, *ls2;
-    size_t pi, i;
-    unsigned counts[2][NUM_NUCS];
-    enum fuzzy_state diff_state = AMBIGUOUS;
-
-    unsigned cacheable, cache_was_set;
-    struct base_count counts[2];
-
-    for (pi = 0; pi != sample_pairs.n; ++pi)
-    {
-        int s1 = sample_pairs.p[pi].s1,
-            s2 = sample_pairs.p[pi].s2;
-
-        ls1 = &tls_dw.lslist[s1];
-        ls2 = s2 == PSEUDO_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.lslist[s2];
-        
-        tls_dw.bep.dist[0] = &ls1->distp;
-        tls_dw.bep.dist[1] = &ls2->distp;
-
-        tls_dw.metrics.total++;
-        ++tls_dw.pair_stats[pi].total;
-
-        counts[0] = pileup_basecall_stats(s1);
-        counts[1] = pileup_basecall_stats(s2);
-        
-        diff_state = 
-            cached_dirichlet_diff(counts[0].ct, counts[1].ct, &tls_dw.bep,
-                                  &cacheable, &cache_was_set);
-
-        tls_dw.pair_stats[pi].dist_count[diff_state]++;
-        tls_dw.pair_stats[pi].cacheable += cacheable;
-        tls_dw.pair_stats[pi].cache_was_set += cache_was_set;
-
-        tls_dw.metrics.cacheable += cacheable;
-        tls_dw.metrics.cache_was_set += cache_was_set;
-
-        if (diff_state == CHANGED)
-        {
-            /* Finish sampling and do full distance marginal estimation */
-            int sp[] = { s1, s2 };
-            for (i = 0; i != 2; ++i)
-            {
-                unsigned perm[] = { 0, 1, 2, 3 };
-                struct distrib_points *dst = tls_dw.bep.dist[i];
-                struct points_gen_par *pgp = dst->pgen.points_gen_par;
-                pileup_bqs_stats(sp[i], &pgp->observed, &pgp->n_observed);
-                
-                /* Generate all points */
-                update_points_gen_params(dst, counts[i].ct, perm);
-                POINT *p,
-                    *pb = dst->points.buf,
-                    *pe = dst->points.buf + max_sample_points;
-                for (p = pb; p != pe; p += GEN_POINTS_BATCH)
-                    dst->pgen.gen_point(pgp, p);
-
-                dst->points.size = max_sample_points;
-                
-                /* Generate all weights */
-                double *w,
-                    *wb = dst->weights.buf,
-                    *we = dst->weights.buf + max_sample_points;
-                for (w = wb, p = pb; w != we; 
-                     w += GEN_POINTS_BATCH, p += GEN_POINTS_BATCH)
-                    dst->pgen.weight(p, pgp, w);
-
-                dst->weights.size = max_sample_points;
-            }
-            /* Compute weighted square distances (max value of 2).
-               e.g.
-               minimum simplex distance on [0,1.00] scale is 0.25.
-               minimum real    distance on [0,1.41] scale is 0.35355
-               minimum sq_real distance on [0,2.00] scale is 0.12499
-            */
-
-            compute_wsq_dist(tls_dw.bep.dist[0]->points.buf, 
-                             tls_dw.bep.dist[0]->weights.buf,
-                             tls_dw.bep.dist[1]->points.buf, 
-                             tls_dw.bep.dist[1]->weights.buf,
-                             max_sample_points,
-                             tls_dw.square_dist_buf,
-                             tls_dw.weights_buf);
-
-            double test_quantile = 1.0 - posterior_confidence, test_quantile_value;
-
-            /* Compute the test distance quantile (relative to the
-               dist, not squared dist) */
-            compute_dist_wquantiles(tls_dw.square_dist_buf,
-                                    tls_dw.weights_buf,
-                                    max_sample_points,
-                                    &test_quantile,
-                                    1,
-                                    &test_quantile_value);
-
-            if (test_quantile_value > min_dirichlet_dist)
-            {
-                ++tls_dw.pair_stats[pi].confirmed_changed;
-                ls1->confirmed_changed = 1;
-                ls2->confirmed_changed = 1;
-
-                if (out_buf)
-                {
-                    compute_dist_wquantiles(tls_dw.square_dist_buf,
-                                            tls_dw.weights_buf,
-                                            max_sample_points,
-                                            quantiles,
-                                            n_quantiles,
-                                            tls_dw.dist_quantile_values);            
-                    
-                    /* quantile values are in squared distance terms, and
-                       in the [0, 1] x 4 space of points.  The maximum
-                       distance between such points is sqrt(2.0).  We want
-                       to re-scale it to be 1. */
-                    unsigned q;
-                    for (q = 0; q != n_quantiles; ++q)
-                        tls_dw.dist_quantile_values[q] *= ONE_OVER_SQRT2;
-                    
-                    
-                    print_distance_quantiles(pileup_current_refname(),
-                                             pileup_current_pos(),
-                                             pileup_current_refbase(),
-                                             pi,
-                                             tls_dw.dist_quantile_values, 
-                                             out_buf);
-                }
-            }
-        }
-        
-    }
-}
-
-
-
-
-// find gs, and init the is_next field for all sample_attrs
-// this is run
-size_t init_global_and_next(locus_data *lslist)
-{
-    size_t gs = 0;
-    for (size_t s = 0; s != sample_attrs.n; ++s)
-    {
-        if (lslist[s].current != lslist[s].end
-            && (lslist[gs].current == lslist[gs].end
-                || cmp_pair_ordering(&lslist[s].locus_ord, 
-                                     &lslist[gs].locus_ord) < 0)
-            )
-            gs = s;
-    }
-    bool global_at_end = (lslist[gs].current == lslist[gs].end);
-    unsigned s;
-    for (s = 0; s != sample_attrs.n; ++s)
-        lslist[s].is_next = 
-            lslist[s].current != lslist[s].end
-            && (! global_at_end)
-            && cmp_pair_ordering(&lslist[s].locus_ord,
-                                 &lslist[gs].locus_ord) == 0;
-
-    return gs;
-}
-
-
-/* receives a certain number of in_bufs and a certain number of
-   out_bufs.
-   
-   there is one struct locus_data for each input.  it's current
-   field points to the current line being processed. 'gs' is a single
-   index indicating the sample with the lowest 'current' among all of
-   them.  it is this position that must be fully processed before any
-   sample_attrs may advance.
-
-   any sample missing the locus defined by sample[gs].current has
-   null_sd substituted for it.
- */
-void dist_worker(const struct managed_buf *in_bufs,
-                 struct managed_buf *out_bufs)
-{
-    struct timespec worker_start_time;
-    clock_gettime(CLOCK_REALTIME, &worker_start_time);
-    tls_dw.metrics = { 0, 0, 0 };
-
-    unsigned i = 0;
-    struct managed_buf 
-        *dist_buf = worker_options.do_dist ? &out_bufs[i++] : NULL,
-        *comp_buf = worker_options.do_comp ? &out_bufs[i++] : NULL,
-        *indel_buf = worker_options.do_indel ? &out_bufs[i++] : NULL;
-
-    struct managed_buf bam = { NULL, 0, 0 };
-    for (s = 0; s != sample_attrs.n; ++s)
-    {
-        bam_inflate(&in_bufs[s], &bam);
-        tally_pileup_stats(bam, s);
-    }
-
-    for (s = 0; s != sample_attrs.n; ++s)
-        summarize_pileup_stats(s);
-
-    free(bam.buf);
-
-    /* zero out the pair_stats */
-    unsigned pi;
-    for (pi = 0; pi != sample_pairs.n; ++pi)
-        memset(&tls_dw.pair_stats[pi], 0, sizeof(tls_dw.pair_stats[0]));
-
-    // main loop for computing pairwise distances
-    COMP_QV comp_quantile_values;
-    double comp_means[NUM_NUCS];
-
-    while (/* more loci */)
-    {
-        /* this will strain the global mutex, but only during the hash
-           loading phase. */
-        if (! tls_dw.bep.points_hash_frozen)
-            tls_dw.bep.points_hash_frozen = freeze_points_hash();
-
-        if (! tls_dw.bep.bounds_hash_frozen)
-            tls_dw.bep.bounds_hash_frozen = freeze_bounds_hash();
-
-        if (dist_buf || comp_buf)
-            next_distance_quantiles_aux(dist_buf);
-
-        if (indel_buf)
-            next_indel_distance_quantiles_aux(indel_buf);
-
-        if (comp_buf)
-        {
-            for (s = 0; s != sample_attrs.n; ++s)
-            {
-                struct locus_data *sam = &tls_dw.lslist[s];
-                if (sam->is_next && sam->confirmed_changed)
-                {
-                    unsigned d;
-                    for (d = 0; d != NUM_NUCS; ++d)
-                    {
-                        compute_marginal_wquantiles((double *)sam->distp.points.buf,
-                                                    sam->distp.weights.buf,
-                                                    max_sample_points,
-                                                    NUM_NUCS,
-                                                    d,
-                                                    quantiles,
-                                                    n_quantiles,
-                                                    comp_quantile_values[d]);
-                        comp_means[d] = 
-                            compute_marginal_mean((double *)sam->distp.points.buf,
-                                                  sam->distp.weights.buf,
-                                                  max_sample_points,
-                                                  NUM_NUCS,
-                                                  d);
-                    }
-                    
-                    print_basecomp_quantiles(comp_quantile_values,
-                                             comp_means,
-                                             n_quantiles,
-                                             sample_attrs.atts[s].label,
-                                             &tls_dw.lslist[s],
-                                             comp_buf);
-                }
-            }
-        }
-        for (s = 0; s != sample_attrs.n; ++s)
-            if (tls_dw.lslist[s].is_next) 
-                refresh_locus(&sample_attrs.atts[s].nuc_stats, &tls_dw.lslist[s]);
-
-        gs = init_global_and_next(tls_dw.lslist);
-
-        /* refresh the pseudo sample */
-        update_pseudo_locus(tls_dw.lslist[gs].locus.reference_base, &tls_dw.pseudo_sample);
-    }   
-
-    if (tls_dw.do_print_progress)
-    {
-        struct timespec now;
-        clock_gettime(CLOCK_REALTIME, &now);
-        unsigned elapsed = now.tv_sec - start_time.tv_sec;
-
-        time_t cal = time(NULL);
-        char *ts = strdup(ctime(&cal));
-        ts[strlen(ts)-1] = '\0';
-        fprintf(stdout, 
-                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i\n", 
-                ts,
-                elapsed / 3600,
-                (elapsed % 3600) / 60,
-                elapsed % 60,
-                tls_dw.lslist[gs].locus.reference,
-                tls_dw.lslist[gs].locus.position);
-        fflush(stdout);
-        free(ts);
-    }
-
-    accumulate_pair_stats(tls_dw.pair_stats);
-
-    // struct timespec worker_end_time;
-    // clock_gettime(CLOCK_REALTIME, &worker_end_time);
-    // unsigned elapsed = worker_end_time.tv_sec - worker_start_time.tv_sec;
-
-    // fprintf(stderr, "%Zu\t%u\t%u\t%u\t%u\n", 
-    //         tls_dw.thread_num, elapsed, tls_dw.metrics.total,
-    //         tls_dw.metrics.cacheable, tls_dw.metrics.cache_was_set);
-
-    // print_primary_cache_size();
-    // print_cache_stats();
-
-    free_pileup_locus(&null_sd);
-}
-
-
-void dist_offload(void *par, const struct managed_buf *bufs)
-{
-    struct dist_worker_offload_par *ol = (struct dist_worker_offload_par *)par;
-    unsigned i = 0;
-    if (ol->dist_fh)
-    {
-        fwrite(bufs[i].buf, 1, bufs[i].size, ol->dist_fh), i++;
-        fflush(ol->dist_fh);
-    }
-
-    if (ol->comp_fh)
-    {
-        fwrite(bufs[i].buf, 1, bufs[i].size, ol->comp_fh), i++;
-        fflush(ol->comp_fh);
-    }
-
-    if (ol->indel_fh)
-    {
-        fwrite(bufs[i].buf, 1, bufs[i].size, ol->indel_fh), i++;
-        fflush(ol->indel_fh);
-    }
-}
-
-
+#endif

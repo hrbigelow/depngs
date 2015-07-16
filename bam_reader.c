@@ -461,7 +461,7 @@ void bam_reader(void *par, struct managed_buf *bufs)
    blocks defined by blocks and n_blocks.  store inflated BAM records
    in bam.  manage the size of bam.  only copy the portions of blocks
    defined by the virtual offsets. */
-void bam_inflate(struct managed_buf *bgzf,
+void bam_inflate(const struct managed_buf *bgzf,
                  struct managed_buf *bam)
 {
     unsigned c;
@@ -558,6 +558,27 @@ char *bam_parse(char *raw, struct bam1_t *b)
 
     b->l_data = b->m_data = block_len - 32;
     return raw + block_len + 4;
+}
+
+
+int
+bam_reader_init(const char *bam_file, 
+                const char *bam_index_file,
+                struct bam_stats *bs)
+{
+    bs->bgzf = bgzf_open(bam_file, "r");
+    bs->idx = bam_idx_load(bam_index_file);
+    bs->chunks = NULL;
+    bs->n_chunks = 0;
+}
+
+
+int
+bam_reader_free(struct bam_stats *bs)
+{
+    hts_idx_destroy(bs->idx);
+    bgzf_close(bs->bgzf);
+    free(bs->chunks);
 }
 
 
