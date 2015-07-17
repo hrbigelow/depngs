@@ -59,22 +59,27 @@ batch_pileup_thread_init(unsigned n_samples);
 
 /* called once for each thread at end of using batch_pileup
    functionality */
-void batch_pileup_thread_free();
+void
+batch_pileup_thread_free();
 
 /* called once at start of program */
-void reference_seq_init(char *fasta_file);
-void reference_seq_free();
+void
+reference_seq_init(char *fasta_file);
+void
+reference_seq_free();
 
 
 /* perform entire tally phase, for basecalls and for indels for one
    sample. update tls.tally_end to reflect furthest position seen. */
-void tally_pileup_stats(const struct managed_buf bam, unsigned s);
+void
+tally_pileup_stats(const struct managed_buf bam, unsigned s);
 
 /* summarize statistics for sample s, up to tls.tally_end, or to
    completion if there is no more input available.  initializes
    base_ct, base_cur, and base_end, as well as indel_ct, indel_cur,
    and indel_end.  base_cur and indel_cur are set to the beginning. */
-void summarize_pileup_stats(unsigned s);
+void
+summarize_pileup_stats(unsigned s);
 
 
 /* provide basecall stats for a sample at current position, or the
@@ -88,13 +93,15 @@ pileup_basecall_stats(unsigned s);
 void
 pileup_bqs_stats(unsigned s, struct bqs_count **cts, unsigned *n_cts);
 
-/* provide indel stats for a sample at current position */
+/* provide indel stats for a sample at current position.  They will be
+   sorted ascending by ict.indel_itr field */
 void
 pileup_indel_stats(unsigned s, struct indel_count **cts, unsigned *n_cts);
 
 /* produce pileup strings from current position for sample s,
    storing in call and qual, respectively */
-void pileup_strings(unsigned s, struct managed_buf *call, struct managed_buf *qual);
+void
+pileup_strings(unsigned s, struct managed_buf *call, struct managed_buf *qual);
 
 
 /* advance tls.cur_pos to next position for which at least one sample
@@ -127,6 +134,9 @@ struct pileup_data {
 };
 
 
+void
+free_pileup_data(struct pileup_data *pd);
+
 /* produce pileup data (calls, quals, and read depths) from current
    position for sample s */
 void
@@ -135,7 +145,8 @@ pileup_current_data(unsigned s, struct pileup_data *pd);
 
 /* clear statistics that are no longer needed. call this function
    after next_base() and next_indel() return 1. */
-void pileup_clear_finished_stats();
+void
+pileup_clear_finished_stats();
 
 
 #endif /* _BATCH_PILEUP_H */

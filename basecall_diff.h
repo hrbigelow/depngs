@@ -5,27 +5,9 @@
 
 #include "defs.h"
 #include "cache.h"
-// #include "pileup_tools.h"
-
-/* #include "binomial_est.h" */
-/* #include "ordering.h" */
 #include "thread_queue.h"
 #include "dirichlet_diff_cache.h"
-
-/* instantiate one of these for each thread and each sample.  holds
-   the information for the locus currently being processed in this
-   thread and sample. */
-/*
-struct locus_sampling
-{
-    PileupSummary locus;
-    unsigned char is_next;
-    unsigned char confirmed_changed;
-    struct distrib_points distp;
-    char *current, *end;
-    pair_ordering locus_ord;
-};
-*/
+#include "batch_pileup.h"
 
 void dist_worker_init(double _post_confidence, 
                       double _min_dirichlet_dist,
@@ -53,12 +35,35 @@ dist_worker_tq_init(const char *query_range_file,
 void dist_worker_tq_free();
 
 
+/* caches locus-specific summary data for an individual sample, so
+   that it can be re-used in multiple pairings */
 struct locus_data {
-    unsigned char has_data;
     unsigned char confirmed_changed;
+    struct {
+        unsigned char distp: 1;
+        unsigned char base_ct: 1;
+        unsigned char bqs_ct: 1;
+        unsigned char indel_ct: 1;
+        unsigned char sample_data: 1;
+    } init; /* if these flags are set, means the following fields are
+               initialized */
+
     struct distrib_points distp;
+    struct base_count base_ct;
+    struct bqs_count *bqs_ct;
+    unsigned n_bqs_ct;
+    struct indel_count *indel_ct;
+    unsigned n_indel_ct;
+    struct pileup_data sample_data;
 };
 
+
+void
+reset_locus_data(struct locus_data *ld);
+
+
+void
+free_locus_data(struct locus_data *ld);
 
 
 /* there will be one of these instantiated for each thread.  Each of
@@ -78,7 +83,7 @@ struct dist_worker_input
         unsigned total, cacheable, cache_was_set;
     } metrics;
 
-    struct locus_data pseudo_sample, *lslist;
+    struct locus_data pseudo_sample, *ldat;
     struct pair_dist_stats *pair_stats;
     gsl_rng *randgen;
     double *square_dist_buf; /* holds squares of distances for distance calculation */

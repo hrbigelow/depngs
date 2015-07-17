@@ -394,6 +394,21 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
 }
 
 
+void
+free_pileup_data(struct pileup_data *pd)
+{
+    if (pd->calls.buf != NULL) {
+        free(pd->calls.buf);
+        pd->calls.alloc = 0;
+    }
+    if (pd->quals.buf != NULL)
+    {
+        free(pd->quals.buf);
+        pd->quals.alloc = 0;
+    }
+}
+
+
 
 /* traverse b, tallying the match blocks into ts->pbqt_hash, and the
    indels into ts->indel_ct_hash and tls.indel_hash as necessary */
@@ -599,12 +614,14 @@ make_p_array(unsigned s)
     tls.ts[s].base_end = ary + i;
 }
 
-static int pos_indel_count_less(struct pos_indel_count a, struct pos_indel_count b)
+static int pos_iter_indel_count_less(struct pos_indel_count a, struct pos_indel_count b)
 {
-    return less_contig_pos(a.cpos, b.cpos);
+    return less_contig_pos(a.cpos, b.cpos)
+        || (equal_contig_pos(a.cpos, b.cpos)
+            && a.ict.indel_itr < b.ict.indel_itr);
 }
 
-KSORT_INIT(pi_sort, struct pos_indel_count, pos_indel_count_less);
+KSORT_INIT(pi_sort, struct pos_indel_count, pos_itr_indel_count_less);
 
 
 /* create a sorted array from sample s's indel_hash */
