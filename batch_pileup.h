@@ -2,10 +2,10 @@
 #define _BATCH_PILEUP_H
 
 /*
-
   Initialization:
   
-  1. Call batch_pileup_init() and reference_seq_init().
+  1. Call batch_pileup_thread_init() once for each thread.  Call
+     batch_pileup_init() once for the entire program.
   
   Use:
   
@@ -31,11 +31,22 @@
   
  */
 #include <stdint.h>
+#include "htslib/sam.h"
 #include "khash.h"
 #include "cache.h"
+#include "compat_util.h"
+
+struct indel_seq {
+    char is_ins;
+    char seq[FLEX_ARRAY]; /* zero-terminated */
+};
+
 
 struct base_count {
-    unsigned ct[4];
+    unsigned ct_filt[4]; /* # CIGAR match reads by base call, with
+                              qual >= min_quality_score */
+    unsigned n_match_lo_q; /* # CIGAR match reads with qual < min_quality_score */
+    unsigned n_match_hi_q; /* # CIGAR match reads with qual >= min_quality_score */
 };
 
 
@@ -52,6 +63,11 @@ struct indel_count {
 };
 
 
+struct indel_pair_count {
+    unsigned indel_id; /* can be used to find the indel */
+    unsigned count[2];
+};
+
 /* called once for each thread when starting to use the batch_pileup
    functionality. */
 void
@@ -62,11 +78,15 @@ batch_pileup_thread_init(unsigned n_samples);
 void
 batch_pileup_thread_free();
 
-/* called once at start of program */
+/* call once at start of program. uses bam hdr as a representative
+   to define the set of all contigs, retrieve each one from fa_file.
+   there must also be a fasta index file named as <fa_file>.fai.
+   unrelated, set the static min_quality_score to min_qual */
 void
-reference_seq_init(char *fasta_file);
+batch_pileup_init(const bam_hdr_t *hdr, const char *fasta_file, unsigned min_qual);
+
 void
-reference_seq_free();
+batch_pileup_free();
 
 
 /* perform entire tally phase, for basecalls and for indels for one
@@ -82,10 +102,11 @@ void
 summarize_pileup_stats(unsigned s);
 
 
-/* provide basecall stats for a sample at current position, or the
-   null statistic. */
+/* return an initialized base_count structure for sample s at the
+   current position.  see 'struct base_count' for details. */
 struct base_count
 pileup_basecall_stats(unsigned s);
+
 
 /* provide (b,q,s) stats for a sample at current position.  *cts is
    reallocated as necessary. *n_cts set to number of distinct stats
@@ -97,6 +118,20 @@ pileup_bqs_stats(unsigned s, struct bqs_count **cts, unsigned *n_cts);
    sorted ascending by ict.indel_itr field */
 void
 pileup_indel_stats(unsigned s, struct indel_count **cts, unsigned *n_cts);
+
+/* provide pairwise indel stats.  reallocates *pair_cts as
+   necessary */
+void
+pileup_pair_indel_stats(struct indel_count *cts1, unsigned n_cts1,
+                        struct indel_count *cts2, unsigned n_cts2,
+                        struct indel_pair_count **pair_cts, unsigned *n_pair_cts);
+
+
+/* populate and possibly re-allocate indel with a copy of the indel
+   identified by indel_id.  caller must free *indel */
+void
+pileup_get_indel(unsigned indel_id, struct indel_seq **indel);
+
 
 /* produce pileup strings from current position for sample s,
    storing in call and qual, respectively */
@@ -126,11 +161,15 @@ void
 pileup_current_info(struct pileup_locus_info *pli);
 
 
+/* description of reads data at a single-base locus position.  for non
+   sample data-dependent information, see pileup_locus_info. */
 struct pileup_data {
     struct managed_buf calls, quals;
-    unsigned read_depth; /* total read depth */
-    unsigned used_read_depth; /* read depth used (due to above-quality
-                                 threshold) */
+    unsigned n_match_lo_q; /* # reads with CIGAR match state and qual
+                                   < min_quality_score */
+    unsigned n_match_hi_q; /* # reads with CIGAR match state and qual
+                                   >= min_quality_score */
+    unsigned n_indel; /* # reads with CIGAR indel state */
 };
 
 

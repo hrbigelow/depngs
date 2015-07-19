@@ -567,7 +567,8 @@ bam_reader_init(const char *bam_file,
                 struct bam_stats *bs)
 {
     bs->bgzf = bgzf_open(bam_file, "r");
-    bs->idx = bam_idx_load(bam_index_file);
+    bs->idx = bam_index_load(bam_index_file);
+    bs->hdr = bam_hdr_read(bs->bgzf);
     bs->chunks = NULL;
     bs->n_chunks = 0;
 }
@@ -577,6 +578,7 @@ int
 bam_reader_free(struct bam_stats *bs)
 {
     hts_idx_destroy(bs->idx);
+    bam_hdr_destroy(bs->hdr);
     bgzf_close(bs->bgzf);
     free(bs->chunks);
 }

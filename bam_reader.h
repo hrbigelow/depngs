@@ -16,6 +16,7 @@
    bam_reader and bam_scanner.  */
 struct bam_stats {
     hts_idx_t *idx;
+    bam_hdr_t *hdr;
     BGZF *bgzf;
     hts_pair64_t *chunks;
     unsigned n_chunks;

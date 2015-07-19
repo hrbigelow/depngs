@@ -188,11 +188,9 @@ int main_dist(int argc, char **argv)
     char contig[1024];
     unsigned index;
     FILE *contig_order_fh = open_if_present(contig_order_file, "r");
-    while (! feof(contig_order_fh))
-    {
+    while (! feof(contig_order_fh)) {
         int n = fscanf(contig_order_fh, "%s\t%u\n", contig, &index);
-        if (n != 2)
-        {
+        if (n != 2) {
             fprintf(stderr, "Error: contig order file %s doesn't have the proper format\n",
                     contig_order_file);
             exit(1);

@@ -316,11 +316,14 @@ Name of the contig or chromosome of this locus
 Position (ones-based) of this locus on the contig
 .IP <reference_base>
 Nucleotide of the reference genome at this locus
-.IP <read_depth>
-Total depth-of-coverage at this locus
-.IP <effective_depth>
-Depth-of-coverage at this locus for bases whose quality codes are
-above \fBmin_quality_score\fP.
+.IP <match_depth_hi_q>
+Total number of reads with CIGAR match state and qual >=
+\fBmin_quality_score\fP at this locus
+.IP <match_depth_lo_q>
+Total number of reads with CIGAR match state and qual <
+\fBmin_quality_score\fP at this locus
+.IP <indel_depth>
+Number of reads with an indel state at this locus
 .IP <inferred_base>
 The hypothesis base whose composition is estimated by the
 quantiles. A '+' is supplied for the summary line.
@@ -497,6 +500,8 @@ The label for the second sample in the pair, as specified in
 \fBsamples.rdb\fP
 .IP <contig_name>
 Name of the chromosome or contig for this locus
+.IP <refbase>
+Base of the reference at this locus
 .IP <position>
 Position on the contig of this locus (ones-based)
 .IP <quantile1_value>
