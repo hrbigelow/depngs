@@ -134,13 +134,11 @@ static struct refseq {
 
 static unsigned min_quality_score;
 
-void batch_pileup_init(const bam_hdr_t *hdr,
-                       const char *fa_file,
-                       unsigned min_qual)
+
+/* initialize all program-wide static data (refseq and
+   min_quality_score) */
+void batch_pileup_init(const char *fa_file, unsigned min_qual)
 {
-    unsigned t;
-    refseq.n_contig = hdr->n_targets;
-    refseq.contig = malloc(refseq.n_contig * sizeof(refseq.contig[0]));
     char *fai_file = malloc(strlen(fa_file) + 5);
     strcpy(fai_file, fa_file);
     strcat(fai_file, ".fai");
@@ -151,17 +149,21 @@ void batch_pileup_init(const bam_hdr_t *hdr,
                 __FILE__, __LINE__, fai_file);
         exit(1);
     }
+
+    refseq.n_contig = faidx_nseq(fai);
+    refseq.contig = malloc(refseq.n_contig * sizeof(refseq.contig[0]));
     
     int len;
-    for (t = 0; t != hdr->n_targets; ++t) {
+    unsigned t;
+    for (t = 0; t != refseq.n_contig; ++t) {
+        strcpy(refseq.contig[t].name, faidx_iseq(fai, t));
         refseq.contig[t].seq = 
-            faidx_fetch_seq(fai, hdr->target_name[t], 0, INT_MAX, &len);
+            faidx_fetch_seq(fai, refseq.contig[t].name, 0, INT_MAX, &len);
         if (refseq.contig[t].seq == NULL) {
             fprintf(stderr, "Error: %s:%u: Didn't find sequence %s in fasta file %s\n",
-                    __FILE__, __LINE__, hdr->target_name[t], fa_file);
+                    __FILE__, __LINE__, refseq.contig[t].name, fa_file);
             exit(1);
         }
-        strcpy(refseq.contig[t].name, hdr->target_name[t]);
     }
     fai_destroy(fai);
     free(fai_file);

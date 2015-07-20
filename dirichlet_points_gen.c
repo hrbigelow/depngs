@@ -119,10 +119,11 @@ void gen_reference_points_wrapper(const void *par, POINT *points)
 
 /* calculates the ratio of log likelihood to log dirichlet.  In this,
    the dirichlet prior is a common factor and so cancels.  */
-void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
+void
+calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
 {
     int i;
-    struct points_gen_par *pd = (struct points_gen_par *)par;
+    const struct points_gen_par *pd = par;
     const struct cpd_count 
         *trm = pd->post_counts->stats, 
         *trm_end = trm + pd->post_counts->num_data;

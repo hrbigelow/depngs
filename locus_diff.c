@@ -1,6 +1,9 @@
 #define __STDC_LIMIT_MACROS
 #include <stdint.h>
 
+#include "locus_diff.h"
+#include "pair_dist_stats.h"
+
 #include "sampling.h"
 #include "yepLibrary.h"
 #include "yepCore.h"
@@ -11,18 +14,16 @@
 #include <pthread.h>
 #include <assert.h>
 
-#include "basecall_diff.h"
 #include "bam_reader.h"
 #include "batch_pileup.h"
 #include "khash.h"
-#include "dist_aux.h"
+#include "bam_sample_info.h"
 #include "common_tools.h"
 #include "locus.h"
 #include "chunk_strategy.h"
 #include "geometry.h"
 #include "dirichlet_points_gen.h"
-#include "indel_diff.h"
-#include "pair_stats.h"
+
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -31,15 +32,6 @@ static double posterior_confidence;
 static double min_dirichlet_dist;
 static unsigned max_sample_points;
 static double indel_alpha_prior;
-
-#define PSEUDO_SAMPLE -1
-
-/* describes all pairs of samples */
-static struct sample_pairs sample_pairs;
-
-
-/* attributes intrinsic to one sample */
-static struct sample_attrs sample_attrs;
 
 static struct {
     unsigned do_print_pileup;
@@ -54,15 +46,18 @@ static struct {
     struct pair_ordering_range *ranges;
     unsigned n_ranges;
     unsigned n_threads;
-    struct dist_worker_offload_par offload_par;
+    struct locus_diff_offload_par offload_par;
 } thread_params;
 
 
-static __thread struct dist_worker_input tls_dw;
+static __thread struct locus_diff_input tls_dw;
 
 
 static double quantiles[MAX_NUM_QUANTILES];
 static unsigned n_quantiles;
+
+
+
 
 
 /* call when we advance to a new locus */
@@ -90,41 +85,39 @@ free_locus_data(struct locus_data *ld)
 }
 
 
-
-void dist_worker_init(double _post_confidence, 
-                      double _min_dirichlet_dist,
-                      unsigned _max_sample_points,
-                      const char *samples_file,
-                      const char *sample_pairs_file,
-                      const char *fastq_type,
-                      const char *quantiles_string,
-                      unsigned do_dist,
-                      unsigned do_comp,
-                      unsigned do_indel,
-                      unsigned do_print_pileup)
+void locus_diff_init(double _post_confidence, 
+                     double _min_dirichlet_dist,
+                     unsigned _max_sample_points,
+                     const char *samples_file,
+                     const char *sample_pairs_file,
+                     const char *fasta_file,
+                     unsigned min_quality_score,
+                     const char *quantiles_string,
+                     unsigned do_dist,
+                     unsigned do_comp,
+                     unsigned do_indel,
+                     unsigned do_print_pileup)
 {
     clock_gettime(CLOCK_REALTIME, &start_time);
     if (_post_confidence < 0.8 || _post_confidence > 0.999999) {
         fprintf(stderr,
-                "Error: dist_worker_init: posterior confidence of %g is a bad value\n",
+                "Error: locus_diff_init: posterior confidence of %g is a bad value\n",
                 _post_confidence);
         exit(1);
     }
     posterior_confidence = _post_confidence;
     if (_min_dirichlet_dist <= 0 || _min_dirichlet_dist >= 1) {
         fprintf(stderr,
-                "Error: dist_worker_init: min_dirichlet_dist of %g is a bad value.\n"
+                "Error: locus_diff_init: min_dirichlet_dist of %g is a bad value.\n"
                 "Should be in [0, 1]\n", _min_dirichlet_dist);
         exit(1);
     }
     min_dirichlet_dist = _min_dirichlet_dist;
     max_sample_points = _max_sample_points;
 
-    init_dist_aux();
-    sample_pairs = init_sample_pairs(sample_pairs_file);
-    sample_attrs = init_sample_attributes(samples_file);
-    free_dist_aux();
+    bam_sample_info_init(samples_file, sample_pairs_file);
 
+    batch_pileup_init(fasta_file, min_quality_score);
 
     parse_csv_line(quantiles_string, quantiles, &n_quantiles);
 
@@ -135,15 +128,10 @@ void dist_worker_init(double _post_confidence,
 }
 
 
-void dist_worker_free()
+void locus_diff_free()
 {
-    free(sample_pairs.p);
-    unsigned s;
-    for (s = 0; s != sample_attrs.n; ++s) {
-        free(sample_attrs.atts[s].file);
-        fclose(sample_attrs.atts[s].fh);
-    }
-    free(sample_attrs.atts);
+    bam_sample_info_free();
+    batch_pileup_free();
 }
 
 
@@ -151,9 +139,9 @@ void dist_worker_free()
 void dist_on_create()
 {
     tls_dw.randgen = gsl_rng_alloc(gsl_rng_taus);
-    tls_dw.ldat = malloc(sample_attrs.n * sizeof(struct locus_data));
+    tls_dw.ldat = malloc(bam_samples.n * sizeof(struct locus_data));
 
-    tls_dw.pair_stats = calloc(sample_pairs.n, sizeof(struct pair_dist_stats));
+    tls_dw.pair_stats = calloc(bam_sample_pairs.n, sizeof(struct pair_dist_stats));
     tls_dw.square_dist_buf = malloc(sizeof(double) * max_sample_points);
     tls_dw.weights_buf = malloc(sizeof(double) * max_sample_points);
     tls_dw.do_print_progress = 1; /* !!! how to choose which thread prints progress? */
@@ -180,7 +168,7 @@ void dist_on_exit()
 
 #define NUM_EXTRA_BUFS_PER_THREAD 500
 
-struct thread_queue *dist_worker_tq_init(const char *query_range_file,
+struct thread_queue *locus_diff_tq_init(const char *query_range_file,
                                          unsigned n_threads,
                                          unsigned n_readers,
                                          unsigned long max_input_mem,
@@ -190,12 +178,6 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
 {
     thread_params.n_threads = n_threads;
 
-    thread_params.reader_buf = 
-        malloc(n_readers * sizeof(struct bam_reader_par));
-
-    thread_params.reader_par = (void **)malloc(n_readers * sizeof(void *));
-
-    unsigned r;
     unsigned long n_total_loci;
     if (query_range_file) {
         thread_params.ranges = 
@@ -217,29 +199,33 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
         n_total_loci = ULONG_MAX;
     }
 
-    unsigned s;
+    unsigned r, s;
+    thread_params.reader_buf = 
+        malloc(n_readers * sizeof(struct bam_reader_par));
+
+    thread_params.reader_par = (void **)malloc(n_readers * sizeof(void *));
+
     for (r = 0; r != n_readers; ++r) {
         thread_params.reader_buf[r] = (struct bam_reader_par){
-            malloc(sample_attrs.n * sizeof(struct bam_stats)),
-            sample_attrs.n,
+            malloc(bam_samples.n * sizeof(struct bam_stats)),
+            bam_samples.n,
             
             thread_params.ranges, 
             thread_params.ranges + thread_params.n_ranges
         };
-        for (s = 0; s != sample_attrs.n; ++s) {
-            thread_params.reader_buf[r].s[s].idx = NULL/* parse BAM index */;
-            thread_params.reader_buf[r].s[s].bgzf = NULL/* open bam file */;
-        }
+        for (s = 0; s != bam_samples.n; ++s)
+            bam_stats_init(bam_samples.m[s].bam_file, 
+                           &thread_params.reader_buf[r].m[s]);
+        
         thread_params.reader_par[r] = &thread_params.reader_buf[r];
     }
 
     if (query_range_file)
-        cs_init_by_range(n_total_loci, sample_attrs.n);
+        cs_init_by_range(n_total_loci, bam_samples.n);
 
-    else
-    {
-        cs_init_whole_file(sample_attrs.n);
-        /* for (s = 0; s != sample_attrs.n; ++s) */
+    else {
+        cs_init_whole_file(bam_samples.n);
+        /* for (s = 0; s != bam_samples.n; ++s) */
         /*     cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset); */
     }
 
@@ -252,7 +238,7 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
                     DEFAULT_BYTES_PER_LOCUS);
 
     thread_params.offload_par = 
-        (struct dist_worker_offload_par){ dist_fh, comp_fh, indel_fh };
+        (struct locus_diff_offload_par){ dist_fh, comp_fh, indel_fh };
 
     /* To avoid a stall, n_extra / n_threads should be greater than
        Max(work chunk time) / Avg(work chunk time). */
@@ -264,25 +250,25 @@ struct thread_queue *dist_worker_tq_init(const char *query_range_file,
 
     struct thread_queue *tqueue =
         thread_queue_init(reader, thread_params.reader_par,
-                          dist_worker,
-                          dist_offload, &thread_params.offload_par,
+                          locus_diff_worker,
+                          locus_diff_offload, &thread_params.offload_par,
                           dist_on_create,
                           dist_on_exit,
-                          n_threads, n_extra, n_readers, sample_attrs.n,
+                          n_threads, n_extra, n_readers, bam_samples.n,
                           n_output_files, max_input_mem);
 
     return tqueue;
 }
 
 
-void dist_worker_tq_free()
+void locus_diff_tq_free()
 {
     unsigned r, s;
     for (r = 0; r != thread_params.n_readers; ++r) {
-        for (s = 0; sample_attrs.n; ++s)
-            bam_reader_par_free(&thread_params.reader_buf[r].s[s]);
+        for (s = 0; bam_samples.n; ++s)
+            bam_reader_par_free(&thread_params.reader_buf[r].m[s]);
 
-        free(thread_params.reader_buf[r].s);
+        free(thread_params.reader_buf[r].m);
     }
 
     free(thread_params.reader_buf);
@@ -402,8 +388,8 @@ void print_distance_quantiles(const char *contig,
                               double *dist_quantile_values,
                               struct managed_buf *buf)
 {
-    int s[] = { sample_pairs.p[pair_index].s1,
-                sample_pairs.p[pair_index].s2 };
+    int s[] = { bam_sample_pairs.m[pair_index].s1,
+                bam_sample_pairs.m[pair_index].s2 };
 
     unsigned space = (2 * MAX_LABEL_LEN) + 3 + 100 + (10 * MAX_NUM_QUANTILES);
 
@@ -412,8 +398,8 @@ void print_distance_quantiles(const char *contig,
     buf->size +=
         sprintf(buf->buf + buf->size, 
                 "%s\t%s\t%s\t%Zu\t%c", 
-                sample_attrs.atts[s[0]].label,
-                s[1] == PSEUDO_SAMPLE ? "REF" : sample_attrs.atts[s[1]].label,
+                bam_samples.m[s[0]].label,
+                s[1] == PSEUDO_SAMPLE ? "REF" : bam_samples.m[s[1]].label,
                 contig,
                 position,
                 ref_base);
@@ -470,8 +456,8 @@ distance_quantiles_aux(struct managed_buf *out_buf)
     struct locus_data *ld[2];
     unsigned pi, i;
 
-    for (pi = 0; pi != sample_pairs.n; ++pi) {
-        int sp[] = { sample_pairs.p[pi].s1, sample_pairs.p[pi].s2 };
+    for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
+        int sp[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
 
         ld[0] = &tls_dw.ldat[sp[0]];
         ld[1] = sp[1] == PSEUDO_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[sp[1]];
@@ -606,8 +592,8 @@ void print_indel_distance_quantiles(size_t pair_index,
                                     size_t n_events,
                                     struct managed_buf *mb)
 {
-    int s1 = sample_pairs.p[pair_index].s1,
-        s2 = sample_pairs.p[pair_index].s2;
+    int s1 = bam_sample_pairs.m[pair_index].s1,
+        s2 = bam_sample_pairs.m[pair_index].s2;
 
     struct locus_data *ld[] = {
         &tls_dw.ldat[s1],
@@ -623,8 +609,8 @@ void print_indel_distance_quantiles(size_t pair_index,
 
     mb->size += sprintf(mb->buf + mb->size, 
                         "%s\t%s\t%s\t%c\t%u", 
-                        sample_attrs.atts[s1].label,
-                        s2 == PSEUDO_SAMPLE ? "REF" : sample_attrs.atts[s2].label,
+                        bam_samples.m[s1].label,
+                        s2 == PSEUDO_SAMPLE ? "REF" : bam_samples.m[s2].label,
                         pli.refname, pli.refbase, pli.pos);
     
     for (size_t q = 0; q != n_quantiles; ++q)
@@ -693,8 +679,8 @@ void indel_distance_quantiles_aux(struct managed_buf *buf)
 {
     struct indel_pair_count *indel_pairs = NULL;
 
-    for (size_t pi = 0; pi != sample_pairs.n; ++pi) {
-        int s[] = { sample_pairs.p[pi].s1, sample_pairs.p[pi].s2 };
+    for (size_t pi = 0; pi != bam_sample_pairs.n; ++pi) {
+        int s[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
         
         struct locus_data *ld[] = {
             &tls_dw.ldat[s[0]], 
@@ -733,7 +719,7 @@ void indel_distance_quantiles_aux(struct managed_buf *buf)
 
         /* in order to compare the two dirichlet posteriors, we
            consider that the CIGAR 'match' event exists if either one
-           of the samples has non-zero counts.  If both are zero,
+           of the bam_samples has non-zero counts.  If both are zero,
            though, we don't include the CIGAR match event in the
            dirichlet's at all. */
         unsigned has_match_reads = (n_match[0] != 0 || n_match[1] != 0);
@@ -809,7 +795,7 @@ void comp_quantiles_aux(struct managed_buf *comp_buf)
     COMP_QV comp_quantile_values;
     double comp_means[NUM_NUCS];
 
-    for (s = 0; s != sample_attrs.n; ++s) {
+    for (s = 0; s != bam_samples.n; ++s) {
         struct locus_data *ld = &tls_dw.ldat[s];
         
         if (ld->confirmed_changed) {
@@ -837,7 +823,7 @@ void comp_quantiles_aux(struct managed_buf *comp_buf)
                 print_basecomp_quantiles(comp_quantile_values,
                                          comp_means,
                                          n_quantiles,
-                                         sample_attrs.atts[s].label,
+                                         bam_samples.m[s].label,
                                          &ploc,
                                          &ld->sample_data,
                                          comp_buf);
@@ -854,11 +840,11 @@ void comp_quantiles_aux(struct managed_buf *comp_buf)
    field points to the current line being processed. 'gs' is a single
    index indicating the sample with the lowest 'current' among all of
    them.  it is this position that must be fully processed before any
-   sample_attrs may advance.
+   bam_samples may advance.
 */
 void
-dist_worker(const struct managed_buf *in_bufs,
-            struct managed_buf *out_bufs)
+locus_diff_worker(const struct managed_buf *in_bufs,
+                  struct managed_buf *out_bufs)
 {
     struct timespec worker_start_time;
     clock_gettime(CLOCK_REALTIME, &worker_start_time);
@@ -874,20 +860,20 @@ dist_worker(const struct managed_buf *in_bufs,
 
     struct managed_buf bam = { NULL, 0, 0 };
     unsigned s;
-    for (s = 0; s != sample_attrs.n; ++s) {
+    for (s = 0; s != bam_samples.n; ++s) {
         bam_inflate(&in_bufs[s], &bam);
         tally_pileup_stats(bam, s);
     }
 
     /* */
-    for (s = 0; s != sample_attrs.n; ++s)
+    for (s = 0; s != bam_samples.n; ++s)
         summarize_pileup_stats(s);
 
     free(bam.buf);
 
     /* zero out the pair_stats */
     unsigned pi;
-    for (pi = 0; pi != sample_pairs.n; ++pi)
+    for (pi = 0; pi != bam_sample_pairs.n; ++pi)
         memset(&tls_dw.pair_stats[pi], 0, sizeof(tls_dw.pair_stats[0]));
 
     
@@ -911,7 +897,7 @@ dist_worker(const struct managed_buf *in_bufs,
             comp_quantiles_aux(comp_buf);
 
         more_loci = pileup_next_pos();
-        for (s = 0; s != sample_attrs.n; ++s)
+        for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);
 
     }   
@@ -960,7 +946,7 @@ dist_worker(const struct managed_buf *in_bufs,
     
 void dist_offload(void *par, const struct managed_buf *bufs)
 {
-    struct dist_worker_offload_par *ol = (struct dist_worker_offload_par *)par;
+    struct locus_diff_offload_par *ol = (struct locus_diff_offload_par *)par;
     unsigned i = 0;
     if (ol->dist_fh) {
         fwrite(bufs[i].buf, 1, bufs[i].size, ol->dist_fh), i++;

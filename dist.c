@@ -1,23 +1,20 @@
-#include "tools.h"
-#include "usage_strings.h"
-#include "defs.h"
-#include "dist_worker.h"
-#include "pileup_tools.h"
+#include <string.h>
 
-extern "C" {
-#include "dict.h"
-#include "range_line_reader.h"
+#include "common_tools.h"
+#include "defs.h"
+#include "locus_diff.h"
+#include "bam_sample_info.h"
+
 #include "locus.h"
 #include "dirichlet_points_gen.h"
-#include "pair_stats.h"
-}
+
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 
 int dist_usage()
 {
     fprintf(stderr, 
-            "\nUsage: dep dist [options] samples.rdb sample_pairings.rdb contig_order.rdb\n" 
+            "\nUsage: dep dist [options] samples.rdb sample_pairings.rdb\n" 
             "Options:\n\n"
             "FILES\n"
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
@@ -35,7 +32,7 @@ int dist_usage()
             "\n"
             "OTHER\n"
             "-q INT      minimum quality score to include bases as evidence [5]\n"
-            "-F STRING   Fastq offset type if known (one of Sanger, Solexa, Illumina13, Illumina15) [None]\n"
+            "-F STRING   reference fasta file. (<fasta>.fai index must exist) [blank]\n"
             "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
             "-t INT      number of threads to use [1]\n"
             "-R INT      number of readers to use [2] (See NOTE)\n"
@@ -52,10 +49,6 @@ int dist_usage()
             "with those in samples.rdb.  The special <sample_id> \"REF\" may be"
             "supplied as the second sample in the pair.  This indicates to do comparisons\n"
             "with a conceptual sample that is identical to the reference base at every locus.\n"
-            "\n"
-            "contig_order.rdb has lines of <contig><tab><ordering>\n"
-            "It must be consistent and complete with the orderings of the contigs mentioned in\n"
-            "all pileup input files\n"
             "\n"
             "On machines where 2 or more concurrent reads achieve higher\n"
             "throughput than one read, set -R (number of readers) accordingly\n"
@@ -116,11 +109,12 @@ int main_dist(int argc, char **argv)
     const char *dist_file = NULL;
     const char *comp_file = NULL;
     const char *indel_dist_file = NULL;
-    const char *fastq_type = NULL;
+    const char *fasta_file = NULL;
     const char *summary_stats_file = NULL;
     const char *query_range_file = NULL;
 
     double prior_alpha = 0.1;
+#define SQRT2 1.41421356237309504880
 
     char c;
     while ((c = getopt(argc, argv, "d:c:i:r:x:t:R:f:y:X:Z:p:t:m:q:F:Q:g")) >= 0)
@@ -136,7 +130,7 @@ int main_dist(int argc, char **argv)
         case 'f': max_sample_points = 
                 (unsigned)strtod_errmsg(optarg, "-f (max_sample_points)"); break;
         case 'y': min_dirichlet_dist = 
-                sqrt(2.0) * strtod_errmsg(optarg, "-y (min_dirichlet_dist)"); break;
+                SQRT2 * strtod_errmsg(optarg, "-y (min_dirichlet_dist)"); break;
         case 'X': post_confidence = strtod_errmsg(optarg, "-X (post_confidence)"); break;
         case 'Z': beta_confidence = strtod_errmsg(optarg, "-Z (beta_confidence)"); break;
         case 'p': prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
@@ -145,22 +139,19 @@ int main_dist(int argc, char **argv)
         case 'R': n_readers = strtol_errmsg(optarg, "-R (n_readers)"); break;
         case 'm': max_mem = (size_t)strtod_errmsg(optarg, "-m (max_mem)"); break;
         case 'q': min_quality_score = strtol_errmsg(optarg, "-q (min_quality_score)"); break;
-        case 'F': fastq_type = optarg; break;
+        case 'F': fasta_file = optarg; break;
         case 'Q': quantiles_string = optarg; break;
         case 'g': print_pileup_fields = 1; break;
         default: return dist_usage(); break;
         }
     }
-    if (argc - optind != 3) return dist_usage();
-
-    pileup_init(min_quality_score);
+    if (argc - optind != 2) return dist_usage();
 
     /* This adjustment makes max_sample_points a multiple of GEN_POINTS_BATCH */
     max_sample_points += GEN_POINTS_BATCH - (max_sample_points % GEN_POINTS_BATCH);
 
     const char *samples_file = argv[optind];
     const char *sample_pairs_file = argv[optind + 1];
-    const char *contig_order_file = argv[optind + 2];
 
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("\n"); /* So progress messages don't interfere with shell prompt. */
@@ -178,28 +169,11 @@ int main_dist(int argc, char **argv)
     FILE *comp_fh = open_if_present(comp_file, "w");
     FILE *indel_fh = open_if_present(indel_dist_file, "w");
 
-    dist_worker_init(post_confidence, min_dirichlet_dist, max_sample_points,
-                     samples_file, sample_pairs_file, fastq_type,
-                     quantiles_string,
-                     (dist_fh != NULL), (comp_fh != NULL), (indel_fh != NULL),
-                     print_pileup_fields);
-
-    /* 0. parse contig order file */
-    char contig[1024];
-    unsigned index;
-    FILE *contig_order_fh = open_if_present(contig_order_file, "r");
-    while (! feof(contig_order_fh)) {
-        int n = fscanf(contig_order_fh, "%s\t%u\n", contig, &index);
-        if (n != 2) {
-            fprintf(stderr, "Error: contig order file %s doesn't have the proper format\n",
-                    contig_order_file);
-            exit(1);
-        }
-        dict_add_item(contig, index);
-    }
-    fclose(contig_order_fh);
-    
-    dict_build();
+    locus_diff_init(post_confidence, min_dirichlet_dist, max_sample_points,
+                    samples_file, sample_pairs_file, fasta_file,
+                    min_quality_score, quantiles_string,
+                    (dist_fh != NULL), (comp_fh != NULL), (indel_fh != NULL),
+                    print_pileup_fields);
 
 #define BYTES_PER_POINT sizeof(double) * NUM_NUCS
 
@@ -242,9 +216,9 @@ int main_dist(int argc, char **argv)
     set_points_hash_flag(0);
 
     struct thread_queue *tqueue =
-        dist_worker_tq_init(query_range_file, 
-                            n_threads, n_readers, max_input_mem,
-                            dist_fh, comp_fh, indel_fh);
+        locus_diff_tq_init(query_range_file, 
+                           n_threads, n_readers, max_input_mem,
+                           dist_fh, comp_fh, indel_fh);
 
     printf("Starting input processing.\n");
     thread_queue_run(tqueue);
@@ -252,15 +226,16 @@ int main_dist(int argc, char **argv)
 
     print_pair_stats(summary_stats_file);
 
-    dist_worker_tq_free();
+    locus_diff_tq_free();
 
     if (dist_fh) fclose(dist_fh);
     if (comp_fh) fclose(comp_fh);
     if (indel_fh) fclose(indel_fh);
 
-    dist_worker_free();
+    locus_diff_free();
     dirichlet_diff_free();
     binomial_est_free();
+    batch_pileup_free();
 
     printf("Finished.\n");
 

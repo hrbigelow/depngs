@@ -1,6 +1,8 @@
 #ifndef _COMMON_TOOLS_H
 #define _COMMON_TOOLS_H
 
+#include <stdio.h>
+
 FILE *open_if_present(const char *file, const char *mode);
 int close_if_present(FILE *fh);
 

@@ -78,12 +78,10 @@ batch_pileup_thread_init(unsigned n_samples);
 void
 batch_pileup_thread_free();
 
-/* call once at start of program. uses bam hdr as a representative
-   to define the set of all contigs, retrieve each one from fa_file.
-   there must also be a fasta index file named as <fa_file>.fai.
-   unrelated, set the static min_quality_score to min_qual */
+/* initialize all program-wide static data (refseq and
+   min_quality_score) */
 void
-batch_pileup_init(const bam_hdr_t *hdr, const char *fasta_file, unsigned min_qual);
+batch_pileup_init(const char *fasta_file, unsigned min_qual);
 
 void
 batch_pileup_free();

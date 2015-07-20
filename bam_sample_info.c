@@ -1,37 +1,61 @@
 /* Auxiliary helper functions for the dist program */
 
-#include "dist_aux.h"
+#include <pthread.h>
+
+#include "binomial_est.h"
+#include "bam_sample_info.h"
 #include "common_tools.h"
 #include "cache.h"
 #include "khash.h"
 
 #include <assert.h>
 
-KHASH_MAP_INIT_STR(remap, int)
+struct bam_sample_pair_info bam_sample_pairs;
 
-static khash_t(remap) *sample_map;
-                      
-void init_dist_aux()
-{
-    sample_map = kh_init(remap);
-}
+struct bam_sample_info bam_samples;
 
-void free_dist_aux()
+KHASH_MAP_INIT_STR(remap, int);
+
+
+static void
+init_sample_attributes(const char *samples_file, khash_t(remap) *sample_map);
+
+static void
+init_sample_pairs(const char *pair_file, khash_t(remap) *sample_map);
+
+/* program-wide initialization of sample information */
+void bam_sample_info_init(const char *samples_file, 
+                          const char *sample_pairs_file)
 {
+    khash_t(remap) *sample_map = kh_init(remap);
+    init_sample_pairs(sample_pairs_file, sample_map);
+    init_sample_attributes(samples_file, sample_map);
+    
     khiter_t k;
     for (k = kh_begin(sample_map); k != kh_end(sample_map); ++k)
         if (kh_exist(sample_map, k)) free((char *)kh_key(sample_map, k));
     kh_destroy(remap, sample_map);
 }
 
-struct sample_attrs
-init_sample_attributes(const char *samples_file)
+void bam_sample_info_free()
+{
+    free(bam_sample_pairs.m);
+    unsigned s;
+    for (s = 0; s != bam_samples.n; ++s) {
+        free(bam_samples.m[s].bam_file);
+        fclose(bam_samples.m[s].fh);
+    }
+    free(bam_samples.m);
+
+}
+
+static void
+init_sample_attributes(const char *samples_file, khash_t(remap) *sample_map)
 {
     char jpd[1000], label[1000], pileup[1000];
-    struct sample_attrs attrs;
-    attrs.n = kh_size(sample_map);
+    bam_samples.n = kh_size(sample_map);
     unsigned s, alloc = 0;
-    ALLOC_GROW_TYPED(attrs.atts, attrs.n, alloc);
+    ALLOC_GROW_TYPED(bam_samples.m, bam_samples.n, alloc);
     khiter_t k;
     FILE *samples_fh = open_if_present(samples_file, "r");
     while (! feof(samples_fh))
@@ -40,18 +64,18 @@ init_sample_attributes(const char *samples_file)
         if ((k = kh_get(remap, sample_map, label)) != kh_end(sample_map))
         {
             s = kh_val(sample_map, k);
-            attrs.atts[s].file = strdup(pileup);
-            nucleotide_stats_initialize(jpd, &attrs.atts[s].nuc_stats);
-            if (strlen(label) + 1 > sizeof(attrs.atts[s].label)) 
+            bam_samples.m[s].bam_file = strdup(pileup);
+            nucleotide_stats_initialize(jpd, &bam_samples.m[s].nuc_stats);
+            if (strlen(label) + 1 > sizeof(bam_samples.m[s].label)) 
             {
                 fprintf(stderr, "%s: error: sample label string must be "
                         "less than %Zu characters\n", __func__,
-                        sizeof(attrs.atts[s].label));
+                        sizeof(bam_samples.m[s].label));
                 exit(1);
             }
-            strcpy(attrs.atts[s].label, label);
-            attrs.atts[s].fh = fopen(pileup, "r");
-            if (! attrs.atts[s].fh)
+            strcpy(bam_samples.m[s].label, label);
+            bam_samples.m[s].fh = fopen(pileup, "r");
+            if (! bam_samples.m[s].fh)
             {
                 fprintf(stderr, "%s: error: couldn't open pileup input file %s\n",
                         __func__, pileup);
@@ -60,17 +84,13 @@ init_sample_attributes(const char *samples_file)
         }
     }
     fclose(samples_fh);
-
-    return attrs;
 }
 
 
 /* parse a sample pairs file. */
-struct sample_pairs
-init_sample_pairs(const char *pair_file)
+static void
+init_sample_pairs(const char *pair_file, khash_t(remap) *sample_map)
 {
-    struct sample_pairs spairs;
-
     unsigned idx = 0;
     int ret;
     FILE *sample_pair_fh = open_if_present(pair_file, "r");
@@ -100,16 +120,14 @@ init_sample_pairs(const char *pair_file)
             assert(ret == 0 || ret == 1);
             kh_val(sample_map, k2) = idx++;
         }
-        ALLOC_GROW_TYPED(spairs.p, p + 1, alloc);
-        spairs.p[p].s1 = kh_val(sample_map, k1);
-        spairs.p[p].s2 = kh_val(sample_map, k2);
+        ALLOC_GROW_TYPED(bam_sample_pairs.m, p + 1, alloc);
+        bam_sample_pairs.m[p].s1 = kh_val(sample_map, k1);
+        bam_sample_pairs.m[p].s2 = kh_val(sample_map, k2);
         ++p;
     }
-    spairs.n = p;
+    bam_sample_pairs.n = p;
     fclose(sample_pair_fh);
 
     k1 = kh_get(remap, sample_map, pseudo_key);
     kh_del(remap, sample_map, k1);
-
-    return spairs;
 }

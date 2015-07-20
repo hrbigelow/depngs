@@ -23,8 +23,8 @@ struct bam_stats {
 };
 
 struct bam_reader_par {
-    struct bam_stats *s;
-    unsigned n_s;
+    struct bam_stats *m;
+    unsigned n;
 
     /* set of defined logical ranges */
     struct pair_ordering_range *qbeg, *qend;
@@ -59,8 +59,8 @@ bam_inflate(const struct managed_buf *bgzf,
             struct managed_buf *bam);
 
 /* initialize  */
-int
-bam_reader_par_init(const char *bam_file, struct bam_stats *bs);
+void
+bam_stats_init(const char *bam_file, struct bam_stats *bs);
 
 /* release the resources of this bam_stat */
 int

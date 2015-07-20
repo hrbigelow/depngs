@@ -1,5 +1,5 @@
-#ifndef DIST_WORKER_H
-#define DIST_WORKER_H
+#ifndef LOCUS_DIFF_H
+#define LOCUS_DIFF_H
 
 #include <gsl/gsl_rng.h>
 
@@ -9,30 +9,31 @@
 #include "dirichlet_diff_cache.h"
 #include "batch_pileup.h"
 
-void dist_worker_init(double _post_confidence, 
-                      double _min_dirichlet_dist,
-                      unsigned _max_sample_points,
-                      const char *samples_file,
-                      const char *sample_pairs_file,
-                      const char *fastq_type,
-                      const char *quantiles_string,
-                      unsigned do_dist,
-                      unsigned do_comp,
-                      unsigned do_indel,
-                      unsigned do_print_pileup);
+void locus_diff_init(double _post_confidence, 
+                     double _min_dirichlet_dist,
+                     unsigned _max_sample_points,
+                     const char *samples_file,
+                     const char *sample_pairs_file,
+                     const char *fasta_file,
+                     unsigned min_quality_score,
+                     const char *quantiles_string,
+                     unsigned do_dist,
+                     unsigned do_comp,
+                     unsigned do_indel,
+                     unsigned do_print_pileup);
 
-void dist_worker_free();
+void locus_diff_free();
 
 struct thread_queue *
-dist_worker_tq_init(const char *query_range_file,
-                    unsigned n_threads,
-                    unsigned n_readers,
-                    unsigned long max_input_mem,
-                    FILE *dist_fh,
-                    FILE *comp_fh,
-                    FILE *indel_fh);
+locus_diff_tq_init(const char *query_range_file,
+                   unsigned n_threads,
+                   unsigned n_readers,
+                   unsigned long max_input_mem,
+                   FILE *dist_fh,
+                   FILE *comp_fh,
+                   FILE *indel_fh);
 
-void dist_worker_tq_free();
+void locus_diff_tq_free();
 
 
 /* caches locus-specific summary data for an individual sample, so
@@ -71,7 +72,7 @@ free_locus_data(struct locus_data *ld);
    across different samples.  Since each thread computes a chunk of
    input across all samples, there are sample-specific parameters as
    well, held in sample_attributes. */
-struct dist_worker_input
+struct locus_diff_input
 {
     struct binomial_est_params bep;
     size_t thread_num;
@@ -95,20 +96,22 @@ struct dist_worker_input
 };
 
 
-struct dist_worker_offload_par {
+struct locus_diff_offload_par {
     FILE *dist_fh, *comp_fh, *indel_fh;
 };
 
 /* conforms to thread_queue_worker_t */
 void
-dist_worker(const struct managed_buf *in_bufs,
-            struct managed_buf *out_bufs);
+locus_diff_worker(const struct managed_buf *in_bufs,
+                  struct managed_buf *out_bufs);
 
 /* conforms to thread_queue_offload_t */
-void dist_offload(void *par, const struct managed_buf *bufs);
+void locus_diff_offload(void *par, const struct managed_buf *bufs);
 
 #define PSEUDO_DEPTH 100000
 
+
+
 void print_cache2_histo();
 
-#endif // DIST_WORKER_H
+#endif // LOCUS_DIFF_H

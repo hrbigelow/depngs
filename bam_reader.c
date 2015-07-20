@@ -4,6 +4,7 @@
 
 #include "sdg/kbtree.h"
 #include "sdg/khash.h"
+#include "htslib/sam.h"
 #include "htslib/hts.h"
 #include "htslib/hfile.h"
 
@@ -342,7 +343,8 @@ hts_size_to_range(struct pair_ordering beg,
 }
 
 /* taken from htslib/bgzf.c */
-static inline int unpackInt16(const uint8_t *buffer)
+static inline int
+unpackInt16(const uint8_t *buffer)
 {
     return buffer[0] | buffer[1] << 8;
 }
@@ -362,7 +364,7 @@ void bam_scanner(void *par, unsigned max_bytes)
     do {
         min_wanted_bytes = max_bytes * mul;
         unsigned s;
-        for (s = 0; s != bp->n_idx; ++s)
+        for (s = 0; s != bp->n; ++s)
         {
             tmp_end =
                 hts_size_to_range(cs_stats.pos,
@@ -370,11 +372,11 @@ void bam_scanner(void *par, unsigned max_bytes)
                                   min_wanted_bytes,
                                   bp->qbeg,
                                   bp->qend,
-                                  &bp->idx[s], 
-                                  &bp->chunks[s],
-                                  &bp->n_chunks[s]);
+                                  bp->m[s].idx, 
+                                  &bp->m[s].chunks,
+                                  &bp->m[s].n_chunks);
             min_end = MIN_PAIR_ORD(min_end, tmp_end);
-            tmp_bytes = tally_bgzf_bytes(bp->chunks[s], bp->n_chunks[s]);
+            tmp_bytes = tally_bgzf_bytes(bp->m[s].chunks, bp->m[s].n_chunks);
             min_actual_bytes = MIN(min_actual_bytes, tmp_bytes);
         }
         mul *= STEP_DOWN;
@@ -384,30 +386,13 @@ void bam_scanner(void *par, unsigned max_bytes)
 }
 
 
-/* serialize chunks into buf */
-static size_t write_voffset_chunks(hts_pair64_t *chunks,
-                                   unsigned n_chunks,
-                                   struct managed_buf *buf)
-{
-    buf->size = sizeof(unsigned) + n_chunks * sizeof(hts_pair64_t);
-    ALLOC_GROW(buf->buf, buf->size, buf->alloc);
-    void *bp = buf->buf;
-
-    memcpy(bp, &n_chunks, sizeof(unsigned));
-    bp += sizeof(unsigned);
-    size_t sz = n_chunks * sizeof(chunks[c]);
-    memcpy(bp, &chunks, sz);
-    return sizeof(unsigned) + sz;
-}
-
-
 /* reads the virtual offset ranges serialized in buf.  returns the
    size of information consumed, in bytes */
-static size_t read_voffset_chunks(struct managed_buf *buf,
+static size_t read_voffset_chunks(const struct managed_buf *buf,
                                   hts_pair64_t **chunks,
                                   unsigned *n_chunks)
 {
-    void *bp = buf->buf;
+    const void *bp = buf->buf;
     memcpy(n_chunks, bp, sizeof(*n_chunks));
     bp += sizeof(*n_chunks);
     unsigned sz = *n_chunks * sizeof(*chunks);
@@ -417,75 +402,111 @@ static size_t read_voffset_chunks(struct managed_buf *buf,
 }
 
 
+/* serialize chunks into buf */
+static void
+write_voffset_chunks(hts_pair64_t *chunks,
+                     unsigned n_chunks,
+                     struct managed_buf *buf)
+{
+    buf->size = sizeof(unsigned) + n_chunks * sizeof(hts_pair64_t);
+    ALLOC_GROW(buf->buf, buf->size, buf->alloc);
+    void *bp = buf->buf;
+
+    memcpy(bp, &n_chunks, sizeof(unsigned));
+    bp += sizeof(unsigned);
+    size_t sz = n_chunks * sizeof(chunks[0]);
+    memcpy(bp, &chunks, sz);
+}
+
+
 /* read recorded compressed blocks into bufs. assume bufs has enough
    space for all blocks, plus space for the initial voffset
-   information */
-void bam_reader(void *par, struct managed_buf *bufs)
+   information.  Warning: Does not check that hread calls return the
+   correct number of characters read.  */
+void
+bam_reader(void *par, struct managed_buf *bufs)
 {
     struct bam_reader_par *bp = par;
     unsigned s, c;
     int block_span, bgzf_block_len, remain;
+    ssize_t n_chars_read;
     char *wp;
     
-    for (s = 0; s != bp->n_idx; ++s)
-    {
-        wp = bufs[s].buf;
-        wp += write_voffset_chunks(bp->chunks[s], bp->n_chunks[s], wp);
+    for (s = 0; s != bp->n; ++s) {
+        write_voffset_chunks(bp->m[s].chunks, bp->m[s].n_chunks, &bufs[s]);
+        wp = bufs[s].buf + bufs[s].size;
 
-        hFILE *fp = bp->bgzf[s]->fp;
+        hFILE *fp = bp->m[s].bgzf->fp;
 
-        for (c = 0; c != bp->n_chunks[s]; ++c)
-        {
-            bgzf_seek(bp->bgzf[s], bp->chunks[s][c].u, SEEK_SET);
+        for (c = 0; c != bp->m[s].n_chunks; ++c) {
+            bgzf_seek(bp->m[s].bgzf, bp->m[s].chunks[c].u, SEEK_SET);
 
             /* read all but last block */
-            block_span = (bp->chunks[s][c].v>>16) - (bp->chunks[s][c].u>>16);
-            hread(fp, wp, block_span);
+            block_span = (bp->m[s].chunks[c].v>>16) - (bp->m[s].chunks[c].u>>16);
+            n_chars_read = hread(fp, wp, block_span);
             
             /* determine size of last block and read remainder */
             wp += block_span;
-            hread(fp, wp, BLOCK_HEADER_LENGTH);
+            n_chars_read = hread(fp, wp, BLOCK_HEADER_LENGTH);
+
             bgzf_block_len = unpackInt16((uint8_t *)wp) + 1;
             wp += BLOCK_HEADER_LENGTH;
             remain = bgzf_block_len - BLOCK_HEADER_LENGTH;
 
-            hread(fp, wp, remain);
+            n_chars_read = hread(fp, wp, remain);
+            assert(n_chars_read == remain);
+
             wp += remain;
         }
         bufs[s].size = wp - bufs[s].buf;
     }
 }
 
+/* A BGZF block stores its own size in  */
+static inline int
+bgzf_block_size(char *bgzf)
+{
+    uint8_t *buf = (uint8_t *)bgzf + 16;
+    return unpackInt16(buf);
+}
 
-/* inflate bgzf data stored in bgzf buffer, which contains the set of
-   blocks defined by blocks and n_blocks.  store inflated BAM records
-   in bam.  manage the size of bam.  only copy the portions of blocks
+
+static size_t
+inflate_bgzf_block(char *in, int block_length, char *out);
+
+
+/* bgzf contains first a header consisting of <n_blocks> and then a
+   number of hts_pair64_t virtual offset pairs.  following that is
+   actual bgzf blocks to be inflated.  stores inflated BAM records in
+   bam.  manage the size of bam.  only copy the portions of blocks
    defined by the virtual offsets. */
-void bam_inflate(const struct managed_buf *bgzf,
-                 struct managed_buf *bam)
+void
+bam_inflate(const struct managed_buf *bgzf,
+            struct managed_buf *bam)
 {
     unsigned c;
     int64_t c_beg, c_end; /* sub-regions in a chunk that we want */
     size_t n_copy;
     uint64_t bs; /* compressed block size */
 
-    uint64_t coff, coff_end; /* current and end coffset as we traverse
-                                the chunks within our block ranges */
-
+    uint64_t coff, coff_beg, coff_end; /* current and end coffset as we traverse
+                                          the chunks within our block ranges */
+    
+    /* parse the first part of the bgzf buffer to get the set of
+       chunks */
     hts_pair64_t *chunks;
     unsigned n_chunks;
     size_t sz = read_voffset_chunks(bgzf, &chunks, &n_chunks);
 
     bam->size = 0;
     char *in = bgzf->buf + sz, *out = bam->buf;
+    size_t n_bytes;
 
-    for (c = 0; c != n_chunks; ++c)
-    {
+    for (c = 0; c != n_chunks; ++c) {
         coff_beg = chunks[c].u>>16;
         coff_end = chunks[c].v>>16;
         coff = coff_beg;
-        do
-        {
+        do {
             ALLOC_GROW_REMAP(bam->buf, out, bam->size + BGZF_MAX_BLOCK_SIZE, bam->alloc);
             bs = bgzf_block_size(in);
             coff += bs;
@@ -505,7 +526,8 @@ void bam_inflate(const struct managed_buf *bgzf,
 }
 
 
-static size_t inflate_bgzf_block(char *in, int block_length, char *out)
+static size_t
+inflate_bgzf_block(char *in, int block_length, char *out)
 {
     z_stream zs;
     zs.zalloc = NULL;
@@ -515,17 +537,14 @@ static size_t inflate_bgzf_block(char *in, int block_length, char *out)
     zs.next_out = (Bytef*)out;
     zs.avail_out = BGZF_MAX_BLOCK_SIZE;
 
-    if (inflateInit2(&zs, -15) != Z_OK) {
-        fp->errcode |= BGZF_ERR_ZLIB;
+    if (inflateInit2(&zs, -15) != Z_OK)
         return -1;
-    }
+
     if (inflate(&zs, Z_FINISH) != Z_STREAM_END) {
         inflateEnd(&zs);
-        fp->errcode |= BGZF_ERR_ZLIB;
         return -1;
     }
     if (inflateEnd(&zs) != Z_OK) {
-        fp->errcode |= BGZF_ERR_ZLIB;
         return -1;
     }
     return zs.total_out;
@@ -534,10 +553,11 @@ static size_t inflate_bgzf_block(char *in, int block_length, char *out)
 
 /* parse a raw record into b. return the position of the next record
    in the block */
-char *bam_parse(char *raw, struct bam1_t *b)
+char *
+bam_parse(char *raw, bam1_t *b)
 {
-    struct bam1_core_t *c = &b->core;
-    b->data = raw + 36;
+    bam1_core_t *c = &b->core;
+    b->data = (uint8_t *)raw + 36;
     int32_t block_len = *(int32_t *)raw;
     
     uint32_t x[8];
@@ -561,12 +581,16 @@ char *bam_parse(char *raw, struct bam1_t *b)
 }
 
 
-int
-bam_reader_init(const char *bam_file, 
-                const char *bam_index_file,
-                struct bam_stats *bs)
+/* initialize bs from bam_file.  also, expects <bam_file>.bai to exist
+   as well */
+void
+bam_stats_init(const char *bam_file, struct bam_stats *bs)
 {
     bs->bgzf = bgzf_open(bam_file, "r");
+    char *bam_index_file = malloc(strlen(bam_file) + 5);
+    strcpy(bam_index_file, bam_file);
+    strcat(bam_index_file, ".bai");
+
     bs->idx = bam_index_load(bam_index_file);
     bs->hdr = bam_hdr_read(bs->bgzf);
     bs->chunks = NULL;
