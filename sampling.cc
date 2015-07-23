@@ -2,32 +2,37 @@
 #include "defs.h"
 #include <string.h>
 #include <algorithm>
-#include <map>
-#include <cmath>
+#include <math.h>
+// #include <map>
+// #include <cmath>
+
+#ifdef __cplusplus
+extern "C" {
+#endif 
 
 /* compute marginal quantiles on a given dimension of the sample
    points */
-void compute_marginal_quantiles(double *sample_points,
-                                size_t n_points,
-                                size_t n_dims,
-                                size_t sort_dimension,
-                                const double *quantiles,
-                                size_t n_quantiles,
-                                double *quantile_values)
+void
+compute_marginal_quantiles(double *sample_points,
+                           size_t n_points,
+                           size_t n_dims,
+                           size_t sort_dimension,
+                           const double *quantiles,
+                           size_t n_quantiles,
+                           double *quantile_values)
 {
     /* copy appropriate dimension */
     double *dim_points = (double *)malloc(sizeof(double) * n_points);
     double *start = dim_points, *end = start + n_points;
     double *cut;
-
+    
     double *ps = sample_points + sort_dimension;
     double *p = dim_points;
     for ( ; p != end; ++p, ps += n_dims) *p = *ps;
-
+    
     size_t f;
-    for (f = 0; f != n_quantiles; ++f)
-    {
-        cut = dim_points + (size_t)std::round(quantiles[f] * n_points);
+    for (f = 0; f != n_quantiles; ++f) {
+        cut = dim_points + (size_t)round(quantiles[f] * n_points);
         std::nth_element(start, cut, end);
         quantile_values[f] = cut == end ? 0.0 : *cut;
         start = cut;
@@ -76,28 +81,23 @@ weighted_quantiles_aux(struct weighted_coord *wgt_points,
     double sum_wgt_lft, sum_wgt_rgt;
 
     struct weighted_coord *wp;
-    if (cut - wb < we - cut)
-    {
+    if (cut - wb < we - cut) {
         for (wp = wb, sum_wgt_lft = 0; wp != cut; ++wp)
             sum_wgt_lft += wp->weight;
         sum_wgt_rgt = sum_wgt - sum_wgt_lft;
-    }
-    else
-    {
+    } else {
         for (wp = cut, sum_wgt_rgt = 0; wp != we; ++wp)
             sum_wgt_rgt += wp->weight;
         sum_wgt_lft = sum_wgt - sum_wgt_rgt;
     }
     /* choose to recurse on left or right sub-interval */
-    if (sum_wgt_lft < target_wgt) 
-    {
+    if (sum_wgt_lft < target_wgt) {
         n_points = we - cut;
         wb = cut;
         quantile = (target_wgt - sum_wgt_lft) / sum_wgt_rgt;
         sum_wgt = sum_wgt_rgt;
     }
-    else
-    {
+    else {
         n_points = cut - wb;
         quantile = target_wgt / sum_wgt_lft;
         sum_wgt = sum_wgt_lft;
@@ -108,14 +108,15 @@ weighted_quantiles_aux(struct weighted_coord *wgt_points,
 
 /* computes the marginal quantiles from a set of weighted sample
    points, selecting the 'dim' component of the point. */
-void compute_marginal_wquantiles(double *sample_points,
-                                 double *weights,
-                                 size_t n_points,
-                                 size_t n_dims,
-                                 size_t dim,
-                                 const double *quantiles,
-                                 size_t n_quantiles,
-                                 double *quantile_values)
+void
+compute_marginal_wquantiles(double *sample_points,
+                            double *weights,
+                            size_t n_points,
+                            size_t n_dims,
+                            size_t dim,
+                            const double *quantiles,
+                            size_t n_quantiles,
+                            double *quantile_values)
 {
     /* copy appropriate dimension */
     struct weighted_coord 
@@ -127,16 +128,14 @@ void compute_marginal_wquantiles(double *sample_points,
     double *ps = sample_points + dim;
     double *pw = weights;
     double sum_wgt = 0;
-    for (cut = start; cut != end; ++cut, ps += n_dims, ++pw) 
-    {
+    for (cut = start; cut != end; ++cut, ps += n_dims, ++pw) {
         cut->coord = *ps;
         cut->weight = *pw;
         sum_wgt += *pw;
     }
 
     size_t f;
-    for (f = 0; f != n_quantiles; ++f)
-    {
+    for (f = 0; f != n_quantiles; ++f) {
         cut = weighted_quantiles_aux(wgt_points, n_points, sum_wgt, quantiles[f]);
         quantile_values[f] = cut->coord;
     }
@@ -332,3 +331,8 @@ void print_numerical_cdfs(FILE *out_fh,
     delete dim_points;
     delete ranks;
 }
+
+
+#ifdef __cplusplus
+}
+#endif 

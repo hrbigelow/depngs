@@ -26,6 +26,7 @@ void locus_diff_free();
 
 struct thread_queue *
 locus_diff_tq_init(const char *query_range_file,
+                   const char *fasta_index_file,
                    unsigned n_threads,
                    unsigned n_readers,
                    unsigned long max_input_mem,

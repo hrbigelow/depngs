@@ -5,6 +5,7 @@
 #include <gsl/gsl_rng.h>
 
 #include "binomial_est.h"
+#include "batch_pileup.h"
 
 /* number of points or weights generated at a time */
 #define GEN_POINTS_BATCH 32

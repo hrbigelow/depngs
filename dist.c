@@ -14,7 +14,7 @@
 int dist_usage()
 {
     fprintf(stderr, 
-            "\nUsage: dep dist [options] samples.rdb sample_pairings.rdb\n" 
+            "\nUsage: dep dist [options] samples.rdb sample_pairings.rdb ref.fasta\n" 
             "Options:\n\n"
             "FILES\n"
             "-d STRING   (optional) name of output distance file.  If absent, do not perform distance calculation.\n"
@@ -32,7 +32,6 @@ int dist_usage()
             "\n"
             "OTHER\n"
             "-q INT      minimum quality score to include bases as evidence [5]\n"
-            "-F STRING   reference fasta file. (<fasta>.fai index must exist) [blank]\n"
             "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
             "-t INT      number of threads to use [1]\n"
             "-R INT      number of readers to use [2] (See NOTE)\n"
@@ -43,12 +42,16 @@ int dist_usage()
             "\n"
             "-Q STRING   quantiles string [\"0.005,0.05,0.5,0.95,0.995\"]\n"
             "\n"
-            "samples.rdb has lines of <sample_id><tab></path/to/sample.jpd><tab></path/to/sample.pileup>\n"
+            "samples.rdb has lines of <sample_id><tab></path/to/sample.bam>\n"
             "sample_pairings.rdb has lines of <sample_id><tab><sample_id>\n"
             "defining which pairs of samples are to be compared.  <sample_id> correspond\n"
             "with those in samples.rdb.  The special <sample_id> \"REF\" may be"
             "supplied as the second sample in the pair.  This indicates to do comparisons\n"
             "with a conceptual sample that is identical to the reference base at every locus.\n"
+            "\n"
+            "ref.fasta is the fasta-formatted reference genome.  all bam file\n"
+            "inputs must be aligned to this reference.  also, there must be a\n"
+            "fasta index file (produced by samtools faidx) called <ref.fasta>.fai as well\n"
             "\n"
             "On machines where 2 or more concurrent reads achieve higher\n"
             "throughput than one read, set -R (number of readers) accordingly\n"
@@ -91,7 +94,8 @@ long int strtol_errmsg(const char *nptr, const char *conv_name)
     return rv;
 }
 
-int main_dist(int argc, char **argv)
+int
+main_dist(int argc, char **argv)
 {
     size_t n_threads = 1;
     size_t max_mem = 50e9;
@@ -109,7 +113,6 @@ int main_dist(int argc, char **argv)
     const char *dist_file = NULL;
     const char *comp_file = NULL;
     const char *indel_dist_file = NULL;
-    const char *fasta_file = NULL;
     const char *summary_stats_file = NULL;
     const char *query_range_file = NULL;
 
@@ -117,7 +120,7 @@ int main_dist(int argc, char **argv)
 #define SQRT2 1.41421356237309504880
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:i:r:x:t:R:f:y:X:Z:p:t:m:q:F:Q:g")) >= 0)
+    while ((c = getopt(argc, argv, "d:c:i:r:x:t:R:f:y:X:Z:p:t:m:q:Q:g")) >= 0)
     {
         switch(c)
         {
@@ -139,19 +142,19 @@ int main_dist(int argc, char **argv)
         case 'R': n_readers = strtol_errmsg(optarg, "-R (n_readers)"); break;
         case 'm': max_mem = (size_t)strtod_errmsg(optarg, "-m (max_mem)"); break;
         case 'q': min_quality_score = strtol_errmsg(optarg, "-q (min_quality_score)"); break;
-        case 'F': fasta_file = optarg; break;
         case 'Q': quantiles_string = optarg; break;
         case 'g': print_pileup_fields = 1; break;
         default: return dist_usage(); break;
         }
     }
-    if (argc - optind != 2) return dist_usage();
+    if (argc - optind != 3) return dist_usage();
 
     /* This adjustment makes max_sample_points a multiple of GEN_POINTS_BATCH */
     max_sample_points += GEN_POINTS_BATCH - (max_sample_points % GEN_POINTS_BATCH);
 
     const char *samples_file = argv[optind];
     const char *sample_pairs_file = argv[optind + 1];
+    const char *fasta_file = argv[optind + 2];
 
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("\n"); /* So progress messages don't interfere with shell prompt. */
@@ -215,8 +218,13 @@ int main_dist(int argc, char **argv)
 
     set_points_hash_flag(0);
 
+    char fasta_index_file[300];
+    strcpy(fasta_index_file, fasta_file);
+    strcat(fasta_index_file, ".fai");
+
     struct thread_queue *tqueue =
         locus_diff_tq_init(query_range_file, 
+                           fasta_index_file,
                            n_threads, n_readers, max_input_mem,
                            dist_fh, comp_fh, indel_fh);
 

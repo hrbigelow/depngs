@@ -63,8 +63,8 @@ void
 bam_stats_init(const char *bam_file, struct bam_stats *bs);
 
 /* release the resources of this bam_stat */
-int
-bam_reader_par_free(struct bam_stats *bs);
+void
+bam_stats_free(struct bam_stats *bs);
 
 
 #endif /* _BAM_READER_H */

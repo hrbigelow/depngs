@@ -598,8 +598,8 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs)
 }
 
 
-int
-bam_reader_free(struct bam_stats *bs)
+void
+bam_stats_free(struct bam_stats *bs)
 {
     hts_idx_destroy(bs->idx);
     bam_hdr_destroy(bs->hdr);

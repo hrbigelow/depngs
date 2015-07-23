@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include <assert.h>
 
-#include "nucleotide_stats.h"
+/* #include "nucleotide_stats.h" */
 #include "gen_pair_comp.h"
 #include "thread_queue.h"
 

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 
 void nucleotide_stats_initialize(const char *rdb_file, struct nucleotide_stats *s)
 {

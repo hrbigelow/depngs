@@ -7,23 +7,29 @@
 /* Group of functions to generate individual samples from statistical
    distributions */
 
-void compute_marginal_quantiles(double *sample_points,
-                                size_t n_points,
-                                size_t n_dims,
-                                size_t sort_dimension,
-                                const double *quantiles,
-                                size_t n_quantiles,
-                                double *quantile_values);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void
+compute_marginal_quantiles(double *sample_points,
+                           size_t n_points,
+                           size_t n_dims,
+                           size_t sort_dimension,
+                           const double *quantiles,
+                           size_t n_quantiles,
+                           double *quantile_values);
 
 
-void compute_marginal_wquantiles(double *sample_points,
-                                 double *weights,
-                                 size_t n_points,
-                                 size_t n_dims,
-                                 size_t sort_dimension,
-                                 const double *quantiles,
-                                 size_t n_quantiles,
-                                 double *quantile_values);
+void
+compute_marginal_wquantiles(double *sample_points,
+                            double *weights,
+                            size_t n_points,
+                            size_t n_dims,
+                            size_t sort_dimension,
+                            const double *quantiles,
+                            size_t n_quantiles,
+                            double *quantile_values);
 
 double compute_marginal_mean(double *points,
                              double *weights,
@@ -44,5 +50,9 @@ void print_numerical_cdfs(FILE *out_fh,
                           double *sample_points,
                           size_t n_points,
                           size_t dim);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // _SAMPLING_H

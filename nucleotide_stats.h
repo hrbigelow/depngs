@@ -11,6 +11,7 @@
 
 #include <stdlib.h>
 
+
 /* holds the overall statistics for one sample. */
 struct nucleotide_stats {
     double jpd[4][NUC_NUM_BQS]; /* P(F,B,Q,S).  Ordered F,B,Q,S */
@@ -37,6 +38,11 @@ struct packed_counts
        &s). gives the (b,q,s) tuple. */
     size_t stats_index[NUC_NUM_BQS];
 };
+
+/* initialize default phred error probabilities in global variable
+   'error_probability' */
+void
+init_phred();
 
 int base_to_index(char base);
 void nucleotide_stats_initialize(const char *rdb_file, struct nucleotide_stats *s);

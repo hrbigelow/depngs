@@ -2,7 +2,6 @@
 
 #include <pthread.h>
 
-#include "binomial_est.h"
 #include "bam_sample_info.h"
 #include "common_tools.h"
 #include "cache.h"
@@ -52,35 +51,24 @@ void bam_sample_info_free()
 static void
 init_sample_attributes(const char *samples_file, khash_t(remap) *sample_map)
 {
-    char jpd[1000], label[1000], pileup[1000];
+    char label[1000], bam[1000];
     bam_samples.n = kh_size(sample_map);
     unsigned s, alloc = 0;
     ALLOC_GROW_TYPED(bam_samples.m, bam_samples.n, alloc);
     khiter_t k;
     FILE *samples_fh = open_if_present(samples_file, "r");
-    while (! feof(samples_fh))
-    {
-        (void)fscanf(samples_fh, "%s\t%s\t%s\n", label, jpd, pileup);
-        if ((k = kh_get(remap, sample_map, label)) != kh_end(sample_map))
-        {
+    while (! feof(samples_fh)) {
+        (void)fscanf(samples_fh, "%s\t%s\n", label, bam);
+        if ((k = kh_get(remap, sample_map, label)) != kh_end(sample_map)) {
             s = kh_val(sample_map, k);
-            bam_samples.m[s].bam_file = strdup(pileup);
-            nucleotide_stats_initialize(jpd, &bam_samples.m[s].nuc_stats);
-            if (strlen(label) + 1 > sizeof(bam_samples.m[s].label)) 
-            {
+            bam_samples.m[s].bam_file = strdup(bam);
+            if (strlen(label) + 1 > sizeof(bam_samples.m[s].label)) {
                 fprintf(stderr, "%s: error: sample label string must be "
                         "less than %Zu characters\n", __func__,
                         sizeof(bam_samples.m[s].label));
                 exit(1);
             }
             strcpy(bam_samples.m[s].label, label);
-            bam_samples.m[s].fh = fopen(pileup, "r");
-            if (! bam_samples.m[s].fh)
-            {
-                fprintf(stderr, "%s: error: couldn't open pileup input file %s\n",
-                        __func__, pileup);
-                exit(1);
-            }
         }
     }
     fclose(samples_fh);

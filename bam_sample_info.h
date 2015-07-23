@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include <stdio.h>
 
-#include "nucleotide_stats.h"
 #include "pair_dist_stats.h"
 
 extern struct bam_sample_info bam_samples;
@@ -37,7 +36,6 @@ struct bam_sample_info {
     struct {
         char *bam_file;
         char label[MAX_LABEL_LEN + 1];
-        struct nucleotide_stats nuc_stats;
         FILE *fh;
     } *m;
     unsigned n;

@@ -51,12 +51,12 @@ EXE = dep test_dirichlet
 all : $(EXE)
 
 # temporarily rename to dep_dev so as not to interfere with running binary.
-dep : $(addprefix $(OBJDIR)/, dep.o sampling.o tools.o					\
-	nucleotide_stats.o metropolis_sampling.o dist.o locus_diff.o		\
-	binomial_est.o dirichlet_points_gen.o dirichlet_diff_cache.o		\
-	pug.o file_utils.o ordering.o locus.o bam_reader.o batch_pileup.o	\
-	thread_queue.o virtual_bound.o simp.o gen_pair_comp.o geometry.o	\
-	simplex.o chunk_strategy.o)
+dep : $(addprefix $(OBJDIR)/, dep.o file_binary_search.o			\
+	common_tools.o dist.o locus_diff.o sampling.o bam_sample_info.o	\
+	pair_dist_stats.o binomial_est.o dirichlet_points_gen.o			\
+	dirichlet_diff_cache.o pug.o file_utils.o ordering.o locus.o	\
+	bam_reader.o batch_pileup.o thread_queue.o virtual_bound.o		\
+	gen_pair_comp.o geometry.o simplex.o chunk_strategy.o)
 	$(CC) -L$(YEPLIBDIR) -L$(HTSLIBDIR)									\
 	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB),-rpath,$(HTSLIBDIR)	\
 	$(PROF) -o $@ $^ $(DEPLIBS)

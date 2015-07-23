@@ -1,19 +1,33 @@
 #include "dirichlet_points_gen.h"
-#include "nucleotide_stats.h"
 
 #include <gsl/gsl_randist.h>
 #include <gsl/gsl_sf_exp.h>
 
 #include <string.h>
+#include <math.h>
 #include "yepMath.h"
 #include "yepCore.h"
 
 
 static double alpha_prior;
 
-void init_dirichlet_points_gen(double _alpha_prior)
+static struct phred {
+    float prob_right; /* probability that the true base matches the basecall */
+    float prob_wrong; /* probability that the true base is one of the
+                         three non-basecall bases. */
+} error_probability[255];
+
+void
+init_dirichlet_points_gen(double _alpha_prior)
 {
     alpha_prior = _alpha_prior;
+
+    unsigned q;
+    double ep;
+    for (q = 0; q != 255; ++q) {
+        ep = pow(10.0, (double)-q / 10.0);
+        error_probability[q] = (struct phred){ 1.0 - ep, ep / 3.0 };
+    }
 }
 
 double get_alpha_prior()
@@ -108,8 +122,9 @@ void gen_reference_points_wrapper(const void *par, POINT *points)
         { 0, 0, 0, 1 },
         { -1, -1, -1, -1 }
     };
-    char *refbase = (char *)par;
-    int ref_ind = base_to_index(*refbase);
+    char refbase = *(char *)par;
+    static char nucs[] = "ACGT";
+    int ref_ind = index(nucs, refbase) - nucs;
     
     int i;
     for (i = 0; i != GEN_POINTS_BATCH; ++i, ++points)
@@ -124,11 +139,12 @@ calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
 {
     int i;
     const struct points_gen_par *pd = par;
-    const struct cpd_count 
-        *trm = pd->post_counts->stats, 
-        *trm_end = trm + pd->post_counts->num_data;
+    const struct bqs_count *trm = pd->observed, *trm_end = trm + pd->n_observed;
 
-    unsigned *perm = pd->alpha_perm;
+        /* *trm = pd->post_counts->stats,  */
+        /* *trm_end = trm + pd->post_counts->num_data; */
+
+    /* unsigned *perm = pd->alpha_perm; */
     double 
         dotp[GEN_POINTS_BATCH], ldotp[GEN_POINTS_BATCH],
         llh[GEN_POINTS_BATCH], ldir[GEN_POINTS_BATCH];
@@ -141,12 +157,19 @@ calc_post_to_dir_ratio(POINT *points, const void *par, double *weights)
        the data itself. To correct for this, we must use a
        'residual_alpha' for the equivalent, perfect-quality Dirichlet
        proposal.*/
-    while (trm != trm_end)
-    {
+    struct phred ph;
+    while (trm != trm_end) {
+        ph = error_probability[trm->qual];
+        double prob[] = { ph.prob_wrong, ph.prob_wrong, ph.prob_wrong, ph.prob_wrong };
+        prob[trm->base] = ph.prob_right;
         for (p = points, i = 0; p != pe; ++p, ++i)
             dotp[i] = 
-                (*p)[0] * trm->cpd[perm[0]] + (*p)[1] * trm->cpd[perm[1]]
-                + (*p)[2] * trm->cpd[perm[2]] + (*p)[3] * trm->cpd[perm[3]];
+                (*p)[0] * prob[0] + (*p)[1] * prob[1]
+                + (*p)[2] * prob[2] + (*p)[3] * prob[3];
+
+            /* dotp[i] =  */
+            /*     (*p)[0] * trm->cpd[perm[0]] + (*p)[1] * trm->cpd[perm[1]] */
+            /*     + (*p)[2] * trm->cpd[perm[2]] + (*p)[3] * trm->cpd[perm[3]]; */
         
         (void)yepMath_Log_V64f_V64f(dotp, ldotp, GEN_POINTS_BATCH);
         if (trm->ct > 1) 

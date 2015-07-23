@@ -1,3 +1,9 @@
+#include "common_tools.h"
+
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+
 // if file is not NULL and not '/dev/null', attempts to
 // open the file.  In this case, it is an error if it cannot open the file.
 // otherwise, returns NULL
@@ -47,14 +53,15 @@ int fastq_type_to_offset(const char *type)
 
 /* parse a comma-separated list of values into an array. check
    that the values are between 0 and 1 and increasing. */
-void parse_csv_line(const char *csv, double *vals, unsigned *n_vals)
+void
+parse_csv_line(const char *csv, double *vals, unsigned *n_vals, unsigned max_vals)
 {
     *n_vals = 0;
     errno = 0;
     double pv = -1;
     unsigned err = 0;
     char *loc;
-    while (*csv != '\0' && *n_vals != MAX_NUM_QUANTILES)
+    while (*csv != '\0' && *n_vals != max_vals)
     {    
         if (*csv == ',') ++csv;
         *vals = strtod(csv, &loc);
@@ -70,7 +77,7 @@ void parse_csv_line(const char *csv, double *vals, unsigned *n_vals)
         fprintf(stderr, "%s: The input is supposed to be a comma-separated"
                 "list of between 1 and %u increasing numbers in the [0, 1] range\n"
                 "Input was: %s\n",
-                __func__, MAX_NUM_QUANTILES, csv);
+                __func__, max_vals, csv);
         exit(1);
     }
 }

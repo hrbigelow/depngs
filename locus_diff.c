@@ -5,6 +5,7 @@
 #include "pair_dist_stats.h"
 
 #include "sampling.h"
+
 #include "yepLibrary.h"
 #include "yepCore.h"
 
@@ -119,7 +120,7 @@ void locus_diff_init(double _post_confidence,
 
     batch_pileup_init(fasta_file, min_quality_score);
 
-    parse_csv_line(quantiles_string, quantiles, &n_quantiles);
+    parse_csv_line(quantiles_string, quantiles, &n_quantiles, MAX_NUM_QUANTILES);
 
     worker_options.do_print_pileup = do_print_pileup;
     worker_options.do_dist = do_dist;
@@ -168,26 +169,37 @@ void dist_on_exit()
 
 #define NUM_EXTRA_BUFS_PER_THREAD 500
 
-struct thread_queue *locus_diff_tq_init(const char *query_range_file,
-                                         unsigned n_threads,
-                                         unsigned n_readers,
-                                         unsigned long max_input_mem,
-                                         FILE *dist_fh,
-                                         FILE *comp_fh,
-                                         FILE *indel_fh)
+struct thread_queue *
+locus_diff_tq_init(const char *query_range_file,
+                   const char *fasta_index_file,
+                   unsigned n_threads,
+                   unsigned n_readers,
+                   unsigned long max_input_mem,
+                   FILE *dist_fh,
+                   FILE *comp_fh,
+                   FILE *indel_fh)
 {
     thread_params.n_threads = n_threads;
 
     unsigned long n_total_loci;
     if (query_range_file) {
+        faidx_t *fai = fai_load(fasta_index_file);
+        if (fai == NULL) {
+            fprintf(stderr, "Error: %s:%u: Couldn't open fasta index file %s.fai\n",
+                    __FILE__, __LINE__, fasta_index_file);
+            exit(1);
+        }
+
         thread_params.ranges = 
-            parse_query_ranges(query_range_file, &thread_params.n_ranges,
+            parse_query_ranges(query_range_file, fai, 
+                               &thread_params.n_ranges,
                                &n_total_loci);
         if (! thread_params.n_ranges) {
             fprintf(stderr, "Error: there are no ranges to process in query range file %s\n",
                     query_range_file);
             exit(1);
         }
+        fai_destroy(fai);
     }
     else
     {
@@ -266,7 +278,7 @@ void locus_diff_tq_free()
     unsigned r, s;
     for (r = 0; r != thread_params.n_readers; ++r) {
         for (s = 0; bam_samples.n; ++s)
-            bam_reader_par_free(&thread_params.reader_buf[r].m[s]);
+            bam_stats_free(&thread_params.reader_buf[r].m[s]);
 
         free(thread_params.reader_buf[r].m);
     }
@@ -944,7 +956,8 @@ locus_diff_worker(const struct managed_buf *in_bufs,
 }
  
     
-void dist_offload(void *par, const struct managed_buf *bufs)
+void
+locus_diff_offload(void *par, const struct managed_buf *bufs)
 {
     struct locus_diff_offload_par *ol = (struct locus_diff_offload_par *)par;
     unsigned i = 0;
