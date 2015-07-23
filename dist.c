@@ -218,13 +218,8 @@ main_dist(int argc, char **argv)
 
     set_points_hash_flag(0);
 
-    char fasta_index_file[300];
-    strcpy(fasta_index_file, fasta_file);
-    strcat(fasta_index_file, ".fai");
-
     struct thread_queue *tqueue =
         locus_diff_tq_init(query_range_file, 
-                           fasta_index_file,
                            n_threads, n_readers, max_input_mem,
                            dist_fh, comp_fh, indel_fh);
 
@@ -243,7 +238,6 @@ main_dist(int argc, char **argv)
     locus_diff_free();
     dirichlet_diff_free();
     binomial_est_free();
-    batch_pileup_free();
 
     printf("Finished.\n");
 

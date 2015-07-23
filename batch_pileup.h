@@ -35,6 +35,7 @@
 #include "khash.h"
 #include "cache.h"
 #include "compat_util.h"
+#include "genome.h"
 
 struct indel_seq {
     char is_ins;
@@ -78,13 +79,9 @@ batch_pileup_thread_init(unsigned n_samples);
 void
 batch_pileup_thread_free();
 
-/* initialize all program-wide static data (refseq and
-   min_quality_score) */
-void
-batch_pileup_init(const char *fasta_file, unsigned min_qual);
 
 void
-batch_pileup_free();
+batch_pileup_init(unsigned min_qual);
 
 
 /* perform entire tally phase, for basecalls and for indels for one
@@ -143,8 +140,6 @@ pileup_strings(unsigned s, struct managed_buf *call, struct managed_buf *qual);
    return the right values. return 1 if there is a next position, 0 if
    reached the end. */
 int pileup_next_pos();
-
-#define REFNAME_MAXLEN 300
 
 struct pileup_locus_info {
     char refname[REFNAME_MAXLEN + 1];

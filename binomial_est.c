@@ -335,8 +335,8 @@ binomial_quantile_est(unsigned max_points,
         spread_loose_max = post_qmin,
         spread_tight_max = post_qmin * 0.2;
     while (n != max_points 
-           && ((lo_tag != CHANGED && beta_spread > spread_loose_max)
-               || (lo_tag == CHANGED && beta_spread > spread_tight_max)))
+           && ((lo_tag != BOUND_CHANGED && beta_spread > spread_loose_max)
+               || (lo_tag == BOUND_CHANGED && beta_spread > spread_tight_max)))
     {
         /* process another batch of samples, generating sample
            points as needed. */

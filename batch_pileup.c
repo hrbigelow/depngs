@@ -123,62 +123,16 @@ static __thread struct tls {
 } tls;
 
 
-static struct refseq {
-    struct {
-        char name[REFNAME_MAXLEN + 1];
-        char *seq;
-    } *contig;
-    unsigned n_contig;
-} refseq;
-
 
 static unsigned min_quality_score;
 
 
-/* initialize all program-wide static data (refseq and
-   min_quality_score) */
-void batch_pileup_init(const char *fa_file, unsigned min_qual)
+void
+batch_pileup_init(unsigned min_qual)
 {
-    char *fai_file = malloc(strlen(fa_file) + 5);
-    strcpy(fai_file, fa_file);
-    strcat(fai_file, ".fai");
-    
-    faidx_t *fai = fai_load(fai_file);
-    if (fai == NULL) {
-        fprintf(stderr, "Error: %s:%u: Couldn't open fasta index file %s.fai\n",
-                __FILE__, __LINE__, fai_file);
-        exit(1);
-    }
-
-    refseq.n_contig = faidx_nseq(fai);
-    refseq.contig = malloc(refseq.n_contig * sizeof(refseq.contig[0]));
-    
-    int len;
-    unsigned t;
-    for (t = 0; t != refseq.n_contig; ++t) {
-        strcpy(refseq.contig[t].name, faidx_iseq(fai, t));
-        refseq.contig[t].seq = 
-            faidx_fetch_seq(fai, refseq.contig[t].name, 0, INT_MAX, &len);
-        if (refseq.contig[t].seq == NULL) {
-            fprintf(stderr, "Error: %s:%u: Didn't find sequence %s in fasta file %s\n",
-                    __FILE__, __LINE__, refseq.contig[t].name, fa_file);
-            exit(1);
-        }
-    }
-    fai_destroy(fai);
-    free(fai_file);
-
     min_quality_score = min_qual;
 }
 
-
-void batch_pileup_free()
-{
-    unsigned t;
-    for (t = 0; t != refseq.n_contig; ++t)
-        free(refseq.contig[t].seq);
-    free(refseq.contig);
-}
 
 /* */
 void batch_pileup_thread_init(unsigned n_samples)
@@ -526,7 +480,7 @@ static void process_bam_stats(bam1_t *b, struct tally_stats *ts)
                     isq->seq[i] = seq_nt16_str[bam_seqi(bam_get_seq(b), q)];
 
             else
-                memcpy(isq->seq, refseq.contig[tid].seq + rpos, ln);
+                memcpy(isq->seq, reference_seq.contig[tid].seq + rpos, ln);
 
             isq->seq[ln] = '\0';
 
@@ -875,8 +829,8 @@ void
 pileup_current_info(struct pileup_locus_info *pli)
 {
     unsigned tid = tls.cur_pos.tid;
-    strcpy(pli->refname, refseq.contig[tid].name);
-    pli->refbase = refseq.contig[tid].seq[tls.cur_pos.pos];
+    strcpy(pli->refname, reference_seq.contig[tid].name);
+    pli->refbase = reference_seq.contig[tid].seq[tls.cur_pos.pos];
     pli->pos = tls.cur_pos.pos;
 }
 

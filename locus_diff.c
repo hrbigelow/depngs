@@ -17,6 +17,7 @@
 
 #include "bam_reader.h"
 #include "batch_pileup.h"
+#include "genome.h"
 #include "khash.h"
 #include "bam_sample_info.h"
 #include "common_tools.h"
@@ -58,9 +59,6 @@ static double quantiles[MAX_NUM_QUANTILES];
 static unsigned n_quantiles;
 
 
-
-
-
 /* call when we advance to a new locus */
 void
 reset_locus_data(struct locus_data *ld)
@@ -70,7 +68,6 @@ reset_locus_data(struct locus_data *ld)
     ld->init.bqs_ct = 0;
     ld->init.indel_ct = 0;
     ld->init.sample_data = 0;
-
     ld->distp.points.size = 0;
     ld->distp.weights.size = 0;
 }
@@ -118,7 +115,9 @@ void locus_diff_init(double _post_confidence,
 
     bam_sample_info_init(samples_file, sample_pairs_file);
 
-    batch_pileup_init(fasta_file, min_quality_score);
+    unsigned do_load_seqs = 1;
+    genome_init(fasta_file, do_load_seqs);
+    batch_pileup_init(min_quality_score);
 
     parse_csv_line(quantiles_string, quantiles, &n_quantiles, MAX_NUM_QUANTILES);
 
@@ -132,7 +131,7 @@ void locus_diff_init(double _post_confidence,
 void locus_diff_free()
 {
     bam_sample_info_free();
-    batch_pileup_free();
+    genome_free();
 }
 
 
@@ -171,7 +170,6 @@ void dist_on_exit()
 
 struct thread_queue *
 locus_diff_tq_init(const char *query_range_file,
-                   const char *fasta_index_file,
                    unsigned n_threads,
                    unsigned n_readers,
                    unsigned long max_input_mem,
@@ -183,15 +181,8 @@ locus_diff_tq_init(const char *query_range_file,
 
     unsigned long n_total_loci;
     if (query_range_file) {
-        faidx_t *fai = fai_load(fasta_index_file);
-        if (fai == NULL) {
-            fprintf(stderr, "Error: %s:%u: Couldn't open fasta index file %s.fai\n",
-                    __FILE__, __LINE__, fasta_index_file);
-            exit(1);
-        }
-
         thread_params.ranges = 
-            parse_query_ranges(query_range_file, fai, 
+            parse_query_ranges(query_range_file, 
                                &thread_params.n_ranges,
                                &n_total_loci);
         if (! thread_params.n_ranges) {
@@ -199,7 +190,6 @@ locus_diff_tq_init(const char *query_range_file,
                     query_range_file);
             exit(1);
         }
-        fai_destroy(fai);
     }
     else
     {
