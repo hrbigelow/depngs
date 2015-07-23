@@ -86,7 +86,7 @@ init_sample_pairs(const char *pair_file, khash_t(remap) *sample_map)
     khiter_t k1, k2;
     unsigned alloc = 0;
 
-    /* initialize the keyword PSEUDO as the reference sample */
+    /* initialize the keyword REF as the reference sample */
     char pseudo_key[] = "REF";
     k1 = kh_put(remap, sample_map, pseudo_key, &ret);
     assert(ret == 0 || ret == 1);

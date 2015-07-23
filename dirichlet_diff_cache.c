@@ -220,8 +220,7 @@ void dirichlet_diff_init(unsigned pseudo_depth,
     pthread_cond_init(&cache.locus_cond, NULL);
 
     unsigned i;
-    for (i = 0; i != cache.n_locks; ++i)
-    {
+    for (i = 0; i != cache.n_locks; ++i) {
         pthread_mutex_init(&cache.locks[i].mtx, NULL);
         pthread_cond_init(&cache.locks[i].cond, NULL);
     }
@@ -236,8 +235,7 @@ void dirichlet_diff_init(unsigned pseudo_depth,
 void dirichlet_diff_free()
 {
     unsigned i;
-    for (i = 0; i != cache.n_locks; ++i)
-    {
+    for (i = 0; i != cache.n_locks; ++i) {
         pthread_mutex_destroy(&cache.locks[i].mtx);
         pthread_cond_destroy(&cache.locks[i].cond);
     }
@@ -277,8 +275,7 @@ unsigned freeze_points_hash()
         cache.c.n_threads_points_active--;
         if (cache.c.n_threads_points_active)
             pthread_cond_wait(&cache.c.cond, &cache.c.mtx);
-        else
-        {
+        else {
             fprintf(stderr, "Freezing points hash.\n");
             pthread_cond_broadcast(&cache.c.cond);
         }
@@ -292,13 +289,11 @@ unsigned freeze_bounds_hash()
     pthread_mutex_lock(&cache.locus_mtx);
     ++cache.locus_count;
     unsigned do_freeze = cache.locus_count > N_LOCI_TO_FREEZE;
-    if (do_freeze)
-    {
+    if (do_freeze) {
         cache.n_threads_bounds_active--;
         if (cache.n_threads_bounds_active)
             pthread_cond_wait(&cache.locus_cond, &cache.locus_mtx);
-        else
-        {
+        else {
             fprintf(stderr, "Freezing bounds hash.\n");
             pthread_cond_broadcast(&cache.locus_cond);
         }
@@ -311,14 +306,12 @@ unsigned freeze_bounds_hash()
 void inactivate_shared_data(unsigned inactivate_points, 
                             unsigned inactivate_bounds)
 {
-    if (inactivate_points)
-    { 
+    if (inactivate_points) { 
         pthread_mutex_lock(&cache.c.mtx);
         cache.c.n_threads_points_active--;
         pthread_mutex_unlock(&cache.c.mtx);
     }
-    if (inactivate_bounds)
-    {
+    if (inactivate_bounds) {
         pthread_mutex_lock(&cache.locus_mtx);
         cache.n_threads_bounds_active--;
         pthread_mutex_unlock(&cache.locus_mtx);
@@ -351,22 +344,21 @@ void free_distrib_points(struct distrib_points *dpts)
 
 /* update dpts parameters and discard existing points.  if alpha is
    identical to existing parameters, do nothing. */
-void update_points_gen_params(struct distrib_points *dpts,
-                              unsigned *alpha_counts,
-                              unsigned *perm)
+void
+update_points_gen_params(struct distrib_points *dpts,
+                         unsigned *alpha_counts,
+                         unsigned *perm)
 {
     struct points_gen_par *dp = dpts->pgen.points_gen_par;
     unsigned i, change = 0;
-    for (i = 0; i != NUM_NUCS; ++i)
-    {
+    for (i = 0; i != NUM_NUCS; ++i) {
         if (dp->alpha_counts[i] != alpha_counts[perm[i]]
             || dp->alpha_perm[i] != perm[i]) change = 1;
         dp->alpha_counts[i] = alpha_counts[perm[i]];
         dp->alpha_perm[i] = perm[i];
     }
 
-    if (change)
-    {
+    if (change) {
         dpts->points.size = 0;
         dpts->weights.size = 0;
     }
@@ -376,8 +368,7 @@ void update_points_gen_params(struct distrib_points *dpts,
 void set_dirichlet_alpha_single(struct distrib_points *dpts, unsigned i, unsigned v)
 {
     struct points_gen_par *dp = dpts->pgen.points_gen_par;
-    if (dp->alpha_counts[i] != v)
-    {
+    if (dp->alpha_counts[i] != v) {
         dp->alpha_counts[i] = v;
         dpts->points.size = 0;
         dpts->weights.size = 0;
@@ -481,8 +472,7 @@ void find_cacheable_permutation(const unsigned *a,
     unsigned tot[] = { a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
     
     for (i = 0; i != 4; ++i)
-        for (j = 0; j != 4; ++j)
-        {
+        for (j = 0; j != 4; ++j) {
             if (a[i] >= lim[j] || b[i] >= lim[j]) break;
             mpi[i] = j;
         }
@@ -491,21 +481,18 @@ void find_cacheable_permutation(const unsigned *a,
 
     /* mpi[j] = -1 means the value j has been placed in the
        permutation */
-    for (i = 0; i != 4; ++i)
-    {
+    for (i = 0; i != 4; ++i) {
         unsigned max_v = 0, max_i = 4;
         min_mpi = 5;
         for (j = 0; j != 4; ++j)
-            if (mpi[j] >= i && mpi[j] <= min_mpi && tot[j] >= max_v)
-            {
+            if (mpi[j] >= i && mpi[j] <= min_mpi && tot[j] >= max_v) {
                 max_v = tot[j];
                 max_i = j;
                 min_mpi = mpi[j];
             }
         if (max_i != 4)
             permutation[i] = max_i, mpi[max_i] = -1;
-        else
-        {
+        else {
             *perm_found = 0;
             break;
         }
@@ -524,11 +511,12 @@ unsigned dir_points_key_group(union alpha_large_key key)
 
 /* append any points in src beyond dest->size, growing dest as
    necessary. */
-void append_extra_points(struct points_buf *dest, struct points_buf *src)
+void
+append_extra_points(struct points_buf *dest, struct points_buf *src)
 {
     assert(src->size >= dest->size);
     if (src->size == dest->size) return;
-
+    
     unsigned end = dest->size, add = src->size - end;
     dest->size = src->size;
     ALLOC_GROW(dest->buf, src->size, dest->alloc);
@@ -541,20 +529,16 @@ void winnow_points_hash()
     pthread_mutex_lock(&cache.c.mtx);
 
     if (cache.c.n_items >= cache.c.max_items
-        && cache.c.n_times_cleared < MAX_TIMES_CLEARED)
-    {
+        && cache.c.n_times_cleared < MAX_TIMES_CLEARED) {
         struct counted_points val;
         khiter_t k;
 
         pthread_rwlock_wrlock(&cache.dir_points_rwlock);
         for (k = kh_begin(cache.dir_points);
-             k != kh_end(cache.dir_points); ++k)
-        {
-            if (kh_exist(cache.dir_points, k))
-            {
+             k != kh_end(cache.dir_points); ++k) {
+            if (kh_exist(cache.dir_points, k)) {
                 val = kh_val(cache.dir_points, k);
-                if (val.n_hit < cache.c.min_n_hit_to_keep)
-                {
+                if (val.n_hit < cache.c.min_n_hit_to_keep) {
                     kh_del(points_hash, cache.dir_points, k);
                     if (val.pts.alloc) free(val.pts.buf);
                 }
@@ -587,9 +571,10 @@ void winnow_points_hash()
 /* synchronize points with the points hash.  if points->size < cached
    copy, copy from hash to points.  otherwise, copy the extra points
    in 'points' over to the entry in the hash. */
-void sync_points(union alpha_large_key key,
-                 struct points_buf *points,
-                 unsigned hash_frozen)
+void
+sync_points(union alpha_large_key key,
+            struct points_buf *points,
+            unsigned hash_frozen)
 {
     if (cache.disable_points_hash)
         return;
@@ -598,36 +583,29 @@ void sync_points(union alpha_large_key key,
         &cache.dir_points_vals_mtx[dir_points_key_group(key)];
 
     khiter_t k;
-    if (hash_frozen)
-    {
+    if (hash_frozen) {
         k = kh_get(points_hash, cache.dir_points, key.raw);
-        if (k != kh_end(cache.dir_points))
-        {
+        if (k != kh_end(cache.dir_points)) {
             pthread_mutex_lock(grp_mtx);
             struct counted_points stored = kh_value(cache.dir_points, k);
-            if (points->size <= stored.pts.size)
-            {
+            if (points->size <= stored.pts.size) {
                 pthread_mutex_unlock(grp_mtx);
                 append_extra_points(points, &stored.pts);
             }
-            else
-            {
+            else {
                 append_extra_points(&stored.pts, points); 
                 kh_val(cache.dir_points, k) = stored;
                 pthread_mutex_unlock(grp_mtx);
             }
         }
     }
-    else
-    {
+    else {
         pthread_rwlock_rdlock(&cache.dir_points_rwlock);
         k = kh_get(points_hash, cache.dir_points, key.raw);
-        if (k != kh_end(cache.dir_points))
-        {
+        if (k != kh_end(cache.dir_points)) {
             struct counted_points stored = kh_val(cache.dir_points, k);
             unsigned val_mod = 0, read_locked = 1;
-            if (stored.n_hit >= cache.c.min_n_hit_to_keep)
-            {
+            if (stored.n_hit >= cache.c.min_n_hit_to_keep) {
                 pthread_rwlock_unlock(&cache.dir_points_rwlock);
                 read_locked = 0;
             }
@@ -636,14 +614,12 @@ void sync_points(union alpha_large_key key,
 
             if (points->size <= stored.pts.size)
                 append_extra_points(points, &stored.pts);
-            else
-            {
+            else {
                 append_extra_points(&stored.pts, points);
                 val_mod = 1;
             }
 
-            if (val_mod)
-            {
+            if (val_mod) {
                 pthread_mutex_lock(grp_mtx);
                 kh_val(cache.dir_points, k) = stored;
                 pthread_mutex_unlock(grp_mtx);
@@ -651,21 +627,18 @@ void sync_points(union alpha_large_key key,
             if (read_locked)
                 pthread_rwlock_unlock(&cache.dir_points_rwlock);
         }
-        else
-        {
+        else {
             int ret;
             pthread_rwlock_unlock(&cache.dir_points_rwlock);
             pthread_rwlock_wrlock(&cache.dir_points_rwlock);
             k = kh_put(points_hash, cache.dir_points, key.raw, &ret);
-            if (ret == 0)
-            {
+            if (ret == 0) {
                 /* key was added in the mean time. do nothing, because
                    this is likely a rare situation and we can stand to
                    do a little re-computation. */
                 pthread_rwlock_unlock(&cache.dir_points_rwlock);
             }
-            else
-            {
+            else {
                 struct counted_points new_buf = {
                     .pts = { malloc(points->alloc * sizeof(points->buf[0])), 0, points->alloc },
                     .n_hit = 1
@@ -691,6 +664,7 @@ void sync_points(union alpha_large_key key,
    had alpha_counts initialized, and have their size field set
    appropriately (to zero if the points buffer is invalid). Use
    caching of individual dirichlet distributions whenever possible. */
+#if 0
 struct binomial_est_state 
 get_est_state(struct binomial_est_params *bpar)
 {
@@ -724,6 +698,44 @@ get_est_state(struct binomial_est_params *bpar)
     if (b_packable)
         sync_points(b_key, &bpar->dist[1]->points, bpar->points_hash_frozen);
     
+
+    return rval;
+}
+#endif
+
+struct binomial_est_state 
+get_est_state(struct binomial_est_params *bpar)
+{
+    union alpha_large_key key[2];
+    unsigned packable[2];
+    unsigned *cts[2];
+    unsigned i;
+    struct points_gen_par *pgp;
+    for (i = 0; i != 2; ++i) {
+        pgp = bpar->dist[i]->pgen.points_gen_par;
+        cts[i] = pgp->alpha_counts;
+        init_alpha_packed_large(cts[i], &key[i], &packable[i]);
+        if (bpar->dist[i]->points.size == 0 && packable[i])
+            sync_points(key[i], &bpar->dist[i]->points, 
+                        bpar->points_hash_frozen);
+    }
+
+    struct binomial_est_state rval =
+        binomial_quantile_est(cache.max_sample_points, 
+                              cache.min_dirichlet_dist, 
+                              cache.post_confidence,
+                              cache.beta_confidence, 
+                              bpar->dist[0]->pgen,
+                              &bpar->dist[0]->points, 
+                              bpar->dist[1]->pgen,
+                              &bpar->dist[1]->points,
+                              cache.batch_size);
+
+    for (i = 0; i != 2; ++i) {
+        if (packable[i])
+        sync_points(key[i], &bpar->dist[i]->points, 
+                    bpar->points_hash_frozen);
+    }
 
     return rval;
 }
@@ -794,21 +806,18 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
 
     INSERT_NODE_VERT(hd, lo);
 
-    while (1)
-    {
+    while (1) {
         unsigned i, x;
         struct ipoint *cen, *nn, *newnodes[NUMTOP * 2];
         for (i = 0; i != sizeof(newnodes) / sizeof(newnodes[0]); ++i)
             newnodes[i] = NULL;
 
         /* for each of the top NUMTOP nodes, create two flanking nodes. */
-        for (i = 0, cen = hd; i != NUMTOP && cen; ++i)
-        {
+        for (i = 0, cen = hd; i != NUMTOP && cen; ++i) {
             if (cen->left
                 && cen->left->down != (void *)0xDEADBEEF
                 && (x = (cen->x + cen->left->x) / 2) != cen->x
-                && x != cen->left->x)
-            {
+                && x != cen->left->x) {
                 nn = malloc(sizeof(struct ipoint));
                 nn->x = x;
                 y = pair_dist_aux(nn->x, bpar);
@@ -821,8 +830,7 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
             if (cen->right
                 && cen->right->down != (void *)0xDEADBEEF
                 && (x = (cen->x + cen->right->x) / 2) != cen->x
-                && x != cen->right->x)
-            {
+                && x != cen->right->x) {
                 nn = malloc(sizeof(struct ipoint));
                 nn->x = x;
                 y = pair_dist_aux(nn->x, bpar);
@@ -860,8 +868,7 @@ unsigned noisy_mode(unsigned xmin, unsigned xend, void *bpar)
 
     /* clean up */
     struct ipoint *p;
-    while (hd)
-    {
+    while (hd) {
         p = hd;
         hd = hd->down;
         free(p);
@@ -945,8 +952,7 @@ void *init_bounds_func(void *args)
     unsigned i, b1, b2, a2;
     for (b1 = ib->start_offset; b1 < MAX_ALPHA1_PREPOP; b1 += ib->jump)
         for (b2 = 0; b2 != MAX_ALPHA2_PREPOP; ++b2)
-            for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2)
-            {
+            for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2) {
                 i = BOUNDS_INDEX(a2, b1, b2);
                 initialize_est_bounds(a2, b1, b2, &bpar, ib->buf + i);
             }
@@ -973,8 +979,7 @@ void prepopulate_bounds_keys(unsigned n_threads)
     pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
 
     unsigned t;
-    for (t = 0; t != n_threads; ++t)
-    {
+    for (t = 0; t != n_threads; ++t) {
         ib[t] = (struct init_bounds_input){ buf, pseudo_buf, t, n_threads };
         pthread_create(&threads[t], NULL, init_bounds_func, &ib[t]);
     }
@@ -992,15 +997,13 @@ void prepopulate_bounds_keys(unsigned n_threads)
        thread. */
     for (b1 = 0; b1 != MAX_ALPHA1_PREPOP; ++b1)
         for (b2 = ib->start_offset; b2 < MAX_ALPHA2_PREPOP; b2 += ib->jump)
-            for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2)
-            {
+            for (a2 = 0; a2 != MAX_ALPHA2_PREPOP; ++a2) {
                 i = BOUNDS_INDEX(a2, b1, b2);
                 bk = (union bounds_key){ .f = { a2, b1, b2 } };
                 k = kh_put(bounds_hash, cache.bounds, bk.val, &ret);
                 kh_val(cache.bounds, k) = buf[i];
             }
-    for (a2 = 0; a2 != MAX_ALPHA2_PSEUDO_PREPOP; ++a2)
-    {
+    for (a2 = 0; a2 != MAX_ALPHA2_PSEUDO_PREPOP; ++a2) {
         bk = (union bounds_key){ .f = { a2, cache.pseudo_depth, 0 } };
         k = kh_put(bounds_hash, cache.bounds, bk.val, &ret);
         kh_val(cache.bounds, k) = pseudo_buf[a2];
@@ -1049,35 +1052,29 @@ get_fuzzy_state(struct binomial_est_params *bpar,
     int state_unset;
     unsigned prepop_key = bounds_key_prepopulated(bk);
 
-    if (hash_frozen || prepop_key)
-    {
+    if (hash_frozen || prepop_key) {
         k = kh_get(bounds_hash, cache.bounds, bk.val);
-        if (k != kh_end(cache.bounds))
-        {
+        if (k != kh_end(cache.bounds)) {
             beb = kh_val(cache.bounds, k);
             *state = locate_cell(&beb, a1);
             state_unset = 0;
         }
-        else
-        {
+        else {
             *was_set = 0;
             state_unset = 1;
         }
     }
-    else
-    {
+    else {
         pthread_rwlock_rdlock(&cache.bounds_rwlock);
         k = kh_get(bounds_hash, cache.bounds, bk.val);
-        if (k != kh_end(cache.bounds))
-        {
+        if (k != kh_end(cache.bounds)) {
             beb = kh_val(cache.bounds, k);
             pthread_rwlock_unlock(&cache.bounds_rwlock);
 
             *state = locate_cell(&beb, a1);
             state_unset = 0;
         }
-        else
-        {
+        else {
             /* key not found.  */
             *was_set = 0;
             int ret;
@@ -1119,8 +1116,7 @@ cached_dirichlet_diff(unsigned *a,
     int state_unset;
 
     find_cacheable_permutation(a, b, lim, p, cacheable);
-    if (*cacheable)
-    {
+    if (*cacheable) {
         unsigned a1 = a[p[0]], a2 = a[p[1]], b1 = b[p[0]], b2 = b[p[1]];
         state_unset = 
             get_fuzzy_state(bpar, a1, a2, b1, b2, 
@@ -1128,8 +1124,7 @@ cached_dirichlet_diff(unsigned *a,
     }
     else state_unset = 1;
 
-    if (state_unset)
-    {
+    if (state_unset) {
         /* not worth caching */
         unsigned lim2[] = { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
         find_cacheable_permutation(a, b, lim2, p, cacheable);
@@ -1160,8 +1155,7 @@ void read_diststats_line(FILE *fh,
                &beb->unchanged[0],
                &beb->unchanged[1],
                &beb->ambiguous[1]);
-    if (n != 7)
-    {
+    if (n != 7) {
         fprintf(stderr, "error reading diststats line at %s: %u\n", __FILE__, __LINE__);
         exit(1);
     }
@@ -1192,18 +1186,15 @@ bla
 
     if (cache.b.n_items >= cache.b.max_items
         && cache.b.n_last_cleared_entries > MIN_LAST_CLEARED_BOUNDS_ENTRIES
-        && cache.b.n_times_cleared < MAX_TIMES_CLEARED)
-    {
+        && cache.b.n_times_cleared < MAX_TIMES_CLEARED) {
         struct binomial_est_bounds beb;
         khiter_t k;
 
         pthread_mutex_lock(&cache.bounds_mtx);
         khint_t old_size = kh_size(cache.bounds);
         for (k = kh_begin(cache.bounds);
-             k != kh_end(cache.bounds); ++k)
-        {
-            if (kh_exist(cache.bounds, k))
-            {
+             k != kh_end(cache.bounds); ++k) {
+            if (kh_exist(cache.bounds, k)) {
                 cb = kh_value(cache.bounds, k);
                 if (cb.n_hit < cache.min_n_hit_to_keep)
                     kh_del(bounds_hash, cache.bounds, k);
@@ -1247,8 +1238,7 @@ void parse_diststats_header(FILE *diststats_fh, double *prior_alpha)
                &cache.post_confidence,
                &cache.beta_confidence,
                prior_alpha);
-    if (n != 7)
-    {
+    if (n != 7) {
         fprintf(stderr, "error parsing diststats header at %s: %ul\n", __FILE__, __LINE__);
         exit(1);
     }
@@ -1280,13 +1270,11 @@ void parse_diststats_body(FILE *diststats_fh, unsigned max1, unsigned max2)
 {
     struct binomial_est_bounds beb;
     unsigned a2, b1, b2;
-    while (! feof(diststats_fh))
-    {
+    while (! feof(diststats_fh)) {
         read_diststats_line(diststats_fh, &a2, &b1, &b2, &beb);
         if (a2 < max2 && b2 < max2 && b1 < max1)
             cache.bounds[a2][b2][b1] = beb;
-        else
-        {
+        else {
             fprintf(stderr, 
                     "Error at %s: %u\n"
                     "Indices exceed limits.  A2 = %u, B2 = %u, B1 = %u, MAX1 = %u, MAX2 = %u\n",
