@@ -10,7 +10,8 @@
 
 
 /* returns 1 if ix contains ord, 0 otherwise */
-int contains(struct file_bsearch_node *ix, struct pair_ordering *ord)
+int
+contains(struct file_bsearch_node *ix, struct pair_ordering *ord)
 {
     return (cmp_pair_ordering(&ix->span_beg, ord) <= 0
             && cmp_pair_ordering(ord, &ix->span_end) < 0);
@@ -28,7 +29,8 @@ static size_t mem_scan_threshold;
    buf the nearest line start of a complete line to the left of the
    current position in the file.  buf is allocated with an initial
    'sz'. */
-char *rfind_linestart(char *buf, size_t buf_sz, FILE *fh)
+char *
+rfind_linestart(char *buf, size_t buf_sz, FILE *fh)
 {
     char *nl = NULL;
     off_t max_sz = ftello(fh);
@@ -49,27 +51,27 @@ char *rfind_linestart(char *buf, size_t buf_sz, FILE *fh)
 
 
 /* initialize resources */
-void file_bsearch_init(get_line_ord_t _get_line_ord,
-                       size_t _mem_scan_threshold)
+void 
+file_bsearch_init(get_line_ord_t _get_line_ord,
+                  size_t _mem_scan_threshold)
 {
     get_line_ord = _get_line_ord;
     mem_scan_threshold = _mem_scan_threshold;
 }
 
 /* generate a root index that spans the whole file */
-struct file_bsearch_index file_bsearch_make_index(const char *file)
+struct file_bsearch_index
+file_bsearch_make_index(const char *file)
 {
     struct file_bsearch_node *root = 
         malloc(sizeof(struct file_bsearch_node));
 
     FILE *fh = fopen(file, "r");
-    if (! fh)
-    {
+    if (! fh) {
         fprintf(stderr, "%s: couldn't open file %s\n", __func__, file);
         exit(1);
     }
-    if (! get_line_ord)
-    {
+    if (! get_line_ord) {
         fprintf(stderr, "file_binary_search: error, you didn't call file_besearch_init()\n");
         exit(1);
     }
@@ -119,10 +121,8 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
     /* expansion phase. find the node at or above ix->cur_node that
        contains cur. (this may not be the lowest such node) */
     struct file_bsearch_node *nd = ix->cur_node;
-    while (! contains(nd, &cur) && nd->parent)
-    {
-        if (! nd->parent)
-        {
+    while (! contains(nd, &cur) && nd->parent) {
+        if (! nd->parent) {
             fprintf(stderr, "Error at %s: index does not contain query\n", __func__);
             exit(1);
         }
@@ -139,22 +139,18 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
     size_t span;
     ssize_t nchars_read;
     char *line_start;
-    while (! nd->span_contents)
-    {
+    while (! nd->span_contents) {
         /* find the midpoint */
         if (read_off == -1
-            && (span = nd->end_offset - nd->start_offset) <= mem_scan_threshold)
-        {
+            && (span = nd->end_offset - nd->start_offset) <= mem_scan_threshold) {
             /* */
             read_off = nd->start_offset;
             fseeko(fh, nd->start_offset, SEEK_SET);
             (void)fread(ix->mem_scan_buf, 1, span, fh);
         }
-        if (nd->left == NULL && nd->right == NULL)
-        {
+        if (nd->left == NULL && nd->right == NULL) {
             midpoint_off = (nd->end_offset + nd->start_offset) / 2;
-            if (read_off != -1)
-            {
+            if (read_off != -1) {
                 /* initialize midpoint_off, midpoint_ord from memory */
                 line_start = strchr(ix->mem_scan_buf + (midpoint_off - read_off), '\n') + 1;
                 midpoint_off = read_off + (line_start - ix->mem_scan_buf);
@@ -162,9 +158,7 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
                     break;
                 
                 midpoint_ord = get_line_ord(line_start);
-            }
-            else
-            {
+            } else {
                 /* initialize midpoint_off, midpoint_ord from file */
                 fseeko(fh, midpoint_off, SEEK_SET);
                 nchars_read = getline(&ix->line_buf, &ix->line_len, fh);
@@ -181,17 +175,14 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
                 midpoint_ord = get_line_ord(line_start);
             }
 
-        }
-        else
-        {
+        } else {
             midpoint_ord = nd->left ? nd->left->span_end : nd->right->span_beg;
             midpoint_off = nd->left ? nd->left->end_offset : nd->right->start_offset;
         }
 
         /* create a new child node as necessary */
         int cmp = cmp_pair_ordering(&cur, &midpoint_ord);
-        if (cmp < 0 && ! nd->left)
-        {
+        if (cmp < 0 && ! nd->left) {
             assert(nd->start_offset < midpoint_off);
             ix->n_nodes++;
             nd->left = malloc(sizeof(struct file_bsearch_node));
@@ -201,8 +192,7 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
                 NULL, NULL, nd, NULL
             };
         }            
-        if (cmp >= 0 && ! nd->right)
-        {
+        if (cmp >= 0 && ! nd->right) {
             assert(midpoint_off < nd->end_offset);
             ix->n_nodes++;
             nd->right = malloc(sizeof(struct file_bsearch_node));
@@ -213,19 +203,17 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
             };
         }
 
-        /* traverse to appropriate child node */
+        /* traverse to appropriate child node and repeat */
         nd = cmp < 0 ? nd->left : nd->right;
     }
-    if (! nd->span_contents)
-    {
-        if (read_off != -1)
-        {
+    if (! nd->span_contents) {
+        /* we're in a new node; span no longer valid. */
+        span = nd->end_offset - nd->start_offset;
+        if (read_off != -1) {
             /* mem_scan_buf has been initialized.  safe to populate span_contents */
             nd->span_contents = 
                 strndup(ix->mem_scan_buf + (nd->start_offset - read_off), span);
-        }
-        else
-        {
+        } else {
             nd->span_contents = malloc(span);
             fseeko(ix->fh, nd->start_offset, SEEK_SET);
             fread(nd->span_contents, 1, span, ix->fh);
@@ -239,9 +227,10 @@ find_loose_index(struct file_bsearch_index *ix, struct pair_ordering cur, FILE *
    start (cmp == 0) or end (cmp == 1) of first line greater than
    query. if query < nd->span_beg, return nd->start_offset.  if query
    >= nd->span_end, return nd->end_offset */
-off_t off_bound_aux(struct file_bsearch_node *nd,
-                    struct pair_ordering query,
-                    int cmp)
+off_t
+off_bound_aux(struct file_bsearch_node *nd,
+              struct pair_ordering query,
+              int cmp)
 {
     struct pair_ordering cur = nd->span_beg;
 
@@ -249,11 +238,9 @@ off_t off_bound_aux(struct file_bsearch_node *nd,
         *start = nd->span_contents,
         *end = start + (nd->end_offset - nd->start_offset);
 
-    while (cmp_pair_ordering(&cur, &query) < cmp)
-    {
+    while (cmp_pair_ordering(&cur, &query) < cmp) {
         start = strchr(start, '\n') + 1;
-        if (start == end)
-        {
+        if (start == end) {
             cur = nd->span_end;
             break;
         }
@@ -267,8 +254,9 @@ off_t off_bound_aux(struct file_bsearch_node *nd,
 
 /* return the largest offset such that all lines spanning query start
    at or after this offset. */
-off_t off_lower_bound(struct file_bsearch_index *ix,
-                      struct pair_ordering query)
+off_t
+off_lower_bound(struct file_bsearch_index *ix,
+                struct pair_ordering query)
 {
     find_loose_index(ix, query, ix->fh);
     return off_bound_aux(ix->cur_node, query, 0);
@@ -276,8 +264,9 @@ off_t off_lower_bound(struct file_bsearch_index *ix,
 
 /* return the smallest offset such that all lines spanning this
    query end at or before this offset. */
-off_t off_upper_bound(struct file_bsearch_index *ix,
-                      struct pair_ordering query)
+off_t
+off_upper_bound(struct file_bsearch_index *ix,
+                struct pair_ordering query)
 {
     find_loose_index(ix, query, ix->fh);
     return off_bound_aux(ix->cur_node, query, 1);
@@ -286,9 +275,10 @@ off_t off_upper_bound(struct file_bsearch_index *ix,
 
 /* return an estimated upper size limit to contain the logical range
    [beg, end) */
-size_t range_to_size(struct file_bsearch_index *ix,
-                     struct pair_ordering beg,
-                     struct pair_ordering end)
+size_t
+range_to_size(struct file_bsearch_index *ix,
+              struct pair_ordering beg,
+              struct pair_ordering end)
 {
     return off_lower_bound(ix, end) - off_lower_bound(ix, beg);
 }
@@ -296,9 +286,10 @@ size_t range_to_size(struct file_bsearch_index *ix,
 
 /* return an estimated highest upper bound logical position that uses
    <= size bytes */
-struct pair_ordering size_to_range(struct file_bsearch_index *ix,
-                                   struct pair_ordering beg,
-                                   size_t size)
+struct pair_ordering
+size_to_range(struct file_bsearch_index *ix,
+              struct pair_ordering beg,
+              size_t size)
 {
     off_t off_cur = off_lower_bound(ix, beg) + (off_t)size;
 
@@ -309,8 +300,7 @@ struct pair_ordering size_to_range(struct file_bsearch_index *ix,
     off_t off = MIN(1000, size); /* reasonable initial estimate for a line length */
     char *buf = malloc(off + 1), *newline = NULL;
     
-    while (! newline && off != size)
-    {
+    while (! newline && off != size) {
         buf = realloc(buf, off + 1);
         fseeko(ix->fh, -off, SEEK_CUR);
         fread(buf, 1, off, ix->fh);
@@ -327,10 +317,11 @@ struct pair_ordering size_to_range(struct file_bsearch_index *ix,
 
 /* read a logical range into a buffer.  caller must ensure buf is
    allocated. */
-size_t read_range(struct file_bsearch_index *ix,
-                  struct pair_ordering beg,
-                  struct pair_ordering end,
-                  char *buf)
+size_t
+read_range(struct file_bsearch_index *ix,
+           struct pair_ordering beg,
+           struct pair_ordering end,
+           char *buf)
 {
     off_t off_beg = off_lower_bound(ix, beg);
     off_t off_end = off_lower_bound(ix, end);
@@ -344,7 +335,8 @@ size_t read_range(struct file_bsearch_index *ix,
 
 
 /* free the index tree at root. */
-size_t file_bsearch_node_free(struct file_bsearch_node *root)
+size_t
+file_bsearch_node_free(struct file_bsearch_node *root)
 {
     size_t c = 0;
     if (root->left) c += file_bsearch_node_free(root->left);
@@ -357,7 +349,8 @@ size_t file_bsearch_node_free(struct file_bsearch_node *root)
 }
 
 
-void file_bsearch_index_free(struct file_bsearch_index ix)
+void
+file_bsearch_index_free(struct file_bsearch_index ix)
 {
     free(ix.mem_scan_buf);
     if (ix.line_buf) free(ix.line_buf);
@@ -367,9 +360,10 @@ void file_bsearch_index_free(struct file_bsearch_index ix)
 
 /* free all descendents of node that are contained in [beg,
    end). return the number of nodes freed. */
-size_t node_range_free(struct file_bsearch_node *node,
-                       struct pair_ordering beg,
-                       struct pair_ordering end)
+size_t
+node_range_free(struct file_bsearch_node *node,
+                struct pair_ordering beg,
+                struct pair_ordering end)
 {
     struct pair_ordering mid;
     int cmp_beg, cmp_end;
@@ -377,8 +371,7 @@ size_t node_range_free(struct file_bsearch_node *node,
 
     if (! node) return 0;
     if ((cmp_beg = cmp_pair_ordering(&beg, &node->span_beg)) <= 0
-        && (cmp_end = cmp_pair_ordering(&node->span_end, &end)) <= 0)
-    {
+        && (cmp_end = cmp_pair_ordering(&node->span_end, &end)) <= 0) {
         /* this node is fully contained by the query range.  free it,
            and update the parent's children */
         struct file_bsearch_node *parent = node->parent;
@@ -403,9 +396,10 @@ size_t node_range_free(struct file_bsearch_node *node,
 
 /* frees all nodes that are fully contained in [beg, end) range.  sets
    cur_node to root. */
-size_t file_bsearch_range_free(struct file_bsearch_index *ix,
-                               struct pair_ordering beg,
-                               struct pair_ordering end)
+size_t
+file_bsearch_range_free(struct file_bsearch_index *ix,
+                        struct pair_ordering beg,
+                        struct pair_ordering end)
 {
     ix->cur_node = ix->root;
     size_t n_nodes_freed = node_range_free(ix->root, beg, end);
