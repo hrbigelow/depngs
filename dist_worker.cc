@@ -10,7 +10,7 @@
 #include <gsl/gsl_randist.h>
 #include <time.h>
 #include <pthread.h>
-
+#include <sys/resource.h>
 
 extern "C" {
 #include "locus.h"
@@ -1350,18 +1350,22 @@ void dist_worker(void *par,
         struct timespec now;
         clock_gettime(CLOCK_REALTIME, &now);
         unsigned elapsed = now.tv_sec - start_time.tv_sec;
+        struct rusage ru;
+        getrusage(RUSAGE_SELF, &ru);
 
         time_t cal = time(NULL);
         char *ts = strdup(ctime(&cal));
         ts[strlen(ts)-1] = '\0';
         fprintf(stdout, 
-                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i\n", 
+                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i. (%li bytes maxrss)\n", 
                 ts,
                 elapsed / 3600,
                 (elapsed % 3600) / 60,
                 elapsed % 60,
                 dw->lslist[gs].locus.reference,
-                dw->lslist[gs].locus.position);
+                dw->lslist[gs].locus.position,
+                ru.ru_maxrss
+                );
         fflush(stdout);
         free(ts);
     }

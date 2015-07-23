@@ -3,6 +3,7 @@
 #include "defs.h"
 #include "dist_worker.h"
 #include "pileup_tools.h"
+#include <mcheck.h>
 
 extern "C" {
 #include "dict.h"
@@ -247,9 +248,11 @@ int main_dist(int argc, char **argv)
                             n_threads, n_readers, max_input_mem,
                             dist_fh, comp_fh, indel_fh);
 
+    // mtrace();
     printf("Starting input processing.\n");
     thread_queue_run(tqueue);
     thread_queue_free(tqueue);
+    // muntrace();
 
     print_pair_stats(summary_stats_file);
 
