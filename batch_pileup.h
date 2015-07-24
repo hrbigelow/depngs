@@ -37,6 +37,11 @@
 #include "compat_util.h"
 #include "genome.h"
 
+/* special sample number that produces simulated statistics that match
+   the reference genotype. use for pileup_{basecall,bqs,indel}_stats
+   calls. */
+#define PILEUP_REF_SAMPLE UINT_MAX
+
 struct indel_seq {
     char is_ins;
     char seq[FLEX_ARRAY]; /* zero-terminated */
