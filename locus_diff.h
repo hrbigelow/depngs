@@ -9,21 +9,31 @@
 #include "dirichlet_diff_cache.h"
 #include "batch_pileup.h"
 
-void locus_diff_init(double _post_confidence, 
-                     double _min_dirichlet_dist,
-                     unsigned _max_sample_points,
-                     const char *samples_file,
-                     const char *sample_pairs_file,
-                     const char *fasta_file,
-                     unsigned min_quality_score,
-                     const char *quantiles_string,
-                     unsigned do_dist,
-                     unsigned do_comp,
-                     unsigned do_indel,
-                     unsigned do_print_pileup);
+/* program-wide initialization of static variables */
+void
+locus_diff_init(double _post_confidence, 
+                double _beta_confidence,
+                double _min_dirichlet_dist,
+                unsigned _max_sample_points,
+                unsigned _max_dir_cache_items,
+                unsigned _max_bounds_cache_items,
+                unsigned n_threads,
+                double prior_alpha,
+                const char *samples_file,
+                const char *sample_pairs_file,
+                const char *fasta_file,
+                unsigned min_quality_score,
+                const char *quantiles_string,
+                unsigned do_dist,
+                unsigned do_comp,
+                unsigned do_indel,
+                unsigned do_print_pileup);
 
 void locus_diff_free();
 
+
+/* program-wide initialization of static variables, specific to the
+   thread-queue. (also calls thread_queue_init) */
 struct thread_queue *
 locus_diff_tq_init(const char *query_range_file,
                    unsigned n_threads,

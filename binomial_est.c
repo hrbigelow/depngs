@@ -7,13 +7,11 @@
 #include <gsl/gsl_math.h>
 #include <gsl/gsl_errno.h>
 
-#include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>
 #include <pthread.h>
 
 #include "cache.h"
-#include "dirichlet_points_gen.h"
 
 const char *fuzzy_state_strings[] = {
     "changed",

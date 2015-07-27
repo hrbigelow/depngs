@@ -18,14 +18,14 @@ static struct phred {
 } error_probability[255];
 
 void
-init_dirichlet_points_gen(double _alpha_prior)
+dirichlet_points_gen_init(double _alpha_prior)
 {
     alpha_prior = _alpha_prior;
 
     unsigned q;
     double ep;
     for (q = 0; q != 255; ++q) {
-        ep = pow(10.0, (double)-q / 10.0);
+        ep = pow(10.0, -(double)q / 10.0);
         error_probability[q] = (struct phred){ 1.0 - ep, ep / 3.0 };
     }
 }

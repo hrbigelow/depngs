@@ -77,10 +77,11 @@ struct pos_indel_count {
 
 
 /* hash type for storing bqt (basecall, quality, strand) counts at
-   position.  use  */
+   position.  uses 'union pbqt_key' as the key  */
 KHASH_MAP_INIT_INT64(pbqt_h, unsigned);
 
-/* hash type for storing basecall counts at position */
+/* hash type for storing basecall counts at position. uses 'union
+   pos_key' as the key. */
 KHASH_MAP_INIT_INT64(pb_h, struct base_count);
 
 /* hash type for storing distinct indel types. */
@@ -97,9 +98,9 @@ KHASH_MAP_INIT_STR(olap_h, char *);
 /* complete tally statistics for the set of BAM records overlapping a
    given set of locus ranges. */
 struct tally_stats {
- /* Once tallying is complete, pbqt_hash and indel_ct_hash have
-    complete statistics for loci < tally_end, and
-    partial statistics for loci in [tally_end, MAX). */
+    /* Once tallying is complete, pbqt_hash and indel_ct_hash have
+       complete statistics for loci < tally_end, and
+       partial statistics for loci in [tally_end, MAX). */
     khash_t(pbqt_h) *pbqt_hash;
     khash_t(indel_ct_h) *indel_ct_hash;
     /* */
@@ -130,17 +131,29 @@ static unsigned min_quality_score;
 
 
 void
-batch_pileup_init(unsigned min_qual)
+batch_pileup_init(unsigned min_qual, const char *fasta_file)
 {
     min_quality_score = min_qual;
+    unsigned do_load_seqs = 1;
+    genome_init(fasta_file, do_load_seqs);
 }
+
+
+void
+batch_pileup_free()
+{
+    genome_free();
+}
+
 
 
 /* */
 void
 batch_pileup_thread_init(unsigned n_samples)
 {
+    tls.indel_hash = kh_init(indel_h);
     tls.n_samples = n_samples;
+    tls.tally_end = (struct contig_pos){ 0, 0 };
     tls.ts = malloc(n_samples * sizeof(struct tally_stats));
     unsigned s;
     for (s = 0; s != n_samples; ++s)
@@ -158,13 +171,19 @@ batch_pileup_thread_init(unsigned n_samples)
             .indel_cur = NULL, 
             .indel_end = NULL
         };
-    tls.tally_end = (struct contig_pos){ 0, 0 };
 }
 
 
 void
 batch_pileup_thread_free()
 {
+    khiter_t it;
+    for (it = kh_begin(tls.indel_hash); it != kh_end(tls.indel_hash); ++it)
+        if (kh_exist(tls.indel_hash, it))
+            free(kh_val(tls.indel_hash, it));
+
+    kh_destroy(indel_h, tls.indel_hash);
+
     unsigned s;
     for (s = 0; s != tls.n_samples; ++s) {
         struct tally_stats *ts = &tls.ts[s];
@@ -239,13 +258,15 @@ summarize_pileup_stats(unsigned s)
 }
 
 
-
+/* return 0,1,2,3 if the current position reference base is A,C,G,T
+   (or their lowercase equivalent), or 4 for anything else. */
 static unsigned
 get_cur_refbase_index()
 {
     char refbase = reference_seq.contig[tls.cur_pos.tid].seq[tls.cur_pos.pos];
-    static char nucs[] = "ACGTN";
-    return index(nucs, toupper(refbase)) - nucs;
+    static char nucs[] = "ACGT";
+    char *p;
+    return (p = index(nucs, toupper(refbase))) == NULL ? 4 : p - nucs;
 }
 
 
@@ -263,13 +284,13 @@ pileup_basecall_stats(unsigned s)
         { { 0, 0, 0, 0 }, 0, 0 }
     };
 
+    if (s == REFERENCE_SAMPLE)
+        return refsam_ct[get_cur_refbase_index()];
+
     struct tally_stats *ts = &tls.ts[s];
     if (ts->base_cur == ts->base_end
         || less_contig_pos(tls.cur_pos, ts->base_cur->cpos))
         return null_ct;
-
-    if (s == PILEUP_REF_SAMPLE)
-        return refsam_ct[get_cur_refbase_index()];
 
     else
         return ts->base_cur->bct;
@@ -300,7 +321,7 @@ pileup_bqs_stats(unsigned s, struct bqs_count **cts, unsigned *n_cts)
         { 3, 50, 0, 1e6 }
     };
 
-    if (s == PILEUP_REF_SAMPLE) {
+    if (s == REFERENCE_SAMPLE) {
         *n_cts = 1;
         *cts = realloc(*cts, 1 * sizeof(struct bqs_count));
         (*cts)[0] = ref_bqs[get_cur_refbase_index()];
@@ -336,16 +357,15 @@ pileup_bqs_stats(unsigned s, struct bqs_count **cts, unsigned *n_cts)
 void
 pileup_indel_stats(unsigned s, struct indel_count **cts, unsigned *n_cts)
 {
-    unsigned n = 0;
-    struct pos_indel_count *pc = tls.ts[s].indel_cur;
-    
-    if (s == PILEUP_REF_SAMPLE) {
+    if (s == REFERENCE_SAMPLE) {
         *n_cts = 0;
         return;
     }
     
     /* pre-scan to find total number of distinct indels (use linear
        scan since this will be very small) */
+    struct pos_indel_count *pc = tls.ts[s].indel_cur;
+    unsigned n = 0;
     while (pc != tls.ts[s].indel_end &&
            equal_contig_pos(pc->cpos, tls.cur_pos))
         ++n;
@@ -496,6 +516,7 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
     uint32_t *cigar = bam_get_cigar(b), op, ln;
     unsigned strand = bam_is_rev(b) ? 0 : 1;
     int ret;
+    khash_t(pbqt_h) *ph = ts->pbqt_hash;
     
     for (c = 0; c != b->core.n_cigar; ++c) {
         op = bam_cigar_op(cigar[c]);
@@ -509,13 +530,15 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
                     .v = {
                         r, tid, 
                         bam_seqi(bam_get_seq(b), q), 
-                        bam_get_qual(b)[q] - 33, /* BAM stores ASCII of (Phred Qual - 33)*/
+                        bam_get_qual(b)[q],
                         strand 
                     }
                 };
-                if ((it = kh_get(pbqt_h, ts->pbqt_hash, stat.k)) == kh_end(ts->pbqt_hash))
-                    it = kh_put(pbqt_h, ts->pbqt_hash, stat.k, &ret);
-                kh_val(ts->pbqt_hash, it)++;
+                if ((it = kh_get(pbqt_h, ph, stat.k)) == kh_end(ph)) {
+                    it = kh_put(pbqt_h, ph, stat.k, &ret);
+                    kh_val(ph, it) = 0;
+                }
+                kh_val(ph, it)++;
             }
         } else if (op == BAM_CINS || op == BAM_CDEL) {
             /* tally insertion of query. */
@@ -550,41 +573,38 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
 }
 
 
-/* process an entire BAM block.  maintains a map of possibly
-   overlapping reads and resolves their quality scores. returns the
-   last position processed, or { 0, 0 } if given empty input (raw ==
-   end). */
+/* process an entire set of raw (uncompressed) BAM records in [rec,
+   end).  maintains a map of possibly overlapping reads and resolves
+   their quality scores. returns the last position processed, or { 0,
+   0 } if given empty input. */
 struct contig_pos
-process_bam_block(char *raw, char *end, struct tally_stats *ts)
+process_bam_block(char *rec, char *end, struct tally_stats *ts)
 {
     bam1_t b, b_mate;
     int ret;
-    char *rtmp;
+    char *rec_next;
     struct contig_pos last_pos = { 0, 0 };
-    while (raw != end) {
-        rtmp = bam_parse(raw, &b);
+    while (rec != end) {
+        rec_next = bam_parse(rec, &b);
         if (! (b.core.flag & BAM_FPAIRED) || ! (b.core.flag & BAM_FPROPER_PAIR)) {
             /* either this read is not paired or it is paired but not
                mapped in a proper pair.  tally and don't store. */
             process_bam_stats(&b, ts);
-        } else {
-            /* read is paired and mapped in proper pair */
-            if (b.core.pos <= b.core.mpos) {
-                /* b is upstream */
-                if (bam_endpos(&b) < b.core.mpos) {
-                    /* does not overlap. tally and don't store */
+        } else { /* b is paired and mapped in proper pair */
+            if (b.core.pos < b.core.mpos) { /* b is upstream mate */
+                if (bam_endpos(&b) < b.core.mpos) { /* does not overlap with mate */
                     process_bam_stats(&b, ts);
                 } else {
-                    /* b overlaps its mate.  since it is upstream, it
-                       shouldn't be in the overlaps hash.  store in
-                       overlaps hash. do not tally yet. */
-                    khiter_t it = kh_put(olap_h, ts->overlap_hash, bam_get_qname(&b), &ret);
-                    kh_val(ts->overlap_hash, it) = rtmp;
+                    /* b overlaps mate.  since b is upstream, it won't
+                       have been stored in overlaps hash yet. store;
+                       do not tally yet. */
+                    khiter_t it =
+                        kh_put(olap_h, ts->overlap_hash, bam_get_qname(&b), &ret);
+                    kh_val(ts->overlap_hash, it) = rec;
                 }
             } else {
-                /* b is paired and mapped in proper pair and downstream. the
-                   only way we can tell if it overlaps for sure is to search
-                   the overlaps hash. */
+                /* b is downstream mate. must search overlaps hash to
+                   see if it overlaps with its upstream mate. */
                 khiter_t it =
                     kh_get(olap_h, ts->overlap_hash, bam_get_qname(&b));
                 if (it != kh_end(ts->overlap_hash)) {
@@ -594,14 +614,21 @@ process_bam_block(char *raw, char *end, struct tally_stats *ts)
                     process_bam_stats(&b_mate, ts);
                     kh_del(olap_h, ts->overlap_hash, it);
                 } else {
-                    /* downstream mate does not overlap with its
-                       upstream partner */
-                    process_bam_stats(&b, ts);
+                    if (b.core.pos != b.core.mpos) {
+                        /* downstream mate does not overlap with its
+                           upstream partner */
+                        process_bam_stats(&b, ts);
+                    } else {
+                        /* b is first in the pair to be encountered.  store it */
+                        khiter_t it = 
+                            kh_put(olap_h, ts->overlap_hash, bam_get_qname(&b), &ret);
+                        kh_val(ts->overlap_hash, it) = rec;
+                    }
                 }
             }
         }
-        if (rtmp == end) last_pos = (struct contig_pos){ b.core.tid, b.core.pos };
-        raw = rtmp;
+        if (rec_next == end) last_pos = (struct contig_pos){ b.core.tid, b.core.pos };
+        rec = rec_next;
     }
     return last_pos;
 }
@@ -612,33 +639,34 @@ process_bam_block(char *raw, char *end, struct tally_stats *ts)
 static void
 summarize_base_counts(unsigned s, struct contig_pos tally_end)
 {
-    union pbqt_key k;
-    unsigned ct;
-    khash_t(pbqt_h) *h_src = tls.ts[s].pbqt_hash;
-    khash_t(pb_h) *h_trg = tls.ts[s].pb_hash;
-    kh_clear(pb_h, h_trg);
-    khiter_t i, j;
-    int ret;
-    struct contig_pos kpos;
-    for (i = kh_begin(h_src); i != kh_end(h_src); ++i) {
-        if (! kh_exist(h_src, i)) continue;
-        k.k = kh_key(h_src, i);
-        kpos = (struct contig_pos){ k.v.tid, k.v.pos };
-        if (! less_contig_pos(kpos, tally_end)) continue;
+    union pbqt_key src_k;
+    khash_t(pbqt_h) *src_h = tls.ts[s].pbqt_hash;
 
-        ct = kh_val(h_src, i);
-        j = kh_get(pb_h, h_trg, k.v.pos);
-        if (j == kh_end(h_trg)) 
-        {
-            j = kh_put(pb_h, h_trg, k.v.pos, &ret);
-            assert(ret == 0);
-            kh_val(h_trg, j) = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
+    union pos_key trg_k;
+    khash_t(pb_h) *trg_h = tls.ts[s].pb_hash;
+
+    unsigned ct;
+    kh_clear(pb_h, trg_h);
+    khiter_t src_itr, trg_itr;
+    int ret;
+    for (src_itr = kh_begin(src_h); src_itr != kh_end(src_h); ++src_itr) {
+        if (! kh_exist(src_h, src_itr)) continue;
+        src_k.k = kh_key(src_h, src_itr);
+        trg_k.v = (struct contig_pos){ src_k.v.tid, src_k.v.pos };
+        if (! less_contig_pos(trg_k.v, tally_end)) continue;
+
+        ct = kh_val(src_h, src_itr);
+        trg_itr = kh_get(pb_h, trg_h, trg_k.k);
+        if (trg_itr == kh_end(trg_h)) {
+            trg_itr = kh_put(pb_h, trg_h, trg_k.k, &ret);
+            assert(ret != 0);
+            kh_val(trg_h, trg_itr) = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
         }
-        if (k.v.qual >= min_quality_score) {
-            kh_val(h_trg, j).ct_filt[k.v.base] += ct;
-            kh_val(h_trg, j).n_match_hi_q += ct;
+        if (src_k.v.qual >= min_quality_score) {
+            kh_val(trg_h, trg_itr).ct_filt[src_k.v.base] += ct;
+            kh_val(trg_h, trg_itr).n_match_hi_q += ct;
         } else {
-            kh_val(h_trg, j).n_match_lo_q += ct;
+            kh_val(trg_h, trg_itr).n_match_lo_q += ct;
         }
     }
 }
@@ -738,8 +766,8 @@ free_indel_counts(struct indel_count_node *nd)
    in a sample s at pos. */
 static void
 incr_indel_count(struct tally_stats *ts,
-                             struct contig_pos pos,
-                             khiter_t indel_itr)
+                 struct contig_pos pos,
+                 khiter_t indel_itr)
 {
     union pos_key k = { .v = pos };
     khash_t(indel_ct_h) *ih = ts->indel_ct_hash;
@@ -841,15 +869,15 @@ pileup_next_pos()
     /* recalculate tls.cur_pos to be the minimum position of either an  */
     struct contig_pos end_pos = { UINT_MAX, UINT_MAX }, 
         tmp = end_pos, tmp_b, tmp_i;
-    for (s = 0; s != tls.n_samples; ++s) {
-        ts = &tls.ts[s];
-        tmp_b = (ts->base_cur == ts->base_end) ? tmp : ts->base_cur->cpos;
-        tmp_i = (ts->indel_cur == ts->indel_end) ? tmp : ts->indel_cur->cpos;
-        tmp = MIN_CONTIG_POS(tmp, tmp_b);
-        tmp = MIN_CONTIG_POS(tmp, tmp_i);
-    }
-    tls.cur_pos = tmp;
-    return less_contig_pos(tls.cur_pos, end_pos);
+        for (s = 0; s != tls.n_samples; ++s) {
+            ts = &tls.ts[s];
+            tmp_b = (ts->base_cur == ts->base_end) ? tmp : ts->base_cur->cpos;
+            tmp_i = (ts->indel_cur == ts->indel_end) ? tmp : ts->indel_cur->cpos;
+            tmp = MIN_CONTIG_POS(tmp, tmp_b);
+            tmp = MIN_CONTIG_POS(tmp, tmp_i);
+        }
+        tls.cur_pos = tmp;
+        return less_contig_pos(tls.cur_pos, end_pos);
 }
 
 

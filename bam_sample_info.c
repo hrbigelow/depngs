@@ -6,6 +6,7 @@
 #include "common_tools.h"
 #include "cache.h"
 #include "khash.h"
+#include "genome.h"
 
 #include <assert.h>
 
@@ -13,7 +14,7 @@ struct bam_sample_pair_info bam_sample_pairs;
 
 struct bam_sample_info bam_samples;
 
-KHASH_MAP_INIT_STR(remap, int);
+KHASH_MAP_INIT_STR(remap, unsigned);
 
 
 static void
@@ -90,7 +91,7 @@ init_sample_pairs(const char *pair_file, khash_t(remap) *sample_map)
     char pseudo_key[] = "REF";
     k1 = kh_put(remap, sample_map, pseudo_key, &ret);
     assert(ret == 0 || ret == 1);
-    kh_val(sample_map, k1) = -1;
+    kh_val(sample_map, k1) = REFERENCE_SAMPLE;
 
     unsigned p = 0;
     while (! feof(sample_pair_fh))

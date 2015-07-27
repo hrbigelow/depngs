@@ -173,12 +173,6 @@ main_dist(int argc, char **argv)
     FILE *comp_fh = open_if_present(comp_file, "w");
     FILE *indel_fh = open_if_present(indel_dist_file, "w");
 
-    locus_diff_init(post_confidence, min_dirichlet_dist, max_sample_points,
-                    samples_file, sample_pairs_file, fasta_file,
-                    min_quality_score, quantiles_string,
-                    (dist_fh != NULL), (comp_fh != NULL), (indel_fh != NULL),
-                    print_pileup_fields);
-
 #define BYTES_PER_POINT sizeof(double) * NUM_NUCS
 
     /* this is just an empirically based estimate */
@@ -194,27 +188,22 @@ main_dist(int argc, char **argv)
         / (max_sample_points * BYTES_PER_POINT);
     unsigned long max_bounds_cache_items = 5000;
 
-    init_dirichlet_points_gen(prior_alpha);
+    locus_diff_init(post_confidence, beta_confidence, 
+                    min_dirichlet_dist, max_sample_points,
+                    max_dir_cache_items, max_bounds_cache_items,
+                    n_threads, prior_alpha,
+                    samples_file, sample_pairs_file, fasta_file,
+                    min_quality_score, quantiles_string,
+                    (dist_fh != NULL), (comp_fh != NULL), (indel_fh != NULL),
+                    print_pileup_fields);
 
-    dirichlet_diff_init(PSEUDO_DEPTH,
-                        GEN_POINTS_BATCH,
-                        post_confidence, beta_confidence,
-                        min_dirichlet_dist,
-                        max_sample_points,
-                        max_dir_cache_items, 
-                        max_bounds_cache_items,
-                        n_threads);
 
     /* initialize beta quantile estimation procedure */
-    printf("Precomputing confidence interval statistics...");
-    binomial_est_init(beta_confidence, GEN_POINTS_BATCH, 
-                      max_sample_points, n_threads);
-    printf("done.\n");
 
     set_points_hash_flag(1);
 
     printf("Precomputing difference hash...");
-    prepopulate_bounds_keys(n_threads);
+    /* prepopulate_bounds_keys(n_threads); */
     printf("done.\n");
 
     set_points_hash_flag(0);
@@ -237,8 +226,6 @@ main_dist(int argc, char **argv)
     if (indel_fh) fclose(indel_fh);
 
     locus_diff_free();
-    dirichlet_diff_free();
-    binomial_est_free();
 
     printf("Finished.\n");
 

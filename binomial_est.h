@@ -39,12 +39,14 @@ struct points_gen
                    double *weights);
 };
 
-
+/* initializes a private global beta_cache */
 void binomial_est_init(double beta_conf, 
                        unsigned batch_size, 
                        unsigned num_beta_precalc,
                        size_t n_threads);
 
+
+/* frees the beta_cache */
 void binomial_est_free();
 
 

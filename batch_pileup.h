@@ -37,10 +37,9 @@
 #include "compat_util.h"
 #include "genome.h"
 
-/* special sample number that produces simulated statistics that match
-   the reference genotype. use for pileup_{basecall,bqs,indel}_stats
-   calls. */
-#define PILEUP_REF_SAMPLE UINT_MAX
+/* from genome.h, the PILEUP_REF_SAMPLE is a special sample number
+   that produces simulated statistics that match the reference
+   genotype. use for pileup_{basecall,bqs,indel}_stats calls. */
 
 struct indel_seq {
     char is_ins;
@@ -86,8 +85,11 @@ batch_pileup_thread_free();
 
 
 void
-batch_pileup_init(unsigned min_qual);
+batch_pileup_init(unsigned min_qual, const char *fasta_file);
 
+
+void
+batch_pileup_free();
 
 /* perform entire tally phase, for basecalls and for indels for one
    sample. update tls.tally_end to reflect furthest position seen. */

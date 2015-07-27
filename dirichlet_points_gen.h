@@ -20,7 +20,11 @@ struct points_gen_par
     /* struct packed_counts *post_counts; */
 };
 
-void init_dirichlet_points_gen(double _alpha_prior);
+
+/* initializes error_probability and alpha_prior.  (no allocation
+   needed) */
+void
+dirichlet_points_gen_init(double _alpha_prior);
 
 double get_alpha_prior();
 

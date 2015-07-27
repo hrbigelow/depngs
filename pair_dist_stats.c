@@ -4,6 +4,7 @@
 #include "bam_sample_info.h"
 #include "common_tools.h"
 #include "binomial_est.h"
+#include "genome.h"
 
 static pthread_mutex_t pair_stats_mtx = PTHREAD_MUTEX_INITIALIZER;
 
@@ -50,7 +51,7 @@ void print_pair_stats(const char *stats_file)
             s2 = bam_sample_pairs.m[p].s2;
         fprintf(fh, "%s\t%s", 
                 bam_samples.m[s1].label,
-                s2 == PSEUDO_SAMPLE ? "REF" : bam_samples.m[s2].label);
+                s2 == REFERENCE_SAMPLE ? "REF" : bam_samples.m[s2].label);
         fprintf(fh, "\t%zu", bam_sample_pairs.m[p].stats.total);
         fprintf(fh, "\t%zu", bam_sample_pairs.m[p].stats.cacheable);
         fprintf(fh, "\t%zu", bam_sample_pairs.m[p].stats.cache_was_set);

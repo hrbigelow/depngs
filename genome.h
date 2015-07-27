@@ -6,6 +6,8 @@
 
 #define REFNAME_MAXLEN 300
 
+#define REFERENCE_SAMPLE UINT_MAX
+
 KHASH_MAP_INIT_STR(s, unsigned);
 
 struct refseq {

@@ -2,7 +2,6 @@
    different, based on their two largest components, and various
    confidence thresholds. */
 
-#include "binomial_est.h"
 #include "virtual_bound.h"
 #include "dirichlet_diff_cache.h"
 #include "dirichlet_points_gen.h"
@@ -154,8 +153,8 @@ void print_primary_cache_size()
 #define NUM_HASH_MTX_PER_THREAD 1
 
 
-#define MAX_ALPHA1_PREPOP 100
-#define MAX_ALPHA2_PREPOP 10
+#define MAX_ALPHA1_PREPOP 30
+#define MAX_ALPHA2_PREPOP 3
 #define MAX_BOUNDS_PREPOP MAX_ALPHA1_PREPOP * MAX_ALPHA2_PREPOP * MAX_ALPHA2_PREPOP
 
 /* for prepopulating the difference hash for pseudo-loci.  This will
@@ -167,15 +166,17 @@ void print_primary_cache_size()
 #define N_LOCI_TO_FREEZE 1e8
 
 /* bounds_cache[a2][b2][b1].  sets each element to have 'state' = UNSET */
-void dirichlet_diff_init(unsigned pseudo_depth,
-                         unsigned batch_size,
-                         double post_confidence,
-                         double beta_confidence,
-                         double min_dirichlet_dist,
-                         unsigned max_sample_points,
-                         unsigned long max_dir_cache_items,
-                         unsigned long max_bounds_items,
-                         unsigned n_threads)
+void
+dirichlet_diff_cache_init(unsigned pseudo_depth,
+                          unsigned batch_size,
+                          double post_confidence,
+                          double beta_confidence,
+                          double prior_alpha,
+                          double min_dirichlet_dist,
+                          unsigned max_sample_points,
+                          unsigned long max_dir_cache_items,
+                          unsigned long max_bounds_items,
+                          unsigned n_threads)
 {
     cache.pseudo_depth = pseudo_depth;
     cache.batch_size = batch_size;
@@ -229,10 +230,19 @@ void dirichlet_diff_init(unsigned pseudo_depth,
 
     enum YepStatus status = yepLibrary_Init();
     assert(status == YepStatusOk);
+
+    dirichlet_points_gen_init(prior_alpha);
+
+    printf("Precomputing confidence interval statistics...");
+    /* binomial_est_init(beta_confidence, GEN_POINTS_BATCH,  */
+    /*                   max_sample_points, n_threads); */
+    printf("done.\n");
+    
 }
 
 
-void dirichlet_diff_free()
+void
+dirichlet_diff_cache_free()
 {
     unsigned i;
     for (i = 0; i != cache.n_locks; ++i) {
@@ -253,6 +263,8 @@ void dirichlet_diff_free()
 
     pthread_mutex_destroy(&cache.locus_mtx);
     pthread_cond_destroy(&cache.locus_cond);
+
+    binomial_est_free();
 }
 
 

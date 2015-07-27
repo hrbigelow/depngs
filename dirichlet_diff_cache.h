@@ -50,16 +50,21 @@ void inactivate_shared_data(unsigned inactivate_points,
 
 void print_cache_stats();
 
-void dirichlet_diff_init(unsigned max_depth,
-                         unsigned batch_size,
-                         double post_confidence,
-                         double beta_confidence,
-                         double min_dirichlet_dist,
-                         unsigned max_sample_points,
-                         unsigned long max_dir_cache_size,
-                         unsigned long max_secondary_cache_size,
-                         unsigned n_threads);
-void dirichlet_diff_free();
+/* initializes local 'cache' variable, and calls the init functions
+   for services that it depends on. */
+void
+dirichlet_diff_cache_init(unsigned max_depth,
+                          unsigned batch_size,
+                          double post_confidence,
+                          double beta_confidence,
+                          double prior_alpha,
+                          double min_dirichlet_dist,
+                          unsigned max_sample_points,
+                          unsigned long max_dir_cache_size,
+                          unsigned long max_secondary_cache_size,
+                          unsigned n_threads);
+void
+dirichlet_diff_cache_free();
 
 void prepopulate_bounds_keys(unsigned n_threads);
 
