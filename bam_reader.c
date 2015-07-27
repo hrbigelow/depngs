@@ -457,22 +457,27 @@ bam_reader(void *par, struct managed_buf *bufs)
         for (c = 0; c != bp->m[s].n_chunks; ++c) {
             bgzf_seek(bp->m[s].bgzf, bp->m[s].chunks[c].u, SEEK_SET);
 
-            /* read all but last block in this chunk */
+            /* read all but possibly the last block */
             block_span = (bp->m[s].chunks[c].v>>16) - (bp->m[s].chunks[c].u>>16);
             n_chars_read = hread(fp, wp, block_span);
-            
-            /* determine size of last block and read remainder */
             wp += block_span;
-            n_chars_read = hread(fp, wp, BLOCK_HEADER_LENGTH);
+            
+            if ((bp->m[s].chunks[c].v & 0xFFFF) != 0) {
+                /* the chunk end virtual offset refers to a non-zero
+                   offset into a block. */
 
-            bgzf_block_len = bgzf_block_size(wp);
-            wp += BLOCK_HEADER_LENGTH;
-            remain = bgzf_block_len - BLOCK_HEADER_LENGTH;
-
-            n_chars_read = hread(fp, wp, remain);
-            assert(n_chars_read == remain);
-
-            wp += remain;
+                /* determine size of last block and read remainder */
+                n_chars_read = hread(fp, wp, BLOCK_HEADER_LENGTH);
+                
+                bgzf_block_len = bgzf_block_size(wp);
+                wp += BLOCK_HEADER_LENGTH;
+                remain = bgzf_block_len - BLOCK_HEADER_LENGTH;
+                
+                n_chars_read = hread(fp, wp, remain);
+                assert(n_chars_read == remain);
+                
+                wp += remain;
+            }
         }
         bufs[s].size = wp - bufs[s].buf;
     }
@@ -577,7 +582,7 @@ bam_parse(char *raw, bam1_t *b)
     for (i = 0; i != 8; ++i) ed_swap_4p(x + i);
     swap_data(&c, block_len - 32, raw, 0);
 #else
-    uint32_t *x = raw + 4;
+    uint32_t *x = (uint32_t *)(raw + 4);
 #endif
 
     c->tid = x[0]; c->pos = x[1];
@@ -616,50 +621,3 @@ bam_stats_free(struct bam_stats *bs)
     bgzf_close(bs->bgzf);
     free(bs->chunks);
 }
-
-
-#if 0
-void bam_reader(void *par, struct managed_buf *bufs)
-{
-    struct bam_reader_par *bp = par;
-    unsigned s, i;
-    char *bgzf_buf = NULL, *bgzf_end, *rec_ptr;
-    uint64_t n_bgzf_bytes;
-    uint8_t header[BLOCK_HEADER_LENGTH];
-    int bgz_block_len, rec_block_len;
-    for (s = 0; s != bp->n_idx; ++s) {
-        /* point fp->compressed_block field to populated raw
-           buffer. */
-        cb_old = fp->compressed_block;
-        rec_ptr = bufs[s].buf;
-        for (i = 0; i != it.n_off; ++i) {
-            block_span = (it.off[i].v>>16) - (it.off[i].u>>16);
-            block_offset = it.off[i].u & 0xFFFF;
-            is_last_block = 0;
-            n_bgzf_bytes =  block_span + 0x10000;
-            bgzf_buf = realloc(bgzf_buf, n_bgzf_bytes);
-            bgzf_seek(fp, it.off[i].u, SEEK_SET);
-            hread(fp->fp, bgzf_buf, n_bgzf_bytes);
-            fp->compressed_block = bgzf_buf;
-            
-            while (! is_last_block) {
-                bgzf_block_len = unpackInt16((uint8_t *)&fp->compressed_block[16]) + 1;
-                if (rec_block_len = inflate_block(fp->fp, bgzf_block_len) < 0) return -1;
-                fp->compressed_block += bgzf_block_len;
-                is_last_block = (fp->compressed_block - bgzf_buf) == block_span;
-                block_offset = is_last_block ? it.off[i].v & 0xFFFF : 0;
-                
-                memcpy(rec_ptr, 
-                       fp->uncompressed_block + block_offset,
-                       rec_block_len - block_offset);
-                
-                rec_ptr += rec_block_len - block_offset;
-            }
-        }
-        fp->compressed_block = cb_old;
-        /* is fp in a consistent state now? */
-    }
-
-    free(bgzf_buf);
-}
-#endif

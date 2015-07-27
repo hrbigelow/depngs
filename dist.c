@@ -64,37 +64,6 @@ extern char *optarg;
 extern int optind;
 
 
-/* attempts to convert nptr to a double value using strtod.  if strtod
-   doesn't consume exactly the entire contents of nptr, prints a
-   message to standard error using conv_name as a tag, and then
-   exits. */
-double strtod_errmsg(const char *nptr, const char *conv_name)
-{
-    char *end;
-    double rv = strtod(nptr, &end);
-    if (*nptr == '\0' || end != nptr + strlen(nptr))
-    {
-        fprintf(stderr, "Error: %s: couldn't convert %s with value \"%s\" to a double\n",
-                __func__, conv_name, nptr);
-        exit(1);
-    }
-    return rv;
-}
-
-
-long int strtol_errmsg(const char *nptr, const char *conv_name)
-{
-    char *end;
-    long int rv = strtol(nptr, &end, 10);
-    if (*nptr == '\0' || end != nptr + strlen(nptr))
-    {
-        fprintf(stderr, "Error: %s: couldn't convert %s with value \"%s\" to a long int\n",
-                __func__, conv_name, nptr);
-        exit(1);
-    }
-    return rv;
-}
-
 int
 main_dist(int argc, char **argv)
 {

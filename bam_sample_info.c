@@ -14,27 +14,28 @@ struct bam_sample_pair_info bam_sample_pairs;
 
 struct bam_sample_info bam_samples;
 
-KHASH_MAP_INIT_STR(remap, unsigned);
+KHASH_MAP_INIT_STR(remap_h, unsigned);
 
 
 static void
-init_sample_attributes(const char *samples_file, khash_t(remap) *sample_map);
+init_sample_attributes(const char *samples_file, khash_t(remap_h) *sample_map);
 
 static void
-init_sample_pairs(const char *pair_file, khash_t(remap) *sample_map);
+init_sample_pairs(const char *pair_file, khash_t(remap_h) *sample_map);
 
 /* program-wide initialization of sample information */
 void bam_sample_info_init(const char *samples_file, 
                           const char *sample_pairs_file)
 {
-    khash_t(remap) *sample_map = kh_init(remap);
-    init_sample_pairs(sample_pairs_file, sample_map);
+    khash_t(remap_h) *sample_map = kh_init(remap_h);
     init_sample_attributes(samples_file, sample_map);
+    init_sample_pairs(sample_pairs_file, sample_map);
     
     khiter_t k;
     for (k = kh_begin(sample_map); k != kh_end(sample_map); ++k)
-        if (kh_exist(sample_map, k)) free((char *)kh_key(sample_map, k));
-    kh_destroy(remap, sample_map);
+        if (kh_exist(sample_map, k))
+            free((char *)kh_key(sample_map, k));
+    kh_destroy(remap_h, sample_map);
 }
 
 void bam_sample_info_free()
@@ -50,18 +51,29 @@ void bam_sample_info_free()
 }
 
 static void
-init_sample_attributes(const char *samples_file, khash_t(remap) *sample_map)
+init_sample_attributes(const char *samples_file, khash_t(remap_h) *sample_map)
 {
     char label[1000], bam[1000];
-    bam_samples.n = kh_size(sample_map);
-    unsigned s, alloc = 0;
-    ALLOC_GROW_TYPED(bam_samples.m, bam_samples.n, alloc);
-    khiter_t k;
+    unsigned s = 0, n_fields, alloc = 0;
+    khiter_t itr;
+    int ret;
+    
     FILE *samples_fh = open_if_present(samples_file, "r");
     while (! feof(samples_fh)) {
-        (void)fscanf(samples_fh, "%s\t%s\n", label, bam);
-        if ((k = kh_get(remap, sample_map, label)) != kh_end(sample_map)) {
-            s = kh_val(sample_map, k);
+        n_fields = fscanf(samples_fh, "%s\t%s\n", label, bam);
+        if (n_fields != 2) {
+            fprintf(stderr, "Error, lines in samples file  %s must have two fields\n", 
+                    samples_file);
+            exit(1);
+        }
+        itr = kh_put(remap_h, sample_map, strdup(label), &ret);
+        if (ret != 1 && ret != 2) {
+            fprintf(stderr, "Found duplicate sample label %s while parsing samples file %s\n",
+                    label, samples_file);
+            exit(1);
+        } else {
+            kh_val(sample_map, itr) = s;
+            ALLOC_GROW(bam_samples.m, s + 1, alloc);
             bam_samples.m[s].bam_file = strdup(bam);
             if (strlen(label) + 1 > sizeof(bam_samples.m[s].label)) {
                 fprintf(stderr, "%s: error: sample label string must be "
@@ -70,21 +82,22 @@ init_sample_attributes(const char *samples_file, khash_t(remap) *sample_map)
                 exit(1);
             }
             strcpy(bam_samples.m[s].label, label);
+            ++s;
         }
     }
     fclose(samples_fh);
+    bam_samples.n = s;
 }
 
 
 /* parse a sample pairs file. */
 static void
-init_sample_pairs(const char *pair_file, khash_t(remap) *sample_map)
+init_sample_pairs(const char *pair_file, khash_t(remap_h) *sample_map)
 {
-    unsigned idx = 0;
     int ret;
     FILE *sample_pair_fh = open_if_present(pair_file, "r");
     char label[2][MAX_LABEL_LEN];
-    khiter_t k1, k2;
+    khiter_t itr[2];
     unsigned alloc = 0;
 
     if (! sample_pair_fh) {
@@ -94,35 +107,24 @@ init_sample_pairs(const char *pair_file, khash_t(remap) *sample_map)
     }
 
     /* initialize the keyword REF as the reference sample */
-    char pseudo_key[] = "REF";
-    k1 = kh_put(remap, sample_map, pseudo_key, &ret);
-    assert(ret == 0 || ret == 1);
-    kh_val(sample_map, k1) = REFERENCE_SAMPLE;
+    itr[0] = kh_put(remap_h, sample_map, strdup("REF"), &ret);
+    assert(ret == 1 || ret == 2);
+    kh_val(sample_map, itr[0]) = REFERENCE_SAMPLE;
 
-    unsigned p = 0;
-    while (! feof(sample_pair_fh))
-    {
+    unsigned l, p = 0;
+    while (! feof(sample_pair_fh)) {
         (void)fscanf(sample_pair_fh, "%s\t%s\n", label[0], label[1]);
-        if ((k1 = kh_get(remap, sample_map, label[0])) == kh_end(sample_map))
-        {
-            k1 = kh_put(remap, sample_map, strdup(label[0]), &ret);
-            assert(ret == 0 || ret == 1);
-            kh_val(sample_map, k1) = idx++;
-        }
-        if ((k2 = kh_get(remap, sample_map, label[1])) == kh_end(sample_map))
-        {
-            k2 = kh_put(remap, sample_map, strdup(label[1]), &ret);
-            assert(ret == 0 || ret == 1);
-            kh_val(sample_map, k2) = idx++;
-        }
+        for (l = 0; l != 2; ++l)
+            if ((itr[l] = kh_get(remap_h, sample_map, label[l])) == kh_end(sample_map)) {
+                fprintf(stderr, "Error parsing %s file.  Couldn't find matching label %s in samples file\n",
+                        pair_file, label[l]);
+                exit(1);
+            }
         ALLOC_GROW_TYPED(bam_sample_pairs.m, p + 1, alloc);
-        bam_sample_pairs.m[p].s1 = kh_val(sample_map, k1);
-        bam_sample_pairs.m[p].s2 = kh_val(sample_map, k2);
+        bam_sample_pairs.m[p].s1 = kh_val(sample_map, itr[0]);
+        bam_sample_pairs.m[p].s2 = kh_val(sample_map, itr[1]);
         ++p;
     }
     bam_sample_pairs.n = p;
     fclose(sample_pair_fh);
-
-    k1 = kh_get(remap, sample_map, pseudo_key);
-    kh_del(remap, sample_map, k1);
 }

@@ -180,7 +180,7 @@ batch_pileup_thread_free()
     khiter_t it;
     for (it = kh_begin(tls.indel_hash); it != kh_end(tls.indel_hash); ++it)
         if (kh_exist(tls.indel_hash, it))
-            free(kh_val(tls.indel_hash, it));
+            free(kh_key(tls.indel_hash, it));
 
     kh_destroy(indel_h, tls.indel_hash);
 
@@ -365,17 +365,17 @@ pileup_indel_stats(unsigned s, struct indel_count **cts, unsigned *n_cts)
     /* pre-scan to find total number of distinct indels (use linear
        scan since this will be very small) */
     struct pos_indel_count *pc = tls.ts[s].indel_cur;
-    unsigned n = 0;
     while (pc != tls.ts[s].indel_end &&
            equal_contig_pos(pc->cpos, tls.cur_pos))
-        ++n;
+        ++pc;
+    unsigned n = pc - tls.ts[s].indel_cur;
 
     *cts = realloc(*cts, n * sizeof(struct indel_count));
     *n_cts = n;
     unsigned i = 0;
     pc = tls.ts[s].indel_cur;
     while (i != n)
-        *cts[i++] = pc++->ict;
+        (*cts)[i++] = pc++->ict;
 }
 
 
@@ -422,30 +422,29 @@ bqs_count_to_call(struct bqs_count bc, unsigned refbase_i)
 static inline char
 qual_to_char(unsigned q)
 {
-    return (char)(q - 33);
+    return (char)(q + (unsigned)'!');
 }
 
 /* produce pileup data (calls, quals, and read depths) from current
-   position for sample s */
+   position for sample s. manage buffer reallocation of pd fields. */
 void
 pileup_current_data(unsigned s, struct pileup_data *pd)
 {
     unsigned n_base_ct;
-    struct bqs_count *base_ct = NULL, *bcp;
+    struct bqs_count *base_ct = NULL;
     pileup_bqs_stats(s, &base_ct, &n_base_ct);
     unsigned b, n_calls = 0;
     pd->n_match_lo_q = 0;
     pd->n_match_hi_q = 0;
 
-    for (b = 0; b != n_base_ct; ++b) {
-        bcp = base_ct + b;
-        if (bcp->qual < min_quality_score)
-            pd->n_match_lo_q += bcp->ct;
+    for (b = 0; b != n_base_ct; ++b)
+        if (base_ct[b].qual < min_quality_score)
+            pd->n_match_lo_q += base_ct[b].ct;
         else
-            pd->n_match_hi_q += bcp->ct;
-    }
+            pd->n_match_hi_q += base_ct[b].ct;
 
-    pd->quals.size = pd->n_match_lo_q + pd->n_match_hi_q;
+    n_calls = pd->n_match_lo_q + pd->n_match_hi_q;
+    pd->quals.size = n_calls;
     ALLOC_GROW(pd->quals.buf, pd->quals.size, pd->quals.alloc);
 
     struct indel_count *indel_ct = NULL;
@@ -467,15 +466,15 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
     pileup_current_info(&pli);
     static char nucs[] = "ACGT";
     unsigned refbase_i = index(nucs, pli.refbase) - nucs;
-    unsigned p = 0, p_end;
+    unsigned p = 0, p_cur, p_end;
     for (b = 0; b != n_base_ct; ++b) {
         p_end = p + base_ct[b].ct;
         char bc = bqs_count_to_call(base_ct[b], refbase_i);
         char qs = qual_to_char(base_ct[b].qual);
+        p_cur = p;
         for (; p != p_end; ++p) pd->calls.buf[p] = bc;
-        for (; p != p_end; ++p) pd->quals.buf[p] = qs;
+        for (p = p_cur; p != p_end; ++p) pd->quals.buf[p] = qs;
     }
-    pd->quals.buf[p] = '\0';
     pd->quals.size = p;
 
     /* print out all indel representations */
@@ -486,7 +485,6 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         strcpy(pd->calls.buf + p, isq->seq);
         p += strlen(isq->seq);
     }
-    pd->calls.buf[p] = '\0';
     pd->calls.size = p;
 }
 
@@ -752,13 +750,12 @@ make_indel_array(unsigned s, struct contig_pos tally_end)
 static void
 free_indel_counts(struct indel_count_node *nd)
 {
-    assert(nd != NULL);
-    struct indel_count_node *t = nd->next;
-    do {
-        free(nd);
-        nd = t;
-        t = t->next;
-    } while (t);
+    struct indel_count_node *t;
+    while (nd) {
+        t = nd;
+        nd = nd->next;
+        free(t);
+    }
 }
 
 
@@ -834,7 +831,9 @@ pileup_clear_finished_stats()
         /* completely clear temporary data */
         kh_clear(pb_h, tls.ts[s].pb_hash);
         free(tls.ts[s].base_ct);
+        tls.ts[s].base_ct = NULL;
         free(tls.ts[s].indel_ct);
+        tls.ts[s].indel_ct = NULL;
     }
 }
 
