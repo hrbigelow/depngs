@@ -10,6 +10,7 @@ int usage()
             "Author: Henry Bigelow (hrbigelow@gmail.com)\n\n"
             "Usage:\n\n"
             "dep dist       Sample base composition and pairwise base differences with confidence intervals\n"
+            "dep pileup     Multi-way pileup\n"
             // "dep diststats  Compute a table of pairwise 4D Dirichlet distance classifications\n"
             // "dep mergestats Merge 2 or more diststats files\n"
             // "dep simp       Simulate pileup file\n"
@@ -30,6 +31,9 @@ int main(int argc, char **argv)
 
     else if (strcmp(argv[1], "dist") == 0)
         return main_dist(argc - 1, argv + 1);
+
+    else if (strcmp(argv[1], "pileup") == 0)
+        return main_pileup(argc - 1, argv + 1);
 
     // else if (strcmp(argv[1], "diststats") == 0)
     //     return main_diststats(argc - 1, argv + 1);

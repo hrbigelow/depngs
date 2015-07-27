@@ -203,30 +203,10 @@ locus_diff_tq_init(const char *query_range_file,
     thread_params.n_threads = n_threads;
 
     unsigned long n_total_loci;
-    if (query_range_file) {
-        thread_params.ranges = 
-            parse_query_ranges(query_range_file, 
-                               &thread_params.n_ranges,
-                               &n_total_loci);
-        if (! thread_params.n_ranges) {
-            fprintf(stderr, "Error: there are no ranges to process in query range file %s\n",
-                    query_range_file);
-            exit(1);
-        }
-    } else {
-        /* simply set the 'query' to the largest span possible */
-        thread_params.n_ranges = 1;
-        thread_params.ranges = malloc(sizeof(struct pair_ordering_range));
-        thread_params.ranges[0] = 
-            (struct pair_ordering_range){ 
-            { 0, 0 },
-            { reference_seq.n_contig, 0 } /* artificially set this to
-                                             the beginning of the
-                                             contig after the last
-                                             contig. */
-        };
-        n_total_loci = ULONG_MAX;
-    }
+    thread_params.ranges = 
+        parse_query_ranges(query_range_file,
+                           &thread_params.n_ranges,
+                           &n_total_loci);
 
     unsigned r, s;
     thread_params.reader_buf = 

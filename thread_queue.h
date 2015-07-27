@@ -37,8 +37,9 @@ typedef struct {
    managing out_size and out_alloc.  the number of in_bufs and
    out_bufs need not match, and the relation between them is
    determined by the worker logic. */
-typedef void (thread_queue_worker_t)(const struct managed_buf *in_bufs,
-                                     struct managed_buf *out_bufs);
+typedef void
+(thread_queue_worker_t)(const struct managed_buf *in_bufs,
+                        struct managed_buf *out_bufs);
 
 /* this function will be called on each output chunk in input order,
    and as soon as the output chunk is finished writing. buf and size
@@ -46,8 +47,9 @@ typedef void (thread_queue_worker_t)(const struct managed_buf *in_bufs,
    par controls the behavior of this offloading function.  once the
    offload is called, the buffer can be re-used by a new thread.
    */
-typedef void (thread_queue_offload_t)(void *par, 
-                                      const struct managed_buf *bufs);
+typedef void
+(thread_queue_offload_t)(void *par, 
+                         const struct managed_buf *bufs);
 
 
 typedef void (thread_queue_create_t)();

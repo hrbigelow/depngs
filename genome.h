@@ -32,9 +32,12 @@ genome_free();
 int
 genome_contig_order(const char *contig);
 
+
+/* parse query_range_file.  if NULL, return a single maximal range,
+   setting n_queries to 1 and n_total_loci to a maximal value */
 struct pair_ordering_range *
 parse_query_ranges(const char *query_range_file,
-                   unsigned *num_queries,
+                   unsigned *n_queries,
                    unsigned long *n_total_loci);
 
 

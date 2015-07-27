@@ -10,7 +10,9 @@ extern struct bam_sample_info bam_samples;
 
 extern struct bam_sample_pair_info bam_sample_pairs;
 
-/* call before calling init_sample_pairs and init_sample_attributes */
+/* program-wide initialization of bam sample information.
+   sample_pairs_file may be NULL; if so, bam_sample_pairs will be
+   initialized with m = NULL, n = 0  */
 void bam_sample_info_init(const char *samples_file,
                           const char *sample_pairs_file);
 

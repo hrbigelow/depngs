@@ -146,7 +146,8 @@ pileup_strings(unsigned s, struct managed_buf *call, struct managed_buf *qual);
    for each sample so that calls to pileup_{basecall,bqs,indel}_stats
    return the right values. return 1 if there is a next position, 0 if
    reached the end. */
-int pileup_next_pos();
+int
+pileup_next_pos();
 
 struct pileup_locus_info {
     char refname[REFNAME_MAXLEN + 1];
