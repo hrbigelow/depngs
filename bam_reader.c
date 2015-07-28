@@ -301,7 +301,8 @@ hts_size_to_range(struct pair_ordering beg,
 
     for (*n_chunks = 0, bgzf_bytes = 0; qcur != qend; ++qcur) {
         crng = (struct pair_ordering_range){ MAX_PAIR_ORD(qcur->beg, beg), qcur->end };
-        int ti, b, tid, tid_end = qcur->end.hi + 1;
+        size_t tid, tid_end = MIN(qcur->end.hi + 1, idx->n);
+        int ti, b;
         for (tid = qcur->beg.hi; tid != tid_end; ++tid) {
             int ti_beg = tid == crng.beg.hi ? crng.beg.lo>>ms : 0;
             int ti_end = tid == crng.end.hi ? crng.end.lo>>ms : n_small_bins;
@@ -441,28 +442,30 @@ bam_reader(void *par, struct managed_buf *bufs)
     ssize_t n_chars_read;
     char *wp;
 
-    unsigned bytes_bound, chunk_hdr_sz;
+    unsigned max_grow;
 
     for (s = 0; s != bp->n; ++s) {
-        bytes_bound = tally_bgzf_bytes(bp->m[s].chunks, bp->m[s].n_chunks);
-        chunk_hdr_sz = sizeof(unsigned) + bp->m[s].n_chunks * sizeof(bp->m[s].chunks[0]);
-
-        ALLOC_GROW(bufs[s].buf, bytes_bound + chunk_hdr_sz, bufs[s].alloc);
+        struct bam_stats *bs = &bp->m[s];
+        if (bs->n_chunks == 0) {
+            bufs[s].size = 0;
+            continue;
+        }
         
-        write_voffset_chunks(bp->m[s].chunks, bp->m[s].n_chunks, &bufs[s]);
+        write_voffset_chunks(bs->chunks, bs->n_chunks, &bufs[s]);
         wp = bufs[s].buf + bufs[s].size;
+        max_grow = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
+        ALLOC_GROW_REMAP(bufs[s].buf, wp, bufs[s].size + max_grow, bufs[s].alloc);
 
-        hFILE *fp = bp->m[s].bgzf->fp;
-
-        for (c = 0; c != bp->m[s].n_chunks; ++c) {
-            bgzf_seek(bp->m[s].bgzf, bp->m[s].chunks[c].u, SEEK_SET);
+        hFILE *fp = bs->bgzf->fp;
+        for (c = 0; c != bs->n_chunks; ++c) {
+            bgzf_seek(bs->bgzf, bs->chunks[c].u, SEEK_SET);
 
             /* read all but possibly the last block */
-            block_span = (bp->m[s].chunks[c].v>>16) - (bp->m[s].chunks[c].u>>16);
+            block_span = (bs->chunks[c].v>>16) - (bs->chunks[c].u>>16);
             n_chars_read = hread(fp, wp, block_span);
             wp += block_span;
             
-            if ((bp->m[s].chunks[c].v & 0xFFFF) != 0) {
+            if ((bs->chunks[c].v & 0xFFFF) != 0) {
                 /* the chunk end virtual offset refers to a non-zero
                    offset into a block. */
 

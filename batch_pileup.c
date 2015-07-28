@@ -115,6 +115,7 @@ struct tally_stats {
 };
 
 
+
 static __thread struct tls {
     khash_t(indel_h) *indel_hash;
 
@@ -146,6 +147,7 @@ batch_pileup_free()
 }
 
 
+#define TID_UNSET UINT_MAX
 
 /* */
 void
@@ -154,6 +156,7 @@ batch_pileup_thread_init(unsigned n_samples)
     tls.indel_hash = kh_init(indel_h);
     tls.n_samples = n_samples;
     tls.tally_end = (struct contig_pos){ 0, 0 };
+    tls.cur_pos = (struct contig_pos){ TID_UNSET, 0 };
     tls.ts = malloc(n_samples * sizeof(struct tally_stats));
     unsigned s;
     for (s = 0; s != n_samples; ++s)
@@ -503,6 +506,17 @@ free_pileup_data(struct pileup_data *pd)
 }
 
 
+/* return the complement of the 4-bit integer representation of the
+   base. this happens to be the bits in reverse order. */
+static inline int
+cmpl(int base)
+{
+    static int rev[] = {
+        0, 15, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15
+    };
+    return rev[base];
+}
+
 
 /* traverse b, tallying the match blocks into ts->pbqt_hash, and the
    indels into ts->indel_ct_hash and tls.indel_hash as necessary */
@@ -515,28 +529,41 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
     unsigned strand = bam_is_rev(b) ? 0 : 1;
     int ret;
     khash_t(pbqt_h) *ph = ts->pbqt_hash;
+    uint8_t *bam_seq = bam_get_seq(b);
+    uint8_t *bam_qual = bam_get_qual(b);
     
     for (c = 0; c != b->core.n_cigar; ++c) {
         op = bam_cigar_op(cigar[c]);
         ln = bam_cigar_oplen(cigar[c]);
 
+        khiter_t it;
+        int32_t qe;
         if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
-            int32_t qe = qpos + ln;
-            khiter_t it;
-            for (q = qpos, r = rpos; q != qe; ++q, ++r) {
-                union pbqt_key stat = {
-                    .v = {
-                        r, tid, 
-                        bam_seqi(bam_get_seq(b), q), 
-                        bam_get_qual(b)[q],
-                        strand 
+            if (bam_is_rev(b)) {
+                int32_t qb = b->core.l_qseq - qpos - 1;
+                qe = qb - ln;
+                for (q = qb, r = rpos; q != qe; --q, ++r) {
+                    union pbqt_key stat = {
+                        .v = { r, tid, cmpl(bam_seqi(bam_seq, q)), bam_qual[q], strand }
+                    };
+                    if ((it = kh_get(pbqt_h, ph, stat.k)) == kh_end(ph)) {
+                        it = kh_put(pbqt_h, ph, stat.k, &ret);
+                        kh_val(ph, it) = 0;
                     }
-                };
-                if ((it = kh_get(pbqt_h, ph, stat.k)) == kh_end(ph)) {
-                    it = kh_put(pbqt_h, ph, stat.k, &ret);
-                    kh_val(ph, it) = 0;
+                    kh_val(ph, it)++;
                 }
-                kh_val(ph, it)++;
+            } else {
+                qe = qpos + ln;
+                for (q = qpos, r = rpos; q != qe; ++q, ++r) {
+                    union pbqt_key stat = {
+                        .v = { r, tid, bam_seqi(bam_seq, q), bam_qual[q], strand }
+                    };
+                    if ((it = kh_get(pbqt_h, ph, stat.k)) == kh_end(ph)) {
+                        it = kh_put(pbqt_h, ph, stat.k, &ret);
+                        kh_val(ph, it) = 0;
+                    }
+                    kh_val(ph, it)++;
+                }
             }
         } else if (op == BAM_CINS || op == BAM_CDEL) {
             /* tally insertion of query. */
@@ -544,10 +571,16 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
             isq->is_ins = (op == BAM_CINS);
             unsigned i;
 
-            if (isq->is_ins)
-                for (i = 0, q = qpos; i != ln; ++i, ++q)
-                    isq->seq[i] = seq_nt16_str[bam_seqi(bam_get_seq(b), q)];
-
+            if (isq->is_ins) {
+                if (bam_is_rev(b)) {
+                    int32_t qb = b->core.l_qseq - qpos - 1;
+                    for (i = 0, q = qb; i != ln; ++i, --q)
+                        isq->seq[i] = seq_nt16_str[cmpl(bam_seqi(bam_seq, q))];
+                } else {
+                    for (i = 0, q = qpos; i != ln; ++i, ++q)
+                        isq->seq[i] = seq_nt16_str[bam_seqi(bam_seq, q)];
+                }
+            }
             else
                 memcpy(isq->seq, reference_seq.contig[tid].seq + rpos, ln);
 
@@ -842,16 +875,22 @@ pileup_clear_finished_stats()
    has base or indel entries. update base_cur and indel_cur pointers
    for each sample so that calls to pileup_{basecall,bqs,indel}_stats
    return the right values. return 1 if there is a next position, 0 if
-   reached the end. */
+   reached the end. if this is the first call of all time, or the
+   first call after a previous end, return the first available
+   position. */
 int
 pileup_next_pos()
 {
     unsigned s;
     struct tally_stats *ts;
     
-    /* update all cur pointers */
-    struct contig_pos suc =
-        { tls.cur_pos.tid, tls.cur_pos.pos + 1 };
+    /* update all cur pointers.  */
+    struct contig_pos suc;
+    if (tls.cur_pos.tid == TID_UNSET)
+        suc = (struct contig_pos){ 0, 0 };
+    else
+        suc = (struct contig_pos){ tls.cur_pos.tid, tls.cur_pos.pos + 1 };
+
     for (s = 0; s != tls.n_samples; ++s) {
         ts = &tls.ts[s];
         /* increment base iterator */
@@ -865,18 +904,19 @@ pileup_next_pos()
             ++ts->indel_cur;
         
     }
-    /* recalculate tls.cur_pos to be the minimum position of either an  */
-    struct contig_pos end_pos = { UINT_MAX, UINT_MAX }, 
-        tmp = end_pos, tmp_b, tmp_i;
-        for (s = 0; s != tls.n_samples; ++s) {
-            ts = &tls.ts[s];
-            tmp_b = (ts->base_cur == ts->base_end) ? tmp : ts->base_cur->cpos;
-            tmp_i = (ts->indel_cur == ts->indel_end) ? tmp : ts->indel_cur->cpos;
-            tmp = MIN_CONTIG_POS(tmp, tmp_b);
-            tmp = MIN_CONTIG_POS(tmp, tmp_i);
-        }
-        tls.cur_pos = tmp;
-        return less_contig_pos(tls.cur_pos, end_pos);
+    /* recalculate tls.cur_pos to be the minimum position among all
+       valid base_cur and indel_cur pointers in all samples. */
+    struct contig_pos unset_pos = { TID_UNSET, 0 };
+    struct contig_pos tmp_b, tmp_i, tmp = unset_pos;
+    for (s = 0; s != tls.n_samples; ++s) {
+        ts = &tls.ts[s];
+        tmp_b = (ts->base_cur == ts->base_end) ? tmp : ts->base_cur->cpos;
+        tmp_i = (ts->indel_cur == ts->indel_end) ? tmp : ts->indel_cur->cpos;
+        tmp = MIN_CONTIG_POS(tmp, tmp_b);
+        tmp = MIN_CONTIG_POS(tmp, tmp_i);
+    }
+    tls.cur_pos = tmp;
+    return less_contig_pos(tls.cur_pos, unset_pos);
 }
 
 

@@ -179,8 +179,6 @@ pileup_worker(const struct managed_buf *in_bufs,
 {
     struct managed_buf bam = { NULL, 0, 0 };
     struct managed_buf *out_buf = &out_bufs[0];
-    char *out = out_buf->buf;
-    out_buf->size = 0;
     unsigned s;
     for (s = 0; s != bam_samples.n; ++s) {
         bam_inflate(&in_bufs[s], &bam);
@@ -196,14 +194,14 @@ pileup_worker(const struct managed_buf *in_bufs,
     };
 
     struct pileup_locus_info ploc;
-    unsigned add, more_loci = 1;
-    while (more_loci) {
+    char *out = out_buf->buf;
+    out_buf->size = 0;
+    while (pileup_next_pos()) {
         pileup_current_info(&ploc);
         for (s = 0; s != bam_samples.n; ++s) {
             pileup_current_data(s, &pdat);
-            add = pdat.calls.size + pdat.quals.size + MAX_LABEL_LEN + 5;
-            out_buf->size += add;
-            ALLOC_GROW_REMAP(out_buf->buf, out, out_buf->size, out_buf->alloc);
+            unsigned add = pdat.calls.size + pdat.quals.size + MAX_LABEL_LEN + 5;
+            ALLOC_GROW_REMAP(out_buf->buf, out, out_buf->size + add, out_buf->alloc);
             out += 
                 sprintf(out, "%s\t%s\t%u\t%c\t%u\t",
                         bam_samples.m[s].label,
@@ -218,8 +216,8 @@ pileup_worker(const struct managed_buf *in_bufs,
             strncpy(out, pdat.quals.buf, pdat.quals.size);
             out += pdat.quals.size;
             *out++ = '\n';
+            out_buf->size = out - out_buf->buf;
         }
-        more_loci = pileup_next_pos();
     }   
 
     /* frees statistics that have already been used in one of the
@@ -234,6 +232,7 @@ pileup_offload(void *par, const struct managed_buf *bufs)
 {
     FILE *fh = par;
     fwrite(bufs[0].buf, 1, bufs[0].size, fh);
+    fflush(fh);
 }
 
 void
