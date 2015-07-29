@@ -28,7 +28,13 @@ struct thread_queue;
    into bufs. thread_queue_free deallocates these buffers.  'scan'
    scans the same files described by par. */
 typedef struct {
-    void (*read)(void *par, struct managed_buf *bufs);
+    /* read input into bufs according to par.  return 1 if more input
+       is still available, or 0 of this is the last input. */
+    unsigned (*read)(void *par, struct managed_buf *bufs);
+
+    /* scan the input (or index on the input) as directed by par,
+       updating par so as to instruct the next call to 'read' to read
+       <= max_bytes */
     void (*scan)(void *par, unsigned max_bytes);
 } thread_queue_reader_t;
 
@@ -36,9 +42,14 @@ typedef struct {
    produced from the reader and outputs it into one or more out_bufs,
    managing out_size and out_alloc.  the number of in_bufs and
    out_bufs need not match, and the relation between them is
-   determined by the worker logic. */
+   determined by the worker logic. the 'more_input' flag tells the
+   worker whether there is more input (and thus the worker function
+   will be called again) or this is the last time.  (this flag is
+   useful for worker functions that need to perform some summarization
+   routine when there is no further input) */
 typedef void
 (thread_queue_worker_t)(const struct managed_buf *in_bufs,
+                        unsigned more_input,
                         struct managed_buf *out_bufs);
 
 /* this function will be called on each output chunk in input order,

@@ -20,6 +20,7 @@ struct bam_stats {
     BGZF *bgzf;
     hts_pair64_t *chunks;
     unsigned n_chunks;
+    unsigned more_input; /* 1 means there is more input in this file. */
 };
 
 struct bam_reader_par {
@@ -31,8 +32,10 @@ struct bam_reader_par {
 };
 
 /* called by up to n_readers threads at a time. par instructs the
-   reader exactly what contents of each file to populate into bufs. */
-void bam_reader(void *par, struct managed_buf *bufs);
+   reader exactly what contents of each file to populate into
+   bufs. returns 1 if there is more input available. */
+unsigned
+bam_reader(void *par, struct managed_buf *bufs);
 
 /* called by at most one thread at a time.  reserves a logical range
    starting at internal position marker, and updates the marker to
@@ -40,7 +43,8 @@ void bam_reader(void *par, struct managed_buf *bufs);
    the maximal range such that each sample's results are less than
    max_bytes.  updates par with settings to help accelerate the
    bam_reader call.  */
-void bam_scanner(void *par, unsigned max_bytes);
+void
+bam_scanner(void *par, unsigned max_bytes);
 
 
 /* parse the next record of an uncompressed raw bam buffer into b,

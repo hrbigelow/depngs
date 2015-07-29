@@ -113,6 +113,7 @@ struct locus_diff_offload_par {
 /* conforms to thread_queue_worker_t */
 void
 locus_diff_worker(const struct managed_buf *in_bufs,
+                  unsigned more_input,
                   struct managed_buf *out_bufs);
 
 /* conforms to thread_queue_offload_t */

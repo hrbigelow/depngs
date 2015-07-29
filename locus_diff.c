@@ -483,7 +483,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
         for (i = 0; i != 2; ++i) {
             tls_dw.bep.dist[i] = &ld[i]->distp;
             if (! ld[i]->init.base_ct) {
-                ld[i]->base_ct = pileup_basecall_stats(sp[i]);
+                ld[i]->base_ct = pileup_current_basecalls(sp[i]);
                 ld[i]->init.base_ct = 1;
             }
         }
@@ -508,7 +508,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
             for (i = 0; i != 2; ++i) {
                 if (! ld[i]->init.bqs_ct) {
                     ld[i]->init.bqs_ct = 1;
-                    pileup_bqs_stats(sp[i], &ld[i]->bqs_ct, &ld[i]->n_bqs_ct);
+                    pileup_current_bqs(sp[i], &ld[i]->bqs_ct, &ld[i]->n_bqs_ct);
                 }
 
                 struct distrib_points *dst = tls_dw.bep.dist[i];
@@ -708,11 +708,11 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
         for (i = 0; i != 2; ++i) {
             if (! ld[i]->init.indel_ct) {
                 ld[i]->init.indel_ct = 1;
-                pileup_indel_stats(s[i], &ld[i]->indel_ct, &ld[i]->n_indel_ct);
+                pileup_current_indels(s[i], &ld[i]->indel_ct, &ld[i]->n_indel_ct);
             }
             if (! ld[i]->init.base_ct) {
                 ld[i]->init.base_ct = 1;
-                ld[i]->base_ct = pileup_basecall_stats(s[i]);
+                ld[i]->base_ct = pileup_current_basecalls(s[i]);
             }
         }
         if (ld[0]->n_indel_ct == 0 && ld[1]->n_indel_ct == 0
@@ -720,7 +720,7 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
         
         /* traverse the sorted indel counts in tandem */
         unsigned n_indel_pairs;
-        pileup_pair_indel_stats(ld[0]->indel_ct, ld[0]->n_indel_ct,
+        pileup_make_indel_pairs(ld[0]->indel_ct, ld[0]->n_indel_ct,
                                 ld[1]->indel_ct, ld[1]->n_indel_ct,
                                 &indel_pairs, &n_indel_pairs);
         
@@ -862,6 +862,7 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
 */
 void
 locus_diff_worker(const struct managed_buf *in_bufs,
+                  unsigned more_input,
                   struct managed_buf *out_bufs)
 {
     struct timespec worker_start_time;
@@ -880,14 +881,20 @@ locus_diff_worker(const struct managed_buf *in_bufs,
     unsigned s;
     for (s = 0; s != bam_samples.n; ++s) {
         bam_inflate(&in_bufs[s], &bam);
-        tally_pileup_stats(bam, s);
+        pileup_tally_stats(bam, s);
     }
 
-    /* */
-    for (s = 0; s != bam_samples.n; ++s)
-        summarize_pileup_stats(s);
+    if (! more_input)
+        pileup_final_input();
 
-    free(bam.buf);
+    /* we need all three types of data, so must prepare all of it. */
+    for (s = 0; s != bam_samples.n; ++s) {
+        pileup_prepare_bqs(s);
+        pileup_prepare_basecalls(s);
+        pileup_prepare_indels(s);
+    }
+
+    if (bam.buf != NULL) free(bam.buf);
 
     /* zero out the pair_stats */
     unsigned pi;

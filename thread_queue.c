@@ -279,7 +279,9 @@ worker_func(void *args)
     PROGRESS_DECL();
     tq->on_create();
 
-    while (1) {
+    unsigned more_input = 1;
+
+    while (more_input) {
         PROGRESS_START("WAIT");
         pthread_mutex_lock(&tq->io_mtx);
         while (! tq->n_readers_free)
@@ -323,7 +325,7 @@ worker_func(void *args)
         pthread_mutex_unlock(&tq->io_mtx);
 
         PROGRESS_START("READ");
-        tq->reader.read(tq->reader_par[r], in->buf);
+        more_input = tq->reader.read(tq->reader_par[r], in->buf);
         PROGRESS_MSG("READ");
 
         pthread_mutex_lock(&tq->io_mtx);
@@ -332,26 +334,9 @@ worker_func(void *args)
         pthread_cond_signal(&tq->reader_free_cond);
         pthread_mutex_unlock(&tq->io_mtx);
 
-        /* no need to free any resources here */
-        unsigned sz = 0, b;
-        for (b = 0; b != tq->n_inputs; ++b)
-            if (in->buf[b].size) {
-                sz = 1;
-                break;
-            }
-        if (sz == 0) {
-            /* need to free up output buffer. setting it to full just
-               has the effect of holding onto one extra buffer
-               unnecessarily. when it comes time to output it, the
-               length will be zero, so it will have no effect. */
-            set_outnode_status(tq, in->out, FULL);
-            tq->on_exit();
-            pthread_exit(NULL);
-        }
-
         /* load the output buffer. */
         PROGRESS_START("WORK");
-        tq->worker(in->buf, in->out->buf);
+        tq->worker(in->buf, more_input, in->out->buf);
         PROGRESS_MSG("WORK");
 
         set_outnode_status(tq, in->out, FULL);
@@ -364,6 +349,7 @@ worker_func(void *args)
             tq->out_head->status = EMPTY;
             ++tq->pool_status[tq->out_head->status];
             
+            unsigned b;
             for (b = 0; b != tq->n_outputs; ++b)
                 tq->out_head->buf[b].size = 0;
 
@@ -371,4 +357,6 @@ worker_func(void *args)
         }
         pthread_mutex_unlock(&tq->out_mtx);
     }
+    tq->on_exit();
+    pthread_exit(NULL);
 }

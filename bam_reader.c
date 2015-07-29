@@ -13,14 +13,29 @@
 
 extern struct chunk_strategy cs_stats;
 
-/* This is the conservative estimate, assuming the last block is the
-   maximal size of 0x10000 */
+/* Estimate the total size in bytes of blocks in this chunk. If the
+   within-block offset of the last block is zero, then we don't need
+   to parse that last block.  Otherwise, we need to parse it, and
+   cannot know its size in advance, so use 0x10000 as the maximum
+   possible size. */
+static unsigned
+chunk_bytes(hts_pair64_t chunk)
+{
+    return 
+        (chunk.v>>16)
+        - (chunk.u>>16)
+        + ((chunk.v & 0xFFFF) ? 0x10000 : 0);
+}
+
+/* Return an estimate for the bytes required to hold the BGZF blocks
+   contained in the chunks.  Each chunk
+   assuming the last block is the maximal size of 0x10000 */
 static unsigned
 tally_bgzf_bytes(hts_pair64_t *chunks, unsigned n_chunks)
 {
-    unsigned n, sz = 0;
-    for (n = 0; n != n_chunks; ++n)
-        sz += (chunks[n].v>>16) - (chunks[n].u>>16) + 0x10000;
+    unsigned c, sz = 0;
+    for (c = 0; c != n_chunks; ++c)
+        sz += chunk_bytes(chunks[c]);
     return sz;
 }
 
@@ -56,7 +71,7 @@ cmp_ival(hts_pair64_t a, hts_pair64_t b)
 KBTREE_INIT(itree, hts_pair64_t, cmp_ival);
 
 /* add an interval to the itree, resolving overlaps. return the total
-   interval length gained. */
+   size of blocks. */
 static uint64_t
 add_chunk_to_itree(kbtree_t(itree) *itree, hts_pair64_t q)
 {
@@ -71,7 +86,7 @@ add_chunk_to_itree(kbtree_t(itree) *itree, hts_pair64_t q)
         cont = 0;
         for (i = 0; i != 2; ++i)
             if (pk[i] && q.u <= pk[i]->u && pk[i]->v <= q.v) {
-                del_sz += pk[i]->v - pk[i]->u;
+                del_sz += chunk_bytes(*pk[i]);
                 kb_delp(itree, itree, pk[i]);
                 cont = 1;
             }
@@ -80,7 +95,7 @@ add_chunk_to_itree(kbtree_t(itree) *itree, hts_pair64_t q)
         /* q doesn't contain lw or hi. edit q to eliminate overlaps */
         if (lw && q.u < lw->v) q.u = lw->v;
         if (hi && hi->u < q.v) q.v = hi->u;
-        ins_sz = q.v - q.u;
+        ins_sz = chunk_bytes(q);
 
         /* q does not overlap any neighbors */
         if (q.u < q.v) kb_put(itree, itree, q);
@@ -146,59 +161,88 @@ add_bin_chunks_aux(int bin,
     return bgzf_bytes;
 }
 
-/* same as reg2bins, except that the [tbeg, tend) subset of contiguous
-   16kb windows is given.  windows 0, 1, and 2 are respectively [0,
-   16kb), [16kb, 32kb), [32kb, 48kb).  n_lvls: number of levels.
-   i.e. 6 levels gives levels [0, 6) */
-static inline int
-win2bins(int tbeg, int tend, hts_itr_t *itr, int n_lvls)
+
+/* return v rounded to nearest multiple of 8^p. Hacker's Delight, 2nd
+   ed., page 59 */
+static inline unsigned
+round_up_pow8(unsigned v, unsigned p)
 {
-    int l, t, max_lvl = n_lvls - 1, s = (max_lvl<<1) + max_lvl;
-    if (tbeg == tend) return 0;
-    assert(tbeg <= tend);
-    assert(tend <= 1<<s);
-    
-    
-    for (l = 0, t = 0; l != n_lvls; s -= 3, t += 1<<((l<<1)+l), ++l) {
-        int b, e, n, i;
-        b = t + (tbeg>>s); e = t + (tend>>s); n = e - b + 1;
-        if (itr->bins.n + n > itr->bins.m) {
-            itr->bins.m = itr->bins.n + n;
-            kroundup32(itr->bins.m);
-            itr->bins.a = (int*)realloc(itr->bins.a, sizeof(int) * itr->bins.m);
-        }
-        for (i = b; i <= e; ++i) itr->bins.a[itr->bins.n++] = i;
-    }
-    return itr->bins.n;
-    
+    assert(p < 6);
+    /* r1[k] = 1<<(3*k) - 1*/
+    static unsigned r1[] = { 0, 7, 63, 511, 4095, 32767 };
+    static unsigned r2[] = { ~0, ~7, ~63, ~511, ~4095, ~32767 };
+    return (v + r1[p]) & r2[p];
 }
 
 
-/* compute min_off. ripped from htslib/hts.c.  traverse bins in
-   order of previous siblings, then parents (which is the order of
-   descending loff) until a non-empty bin is found and loff is
-   initialized. */
+/* returns an allocated array of the set of bins that overlap the
+   contiguous tiling window range [tbeg, tend).  sets *n_bins to the
+   number of bins found.  same as reg2bins, except that the [tbeg,
+   tend) subset of contiguous 16kb windows is given.  windows 0, 1,
+   and 2 are respectively [0, 16kb), [16kb, 32kb), [32kb, 48kb).
+   n_lvls: number of levels.  i.e. 6 levels gives levels [0, 6).  */
+static inline int *
+win2bins(int tbeg, int tend, int n_lvls, unsigned *n_bins)
+{
+    if (tbeg == tend) {
+        *n_bins = 0;
+        return NULL;
+    }
+
+    int l, t, max_lvl = n_lvls - 1, s = (max_lvl<<1) + max_lvl;
+    assert(tbeg <= tend);
+    assert(tend <= 1<<s);
+
+    unsigned n = 0, alloc = n_lvls;
+    int *bins = malloc(alloc * sizeof(int));
+
+    /* identify the bin range [b, e) at each level l such that each
+       bin in the range overlaps at least one tiling window in the
+       range [tbeg, tend). t gives the bin number of the first bin on
+       level l. */
+    for (l = 0, t = 0; l != n_lvls; s -= 3, t += 1<<((l<<1)+l), ++l) {
+        int b, e, add, i;
+        unsigned p = n_lvls - l - 1;
+        b = t + (round_up_pow8(tbeg, p)>>s);
+        e = t + (round_up_pow8(tend, p)>>s);
+        add = e - b;
+        ALLOC_GROW(bins, n + add, alloc);
+        for (i = b; i != e; ++i) bins[n++] = i;
+    }
+    *n_bins = n;
+    return bins;
+}
+
+
+/* compute min_off. tid is the zero-based index of the contig.  ti is
+   the zero-based index of the 16kb tiling window.  finds the minimum
+   voffset needed in order to search the BAM file for records
+   overlapping this 16kb tiling window.  is ripped from htslib/hts.c.
+   traverse bins in order of previous siblings, then parents (which is
+   the order of descending loff) until a non-empty bin is found and
+   loff is initialized. */
 static uint64_t
 find_min_offset(int tid, int ti, hts_idx_t *idx)
 {
     bidx_t *bidx = idx->bidx[tid];
     int bin = hts_bin_first(idx->n_lvls) + ti;
-    khiter_t k;
+    khiter_t itr;
     do {
         int first;
-        k = kh_get(bin, bidx, bin);
-        if (k != kh_end(bidx)) break;
+        itr = kh_get(bin, bidx, bin);
+        if (itr != kh_end(bidx)) break;
         first = (hts_bin_parent(bin)<<3) + 1;
         if (bin > first) --bin;
         else bin = hts_bin_parent(bin);
     } while (bin);
-    if (bin == 0) k = kh_get(bin, bidx, bin);
-    return k != kh_end(bidx) ? kh_val(bidx, k).loff : 0;
+    if (bin == 0) itr = kh_get(bin, bidx, bin);
+    return itr != kh_end(bidx) ? kh_val(bidx, itr).loff : 0;
 }
 
 
-/* compute initial set of bins, add those chunks to the tree. return
-   the total number of bytes added. */
+/* compute initial set of bins that have content in the first tiling
+   window (?), add those chunks to the tree. return the total number
+   of bytes added. */
 static unsigned
 compute_initial_bins(int tid, 
                      int ti,
@@ -206,18 +250,17 @@ compute_initial_bins(int tid,
                      kbtree_t(itree) *itree, 
                      hts_idx_t *idx)
 {
-    hts_itr_t *itr = calloc(1, sizeof(hts_itr_t));
-
     int actual_n_lvls = idx->n_lvls + 1; /* semantic correction */
-    win2bins(ti, ti + 1, itr, actual_n_lvls);
+    unsigned n_bins;
+    int *bins = win2bins(ti, ti + 1, actual_n_lvls, &n_bins);
     unsigned bgzf_bytes = 0;
 
     /* add initial chunks for [ti, ti + 1) */
     int i;
-    for (i = 0; i != itr->bins.n; ++i)
-        bgzf_bytes += add_bin_chunks_aux(itr->bins.a[i], 
-                                         idx->bidx[tid], min_off, itree);
-    free(itr);
+    for (i = 0; i != n_bins; ++i)
+        bgzf_bytes += 
+            add_bin_chunks_aux(bins[i], idx->bidx[tid], min_off, itree);
+    free(bins);
     return bgzf_bytes;
 }
 
@@ -281,7 +324,8 @@ hts_size_to_range(struct pair_ordering beg,
                   struct pair_ordering_range *qend,
                   hts_idx_t *idx,
                   hts_pair64_t **chunks,
-                  unsigned *n_chunks)
+                  unsigned *n_chunks,
+                  unsigned *more_input)
 {
     /* constants */
     int firstbin0 = hts_bin_first(idx->n_lvls);
@@ -296,16 +340,16 @@ hts_size_to_range(struct pair_ordering beg,
         
     int ms = idx->min_shift;
     struct pair_ordering cpos;
-    struct pair_ordering_range crng; /* current range */
+    struct pair_ordering_range cur_rng; /* current range */
     unsigned bgzf_bytes;
 
     for (*n_chunks = 0, bgzf_bytes = 0; qcur != qend; ++qcur) {
-        crng = (struct pair_ordering_range){ MAX_PAIR_ORD(qcur->beg, beg), qcur->end };
-        size_t tid, tid_end = MIN(qcur->end.hi + 1, idx->n);
+        cur_rng = (struct pair_ordering_range){ MAX_PAIR_ORD(qcur->beg, beg), qcur->end };
+        size_t tid, tid_end = MIN(cur_rng.end.hi + 1, idx->n);
         int ti, b;
-        for (tid = qcur->beg.hi; tid != tid_end; ++tid) {
-            int ti_beg = tid == crng.beg.hi ? crng.beg.lo>>ms : 0;
-            int ti_end = tid == crng.end.hi ? crng.end.lo>>ms : n_small_bins;
+        for (tid = cur_rng.beg.hi; tid != tid_end; ++tid) {
+            int ti_beg = tid == cur_rng.beg.hi ? cur_rng.beg.lo>>ms : 0;
+            int ti_end = tid == cur_rng.end.hi ? cur_rng.end.lo>>ms : n_small_bins;
             if (ti_beg == ti_end) continue;
 
             uint64_t min_off = find_min_offset(tid, ti_beg, idx);
@@ -339,6 +383,7 @@ hts_size_to_range(struct pair_ordering beg,
         beg = (struct pair_ordering){ 0, 0 }; 
     }
  END:
+    *more_input = qcur != qend;
     free(bins);
     return cpos;
 }
@@ -367,17 +412,19 @@ bam_scanner(void *par, unsigned max_bytes)
         min_wanted_bytes = max_bytes * mul;
         unsigned s;
         for (s = 0; s != bp->n; ++s) {
+            struct bam_stats *bs = &bp->m[s];
             tmp_end =
                 hts_size_to_range(cs_stats.pos,
                                   min_end,
                                   min_wanted_bytes,
                                   bp->qbeg,
                                   bp->qend,
-                                  bp->m[s].idx, 
-                                  &bp->m[s].chunks,
-                                  &bp->m[s].n_chunks);
+                                  bs->idx, 
+                                  &bs->chunks,
+                                  &bs->n_chunks,
+                                  &bs->more_input);
             min_end = MIN_PAIR_ORD(min_end, tmp_end);
-            tmp_bytes = tally_bgzf_bytes(bp->m[s].chunks, bp->m[s].n_chunks);
+            tmp_bytes = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
             min_actual_bytes = MIN(min_actual_bytes, tmp_bytes);
         }
         mul *= STEP_DOWN;
@@ -432,8 +479,9 @@ bgzf_block_size(char *bgzf)
 
 /* read recorded compressed blocks into bufs. plus space for the
    initial voffset information.  Warning: Does not check that hread
-   calls return the correct number of characters read.  */
-void
+   calls return the correct number of characters read.  return 1 if
+   more input is still available, 0 if this is the last of it. */
+unsigned
 bam_reader(void *par, struct managed_buf *bufs)
 {
     struct bam_reader_par *bp = par;
@@ -443,14 +491,12 @@ bam_reader(void *par, struct managed_buf *bufs)
     char *wp;
 
     unsigned max_grow;
+    unsigned more_input = 0;
 
     for (s = 0; s != bp->n; ++s) {
         struct bam_stats *bs = &bp->m[s];
-        if (bs->n_chunks == 0) {
-            bufs[s].size = 0;
-            continue;
-        }
-        
+        if (bs->more_input) more_input = 1;
+
         write_voffset_chunks(bs->chunks, bs->n_chunks, &bufs[s]);
         wp = bufs[s].buf + bufs[s].size;
         max_grow = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
@@ -484,6 +530,7 @@ bam_reader(void *par, struct managed_buf *bufs)
         }
         bufs[s].size = wp - bufs[s].buf;
     }
+    return more_input;
 }
 
 static size_t

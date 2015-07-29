@@ -161,6 +161,8 @@ int main_pileup(int argc, char **argv)
                     opts.min_base_quality);
 
     printf("Starting input processing.\n");
+    fflush(stdout);
+
     thread_queue_run(tq);
     thread_queue_free(tq);
 
@@ -175,6 +177,7 @@ int main_pileup(int argc, char **argv)
 /* provide thread_queue API functions */
 void
 pileup_worker(const struct managed_buf *in_bufs,
+              unsigned more_input,
               struct managed_buf *out_bufs)
 {
     struct managed_buf bam = { NULL, 0, 0 };
@@ -182,9 +185,20 @@ pileup_worker(const struct managed_buf *in_bufs,
     unsigned s;
     for (s = 0; s != bam_samples.n; ++s) {
         bam_inflate(&in_bufs[s], &bam);
-        tally_pileup_stats(bam, s);
-        summarize_pileup_stats(s);
+        pileup_tally_stats(bam, s);
     }
+
+    if (! more_input)
+        pileup_final_input();
+
+    /* we need bqs and indel stats.  do not need basecall stats */
+    for (s = 0; s != bam_samples.n; ++s) {
+        pileup_prepare_bqs(s);
+        pileup_prepare_indels(s);
+    }
+
+    if (bam.buf != NULL) free(bam.buf);
+
     struct pileup_data pdat = { 
         .calls = { NULL, 0, 0 },
         .quals = { NULL, 0, 0 },
