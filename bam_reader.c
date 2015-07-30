@@ -13,6 +13,18 @@
 
 extern struct chunk_strategy cs_stats;
 
+/* extract compressed offset from voffset */
+#define BAM_COFFSET(v) ((v)>>16)
+
+/* extract uncompressed offset from voffset */
+#define BAM_UOFFSET(v) ((v) & 0xFFFF)
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
+
+#define MIN_PAIR_ORD(a, b) (cmp_pair_ordering(&(a), &(b)) < 0 ? (a) : (b))
+#define MAX_PAIR_ORD(a, b) (cmp_pair_ordering(&(a), &(b)) < 0 ? (b) : (a))
+
 /* Estimate the total size in bytes of blocks in this chunk. If the
    within-block offset of the last block is zero, then we don't need
    to parse that last block.  Otherwise, we need to parse it, and
@@ -22,9 +34,9 @@ static unsigned
 chunk_bytes(hts_pair64_t chunk)
 {
     return 
-        (chunk.v>>16)
-        - (chunk.u>>16)
-        + ((chunk.v & 0xFFFF) ? 0x10000 : 0);
+        BAM_COFFSET(chunk.v) 
+        - BAM_COFFSET(chunk.u) 
+        + (BAM_UOFFSET(chunk.v) ? BGZF_MAX_BLOCK_SIZE : 0);
 }
 
 /* Return an estimate for the bytes required to hold the BGZF blocks
@@ -56,53 +68,108 @@ next_bins_aux(int ti, int *bins, int firstbin0, int n_small_bins)
     return i;
 }
 
-/* intervals are sorted in the usual way.  those which have a full
-   containment relationship are deemed equal.*/
+/* Return 0 if chunks a and b share one or more BGZF blocks.  Return
+   -1 if chunk a's blocks are all earlier in the file than chunk b's
+   blocks, and 1 if the reverse is true.
+
+   Note.  It may happen that a.v < b.u, but BAM_COFFSET(a.v) ==
+   BAM_COFFSET(b.u).  If this is the case, and if BAM_UOFFSET(a.v) != 0, then
+   this means that chunk a and chunk b both contain the block at
+   BAM_COFFSET(a.v).  However, if BAM_UOFFSET(a.v) == 0, then chunk a does NOT
+   contain the block at BAM_COFFSET(a.v) and so chunks a and b are deemed
+   not to overlap.  */
 static int
-cmp_ival(hts_pair64_t a, hts_pair64_t b)
+cmp_bgzf_chunks(hts_pair64_t a, hts_pair64_t b)
 {
-    if (a.v <= b.u) return -1;
-    if (b.v <= a.u) return 1;
-    if (a.u < b.u && a.v < b.v) return -1;
-    if (b.u < a.u && b.v < a.v) return 1;
+    if (BAM_COFFSET(a.v) < BAM_COFFSET(b.u) ||
+        (BAM_COFFSET(a.v) == BAM_COFFSET(b.u) && BAM_UOFFSET(a.v) == 0))
+        return -1;
+    if (BAM_COFFSET(b.v) < BAM_COFFSET(a.u) ||
+        (BAM_COFFSET(b.v) == BAM_COFFSET(a.u) && BAM_UOFFSET(b.v) == 0))
+        return 1;
+
     return 0;
 }
 
-KBTREE_INIT(itree, hts_pair64_t, cmp_ival);
+
+/* return 1 if c_query is 'contained' by c_target: that is, if the set
+   of c_query's BGZF blocks is a subset of c_target's set of BGZF
+   blocks. */
+static int
+bgzf_contains(hts_pair64_t c_target, hts_pair64_t c_query)
+{
+    return 
+        BAM_COFFSET(c_target.u) <= BAM_COFFSET(c_query.u)
+        && (BAM_COFFSET(c_query.v) < BAM_COFFSET(c_target.v)
+            || (BAM_COFFSET(c_query.v) == BAM_COFFSET(c_target.v)
+                && BAM_UOFFSET(c_target.v) != 0));
+}
+
+
+/* produce a new chunk (voffset pair) that equals the union of BGZF
+   blocks defined by chunks c1 and c2.  The starting and ending
+   uoffsets will be preserved.  However, total set of BAM records in
+   the merged chunk may be larger, in case that the two chunks shared
+   a block, but used disjoint subsets of records within that block. 
+
+   Assumes that c1 and c2 intersect.  */
+static hts_pair64_t
+merge_chunks(hts_pair64_t c1, hts_pair64_t c2)
+{
+    return (hts_pair64_t){ .u = MIN(c1.u, c2.u), .v = MAX(c1.v, c2.v) };
+}
+
+
+KBTREE_INIT(itree_t, hts_pair64_t, cmp_bgzf_chunks);
 
 /* add an interval to the itree, resolving overlaps. return the total
-   size of blocks. */
+   size of blocks.
+
+   Approach: query the itree for any item that compares equal to
+   q. For any existing item e found, determine whether e contains q.
+   If so, do nothing.  Otherwise, remove e, update del_sz, set q to
+   merged(q, e) */
 static uint64_t
-add_chunk_to_itree(kbtree_t(itree) *itree, hts_pair64_t q)
+add_chunk_to_itree(kbtree_t(itree_t) *itree, hts_pair64_t q)
 {
-    hts_pair64_t *lw, *hi, *pk[2];
     uint64_t ins_sz = 0, del_sz = 0;
-    int i, cont = 0;
+    hts_pair64_t *ex; /* existing element */
     while (1) {
-        kb_interval(itree, itree, q, &lw, &hi);
-        pk[0] = lw; pk[1] = lw != hi ? hi : NULL;
-
-        /* delete lw or hi if either are contained by q */
-        cont = 0;
-        for (i = 0; i != 2; ++i)
-            if (pk[i] && q.u <= pk[i]->u && pk[i]->v <= q.v) {
-                del_sz += chunk_bytes(*pk[i]);
-                kb_delp(itree, itree, pk[i]);
-                cont = 1;
+        ex = kb_get(itree_t, itree, q);
+        if (ex) {
+            if (bgzf_contains(*ex, q))
+                break;
+            else {
+                del_sz += chunk_bytes(*ex);
+                q = merge_chunks(*ex, q);
+                kb_del(itree_t, itree, *ex);
+                continue;
             }
-        if (cont) continue;
-
-        /* q doesn't contain lw or hi. edit q to eliminate overlaps */
-        if (lw && q.u < lw->v) q.u = lw->v;
-        if (hi && hi->u < q.v) q.v = hi->u;
-        ins_sz = chunk_bytes(q);
-
-        /* q does not overlap any neighbors */
-        if (q.u < q.v) kb_put(itree, itree, q);
-        break;
+        } else {
+            ins_sz += chunk_bytes(q);
+            kb_put(itree_t, itree, q);
+            break;
+        }
     }
     assert(ins_sz >= del_sz);
     return ins_sz - del_sz;
+}
+
+
+static unsigned
+total_itree_bytes(kbtree_t(itree_t) *itree)
+{
+    unsigned sz = 0;
+    kbitr_t itr;
+    int iret = 1;
+    hts_pair64_t ck;
+    kb_itr_first_itree_t(itree, &itr);
+    while (iret) {
+        ck = kb_itr_key(hts_pair64_t, &itr);
+        sz += chunk_bytes(ck);
+        iret = kb_itr_next_itree_t(itree, &itr);
+    }
+    return sz;
 }
 
 /* taken from htslib/hts.c */
@@ -148,15 +215,20 @@ static unsigned
 add_bin_chunks_aux(int bin,
                    bidx_t *bidx, 
                    uint64_t min_off, 
-                   kbtree_t(itree) *itree)
+                   kbtree_t(itree_t) *itree)
 {
     khiter_t k;
     unsigned j, bgzf_bytes = 0;
     if ((k = kh_get(bin, bidx, bin)) != kh_end(bidx)) {
         bins_t *p = &kh_val(bidx, k);
         for (j = 0; j != p->n; ++j)
-            if (p->list[j].v > min_off)
-                bgzf_bytes += add_chunk_to_itree(itree, p->list[j]);
+            if (p->list[j].v > min_off) {
+                unsigned before_bytes = total_itree_bytes(itree);
+                unsigned bytes_added = add_chunk_to_itree(itree, p->list[j]);
+                bgzf_bytes += bytes_added;
+                unsigned after_bytes = total_itree_bytes(itree);
+                assert(bytes_added == (after_bytes - before_bytes));
+            }
     }
     return bgzf_bytes;
 }
@@ -247,7 +319,7 @@ static unsigned
 compute_initial_bins(int tid, 
                      int ti,
                      uint64_t min_off, 
-                     kbtree_t(itree) *itree, 
+                     kbtree_t(itree_t) *itree, 
                      hts_idx_t *idx)
 {
     int actual_n_lvls = idx->n_lvls + 1; /* semantic correction */
@@ -268,7 +340,7 @@ compute_initial_bins(int tid,
 /* transfer all chunks in itree to chunks, appending from initial
    position *n_chunks and updating both chunks and n_chunks. */
 static void
-accumulate_chunks(kbtree_t(itree) *itree,
+accumulate_chunks(kbtree_t(itree_t) *itree,
                   hts_pair64_t **chunks,
                   unsigned *n_chunks)
 {
@@ -277,13 +349,13 @@ accumulate_chunks(kbtree_t(itree) *itree,
     *chunks = realloc(*chunks, *n_chunks * sizeof((*chunks)[0]));
 
     kbitr_t tree_itr;
-    kb_itr_first_itree(itree, &tree_itr);
+    kb_itr_first_itree_t(itree, &tree_itr);
     int iret = 1; /* */
     unsigned i;
     for (i = beg; i != *n_chunks; ++i) {
         assert(iret != 0);
         (*chunks)[i] = kb_itr_key(hts_pair64_t, &tree_itr);
-        iret = kb_itr_next_itree(itree, &tree_itr);
+        iret = kb_itr_next_itree_t(itree, &tree_itr);
     }
 }
 
@@ -301,11 +373,6 @@ less_rng_end(unsigned pos, void *par)
     struct virt_less_range_par *vl = par;
     return cmp_pair_ordering(&vl->q, &vl->ary[pos].end) < 0;
 }
-
-#define MIN_PAIR_ORD(a, b) (cmp_pair_ordering(&(a), &(b)) < 0 ? (a) : (b))
-#define MAX_PAIR_ORD(a, b) (cmp_pair_ordering(&(a), &(b)) < 0 ? (b) : (a))
-
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 /* using forward scanning through the index, return the largest
    position end such that the total size of bgzf blocks overlapping
@@ -354,7 +421,7 @@ hts_size_to_range(struct pair_ordering beg,
 
             uint64_t min_off = find_min_offset(tid, ti_beg, idx);
 
-            kbtree_t(itree) *itree = kb_init(itree, 128);
+            kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
             bgzf_bytes += compute_initial_bins(tid, ti_beg, min_off, itree, idx);
 
             cpos.hi = tid;
@@ -366,7 +433,7 @@ hts_size_to_range(struct pair_ordering beg,
                     /* break if window touches or exceeds max_end, or
                        we have enough content */
                     accumulate_chunks(itree, chunks, n_chunks);
-                    kb_destroy(itree, itree);
+                    kb_destroy(itree_t, itree);
                     goto END;
                 }
 
@@ -377,7 +444,7 @@ hts_size_to_range(struct pair_ordering beg,
                 cpos.lo = (ti + 1)<<ms;
             }
             accumulate_chunks(itree, chunks, n_chunks);
-            kb_destroy(itree, itree);
+            kb_destroy(itree_t, itree);
         }
         /* beg is only relevant within the first value of qcur */
         beg = (struct pair_ordering){ 0, 0 }; 
@@ -507,11 +574,11 @@ bam_reader(void *par, struct managed_buf *bufs)
             bgzf_seek(bs->bgzf, bs->chunks[c].u, SEEK_SET);
 
             /* read all but possibly the last block */
-            block_span = (bs->chunks[c].v>>16) - (bs->chunks[c].u>>16);
+            block_span = BAM_COFFSET(bs->chunks[c].v) - BAM_COFFSET(bs->chunks[c].u);
             n_chars_read = hread(fp, wp, block_span);
             wp += block_span;
             
-            if ((bs->chunks[c].v & 0xFFFF) != 0) {
+            if (BAM_UOFFSET(bs->chunks[c].v) != 0) {
                 /* the chunk end virtual offset refers to a non-zero
                    offset into a block. */
 
@@ -566,16 +633,16 @@ bam_inflate(const struct managed_buf *bgzf,
     size_t n_bytes;
 
     for (c = 0; c != n_chunks; ++c) {
-        coff_beg = chunks[c].u>>16;
-        coff_end = chunks[c].v>>16; /* offset of the beginning of the last block in this chunk */
+        coff_beg = BAM_COFFSET(chunks[c].u);
+        coff_end = BAM_COFFSET(chunks[c].v); /* offset of the beginning of the last block in this chunk */
         coff = coff_beg;
         do {
             ALLOC_GROW_REMAP(bam->buf, out, bam->size + BGZF_MAX_BLOCK_SIZE, bam->alloc);
             bs = bgzf_block_size(in);
 
             n_bytes = inflate_bgzf_block(in, bs, out);
-            c_beg = (coff == coff_beg ? chunks[c].u & 0xffff : 0);
-            c_end = (coff == coff_end ? chunks[c].v & 0xffff : n_bytes);
+            c_beg = (coff == coff_beg ? BAM_UOFFSET(chunks[c].u) : 0);
+            c_end = (coff == coff_end ? BAM_UOFFSET(chunks[c].v) : n_bytes);
             n_copy = c_end - c_beg; /* number of bytes to copy to output buffer */
 
             if (c_beg != 0) memmove(out, out + c_beg, n_copy);
