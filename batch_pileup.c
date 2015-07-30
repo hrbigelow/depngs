@@ -925,8 +925,9 @@ pileup_next_pos()
 
     for (s = 0; s != tls.n_samples; ++s) {
         ts = &tls.ts[s];
-        /* increment bqs iterator */
-        if (ts->bqs_cur != ts->bqs_end
+        /* increment bqs iterator ('while' is used here, because bqs
+           have multiple entries per position) */
+        while (ts->bqs_cur != ts->bqs_end
             && less_contig_pos(ts->bqs_cur->cpos, suc))
             ++ts->bqs_cur;
 
@@ -935,8 +936,9 @@ pileup_next_pos()
             && less_contig_pos(ts->base_cur->cpos, suc))
             ++ts->base_cur;
 
-        /* increment indel iterator if it is defined */
-        if (ts->indel_cur != ts->indel_end
+        /* increment indel iterator ('while' used here, because may be
+           multiple entries per position) */
+        while (ts->indel_cur != ts->indel_end
             && less_contig_pos(ts->indel_cur->cpos, suc))
             ++ts->indel_cur;
     }
