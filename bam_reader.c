@@ -128,11 +128,18 @@ KBTREE_INIT(itree_t, hts_pair64_t, cmp_bgzf_chunks);
    Approach: query the itree for any item that compares equal to
    q. For any existing item e found, determine whether e contains q.
    If so, do nothing.  Otherwise, remove e, update del_sz, set q to
-   merged(q, e) */
-static uint64_t
+   merged(q, e) and repeat.  This procedure maintains the invariant
+   that no two items in the tree compare equal (according to
+   cmp_bgzf_chunks, which deems overlap to be equality).  Return the
+   change in total size of all chunks in the itree (as measured by
+   chunk_bytes()).  Note that the change may be negative!  This is
+   because items may be merged by the addition of a new item, and
+   chunk_bytes() provides a conservative over-estimate of size
+   (assuming the last BGZF block is BGZF_MAX_BLOCK_SIZE) */
+static int64_t
 add_chunk_to_itree(kbtree_t(itree_t) *itree, hts_pair64_t q)
 {
-    uint64_t ins_sz = 0, del_sz = 0;
+    int64_t ins_sz = 0, del_sz = 0;
     hts_pair64_t *ex; /* existing element */
     while (1) {
         ex = kb_get(itree_t, itree, q);
@@ -151,7 +158,6 @@ add_chunk_to_itree(kbtree_t(itree_t) *itree, hts_pair64_t q)
             break;
         }
     }
-    assert(ins_sz >= del_sz);
     return ins_sz - del_sz;
 }
 
@@ -223,10 +229,10 @@ add_bin_chunks_aux(int bin,
         bins_t *p = &kh_val(bidx, k);
         for (j = 0; j != p->n; ++j)
             if (p->list[j].v > min_off) {
-                unsigned before_bytes = total_itree_bytes(itree);
-                unsigned bytes_added = add_chunk_to_itree(itree, p->list[j]);
+                int64_t before_bytes = total_itree_bytes(itree);
+                int64_t bytes_added = add_chunk_to_itree(itree, p->list[j]);
                 bgzf_bytes += bytes_added;
-                unsigned after_bytes = total_itree_bytes(itree);
+                int64_t after_bytes = total_itree_bytes(itree);
                 assert(bytes_added == (after_bytes - before_bytes));
             }
     }
@@ -618,8 +624,6 @@ bam_inflate(const struct managed_buf *bgzf,
     size_t n_copy;
     uint64_t bs; /* compressed block size */
 
-    uint64_t coff, coff_beg, coff_end; /* current and end coffset as we traverse
-                                          the chunks within our block ranges */
     
     /* parse the first part of the bgzf buffer to get the set of
        chunks */
@@ -632,14 +636,21 @@ bam_inflate(const struct managed_buf *bgzf,
     char *in = bgzf->buf + n_bytes_consumed, *out = bam->buf;
     size_t n_bytes;
 
+/* current and end coffset as we traverse the chunks within our block
+   ranges */
+    uint64_t coff, coff_beg, coff_end, uoff_end; 
     for (c = 0; c != n_chunks; ++c) {
         coff_beg = BAM_COFFSET(chunks[c].u);
-        coff_end = BAM_COFFSET(chunks[c].v); /* offset of the beginning of the last block in this chunk */
+        coff_end = BAM_COFFSET(chunks[c].v); /* offset of last block, if it exists  */
+        uoff_end = BAM_UOFFSET(chunks[c].v); /* if non-zero, block at coff_end is present */
         coff = coff_beg;
-        do {
+        /* inflate all blocks starting in [coff_beg, coff_end).
+           optionally, inflate block starting at coff_end if it has
+           non-zero uoffset (i.e. there are records we need from it) */
+        while (coff < coff_end || (coff == coff_end && uoff_end != 0)) {
             ALLOC_GROW_REMAP(bam->buf, out, bam->size + BGZF_MAX_BLOCK_SIZE, bam->alloc);
             bs = bgzf_block_size(in);
-
+            
             n_bytes = inflate_bgzf_block(in, bs, out);
             c_beg = (coff == coff_beg ? BAM_UOFFSET(chunks[c].u) : 0);
             c_end = (coff == coff_end ? BAM_UOFFSET(chunks[c].v) : n_bytes);
@@ -651,7 +662,7 @@ bam_inflate(const struct managed_buf *bgzf,
             in += bs;
             out += n_copy;
             coff += bs;
-        } while (coff <= coff_end);
+        }
     }
 }
 
@@ -689,7 +700,6 @@ bam_parse(char *raw, bam1_t *b)
     bam1_core_t *c = &b->core;
     b->data = (uint8_t *)raw + 36; /* do not allocate data, just point to raw buffer. */
     int32_t block_len = *(int32_t *)raw;
-    
 
 #ifdef DEP_BIG_ENDIAN
     uint32_t x[8];
@@ -713,17 +723,40 @@ bam_parse(char *raw, bam1_t *b)
 }
 
 
+/* allocate a strndup'ed buffer of raw's contents of just one BAM
+   record. */
+char *
+bam_duplicate_buf(char *raw)
+{
+    /* size of BAM record */
+    int32_t n = (*(int32_t *)raw) + 4;
+    /* char *dup = strndup(raw, n); */
+    char *dup = malloc(n);
+    memcpy(dup, raw, n);
+    return dup;
+    /* !!! for some bizarre reason, using strndup instead of malloc /
+           memcpy doesn't seem to work. */
+}
+
 /* initialize bs from bam_file.  also, expects <bam_file>.bai to exist
    as well */
 void
 bam_stats_init(const char *bam_file, struct bam_stats *bs)
 {
     bs->bgzf = bgzf_open(bam_file, "r");
+    if (! bs->bgzf) {
+        fprintf(stderr, "Error: Couldn't load bam file %s\n", bam_file);
+        exit(1);
+    }
     char *bam_index_file = malloc(strlen(bam_file) + 5);
     strcpy(bam_index_file, bam_file);
     strcat(bam_index_file, ".bai");
 
     bs->idx = bam_index_load(bam_index_file);
+    if (! bs->idx) {
+        fprintf(stderr, "Error: Couldn't load bam index file %s\n", bam_index_file);
+        exit(1);
+    }
     bs->hdr = bam_hdr_read(bs->bgzf);
     bs->chunks = NULL;
     bs->n_chunks = 0;

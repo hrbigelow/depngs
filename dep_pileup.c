@@ -86,9 +86,8 @@ pileup_init(const char *samples_file,
             unsigned long max_input_mem,
             unsigned min_qual);
 
-/* extern char *optarg; */
-/* extern int optind; */
-
+extern char *optarg;
+extern int optind;
 
 int main_pileup(int argc, char **argv)
 {

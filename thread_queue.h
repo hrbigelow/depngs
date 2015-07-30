@@ -34,7 +34,10 @@ typedef struct {
 
     /* scan the input (or index on the input) as directed by par,
        updating par so as to instruct the next call to 'read' to read
-       <= max_bytes */
+       <= max_bytes.  invocation of 'scan' is protected by
+       thread_queue's io_mtx mutex, thus there will only be one thread
+       running 'scan' at a time.  this enables scan to consult global
+       resources without doing any locking of its own. */
     void (*scan)(void *par, unsigned max_bytes);
 } thread_queue_reader_t;
 

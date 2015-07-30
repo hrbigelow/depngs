@@ -97,8 +97,8 @@ KHASH_INIT(indel_h, struct indel_seq *, char, 0, indel_hash_func, indel_hash_equ
 /* hash type for tallying indel events. use   */
 KHASH_MAP_INIT_INT64(indel_ct_h, struct indel_count_node *);
 
-/* overlapping mates hash, key is q_name.  values are pointers to raw
-   BAM records. */
+/* overlapping mates hash, key is q_name.  values are strdup-allocated
+   raw BAM records. */
 KHASH_MAP_INIT_STR(olap_h, char *);
 
 
@@ -198,6 +198,11 @@ batch_pileup_thread_free()
         struct tally_stats *ts = &tls.ts[s];
         kh_destroy(pbqt_h, ts->pbqt_hash);
         kh_destroy(indel_ct_h, ts->indel_ct_hash);
+        for (it = kh_begin(ts->overlap_hash); it != kh_end(ts->overlap_hash); ++it)
+            if (kh_exist(ts->overlap_hash, it)) {
+                free(kh_key(ts->overlap_hash, it));
+                free(kh_val(ts->overlap_hash, it));
+            }
         kh_destroy(olap_h, ts->overlap_hash);
         free(ts->base_ct);
         free(ts->bqs_ct);
@@ -312,9 +317,9 @@ pileup_prepare_bqs(unsigned s)
     struct contig_pos pos;
     for (it = kh_begin(ph), i = 0; it != kh_end(ph); ++it) {
         if (! kh_exist(ph, it)) continue;
+        pk.k = kh_key(ph, it);
         pos = (struct contig_pos){ pk.v.tid, pk.v.pos };
         if (less_contig_pos(pos, tls.tally_end)) {
-            pk.k = kh_key(ph, it);
             ct = kh_val(ph, it);
             ts->bqs_ct[i++] = (struct pos_bqs_count){
                 .cpos = { pk.v.tid, pk.v.pos },
@@ -433,7 +438,7 @@ pileup_make_indel_pairs(struct indel_count *cts1, unsigned n_cts1,
 static inline char
 bqs_count_to_call(struct bqs_count bc, unsigned refbase_i)
 {
-    static char match[] = ".,";
+    static char match[] = ",.";
     return bc.base == refbase_i
         ? match[bc.strand]
         : seq_nt16_str[bc.base];
@@ -621,6 +626,8 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
 }
 
 
+
+
 /* process an entire set of raw (uncompressed) BAM records in [rec,
    end).  maintains a map of possibly overlapping reads and resolves
    their quality scores. returns the last position processed, or { 0,
@@ -646,9 +653,9 @@ process_bam_block(char *rec, char *end, struct tally_stats *ts)
                     /* b overlaps mate.  since b is upstream, it won't
                        have been stored in overlaps hash yet. store;
                        do not tally yet. */
-                    khiter_t it =
-                        kh_put(olap_h, ts->overlap_hash, bam_get_qname(&b), &ret);
-                    kh_val(ts->overlap_hash, it) = rec;
+                    char *qname = strdup(bam_get_qname(&b));
+                    khiter_t it = kh_put(olap_h, ts->overlap_hash, qname, &ret);
+                    kh_val(ts->overlap_hash, it) = bam_duplicate_buf(rec);
                 }
             } else {
                 /* b is downstream mate. must search overlaps hash to
@@ -660,6 +667,8 @@ process_bam_block(char *rec, char *end, struct tally_stats *ts)
                     // !!! NEED TO IMPLEMENT: tweak_overlap_quality(&b, &b_mate);
                     process_bam_stats(&b, ts);
                     process_bam_stats(&b_mate, ts);
+                    free(kh_val(ts->overlap_hash, it));
+                    free(kh_key(ts->overlap_hash, it));
                     kh_del(olap_h, ts->overlap_hash, it);
                 } else {
                     if (b.core.pos != b.core.mpos) {
@@ -668,15 +677,16 @@ process_bam_block(char *rec, char *end, struct tally_stats *ts)
                         process_bam_stats(&b, ts);
                     } else {
                         /* b is first in the pair to be encountered.  store it */
-                        khiter_t it = 
-                            kh_put(olap_h, ts->overlap_hash, bam_get_qname(&b), &ret);
-                        kh_val(ts->overlap_hash, it) = rec;
+                        char *qname = strdup(bam_get_qname(&b));
+                        khiter_t it = kh_put(olap_h, ts->overlap_hash, qname, &ret);
+                        kh_val(ts->overlap_hash, it) = bam_duplicate_buf(rec);
                     }
                 }
             }
         }
         if (rec_next == end) last_pos = (struct contig_pos){ b.core.tid, b.core.pos };
         rec = rec_next;
+        assert(rec <= end);
     }
     return last_pos;
 }
@@ -758,7 +768,7 @@ pileup_prepare_basecalls(unsigned s)
             ary[i++] = (struct pos_base_count){ k.v, kh_val(ph, it) };
         }
     
-    ks_introsort(pbc_sort, n, ary);
+    ks_introsort(pbc_sort, i, ary);
     ts->base_ct = ary;
     ts->base_cur = ary;
     ts->base_end = ary + i;
@@ -803,7 +813,7 @@ pileup_prepare_indels(unsigned s)
             }
         }
 
-    ks_introsort(pi_sort, n, ary);
+    ks_introsort(pi_sort, i, ary);
     ts->indel_ct = ary;
     ts->indel_cur = ary;
     ts->indel_end = ary + i;
@@ -894,11 +904,11 @@ pileup_clear_finished_stats()
 
         /* completely clear temporary data */
         free(ts->base_ct);
-        ts->base_ct = NULL;
+        ts->base_ct = ts->base_cur = ts->base_end = NULL;
         free(ts->bqs_ct);
-        ts->bqs_ct = NULL;
+        ts->bqs_ct = ts->bqs_cur = ts->bqs_end = NULL;
         free(ts->indel_ct);
-        ts->indel_ct = NULL;
+        ts->indel_ct = ts->indel_cur = ts->indel_end = NULL;
     }
 }
 

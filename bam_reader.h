@@ -51,8 +51,14 @@ bam_scanner(void *par, unsigned max_bytes);
    reallocating fields in b as necessary. return position of next bam
    record in the raw bam memory. adapted from
    htslib/sam.c:bam_read1. */
-char *bam_parse(char *bam_buf, bam1_t *b);
+char *
+bam_parse(char *bam_buf, bam1_t *b);
 
+
+/* allocate a strndup'ed buffer of raw's contents of just one BAM
+   record. (must be freed by the caller) */
+char *
+bam_duplicate_buf(char *raw);
 
 /* inflate bgzf data stored in bgzf buffer, which contains the set of
    blocks defined by blocks and n_blocks.  store inflated BAM records
