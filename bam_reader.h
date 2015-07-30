@@ -27,6 +27,9 @@ struct bam_reader_par {
     struct bam_stats *m;
     unsigned n;
 
+    /* currently loaded logical range */
+    struct pair_ordering_range loaded_range;
+
     /* set of defined logical ranges */
     struct pair_ordering_range *qbeg, *qend;
 };
@@ -63,10 +66,13 @@ bam_duplicate_buf(char *raw);
 /* inflate bgzf data stored in bgzf buffer, which contains the set of
    blocks defined by blocks and n_blocks.  store inflated BAM records
    in bam.  manage the size of bam.  only copy the portions of blocks
-   defined by the virtual offsets. */
+   defined by the virtual offsets. also, retrieves the serialized
+   information about the actual loaded logical range into output
+   argument loaded_range. */
 void
 bam_inflate(const struct managed_buf *bgzf,
-            struct managed_buf *bam);
+            struct managed_buf *bam,
+            struct pair_ordering_range *loaded_range);
 
 /* initialize  */
 void

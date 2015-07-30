@@ -182,8 +182,9 @@ pileup_worker(const struct managed_buf *in_bufs,
     struct managed_buf bam = { NULL, 0, 0 };
     struct managed_buf *out_buf = &out_bufs[0];
     unsigned s;
+    struct pair_ordering_range loaded_range;
     for (s = 0; s != bam_samples.n; ++s) {
-        bam_inflate(&in_bufs[s], &bam);
+        bam_inflate(&in_bufs[s], &bam, &loaded_range);
         pileup_tally_stats(bam, s);
     }
 

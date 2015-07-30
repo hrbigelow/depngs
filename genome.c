@@ -14,7 +14,7 @@ struct refseq reference_seq;
 
 /* initialize reference_seq */
 void
-genome_init(const char *fasta_file, unsigned do_load_seqs)
+genome_init(const char *fasta_file)
 {
     faidx_t *fai = fai_load(fasta_file);
     if (fai == NULL) {
@@ -36,18 +36,7 @@ genome_init(const char *fasta_file, unsigned do_load_seqs)
         strcpy(reference_seq.contig[t].name, faidx_iseq(fai, t));
         it = kh_put(s, reference_seq.names, reference_seq.contig[t].name, &ret);
         kh_val(reference_seq.names, it) = t;
-
-        if (do_load_seqs) {
-            reference_seq.contig[t].seq = 
-                faidx_fetch_seq(fai, reference_seq.contig[t].name, 0, INT_MAX, &len);
-            if (reference_seq.contig[t].seq == NULL) {
-                fprintf(stderr, "Error: %s:%u: Didn't find sequence %s in fasta file %s\n",
-                        __FILE__, __LINE__, reference_seq.contig[t].name, fasta_file);
-                exit(1);
-            }
-        }
-        else
-            reference_seq.contig[t].seq = NULL;
+        reference_seq.contig[t].seq = NULL;
     }
     fai_destroy(fai);
 }
@@ -62,6 +51,49 @@ genome_free()
             free(reference_seq.contig[t].seq);
     free(reference_seq.contig);
     kh_destroy(s, reference_seq.names);
+}
+
+
+int
+genome_load_contig(unsigned tid)
+{
+    if (tid >= reference_seq.n_contig) {
+        fprintf(stderr, "Error: tid %u must be less than the number of contigs (%u)\n",
+                tid, reference_seq.n_contig);
+        return 1;
+    }
+    if (reference_seq.contig[tid].seq != NULL) {
+        fprintf(stderr, "Error: reference sequence %s (tid %u) already loaded\n",
+                reference_seq.contig[tid].name, tid);
+        return 1;
+    }
+    reference_seq.contig[tid].seq = 
+        faidx_fetch_seq(fai, reference_seq.contig[tid].name, 0, INT_MAX, &len);
+
+    if (reference_seq.contig[tid].seq == NULL) {
+        fprintf(stderr, "Error: %s:%u: Didn't find sequence %s in fasta file %s\n",
+                __FILE__, __LINE__, reference_seq.contig[tid].name, fasta_file);
+        return 1;
+    }
+    return 0;
+}
+
+
+int
+genome_free_contig(unsigned tid)
+{
+    if (tid >= reference_seq.n_contig) {
+        fprintf(stderr, "Error: tid %u must be less than the number of contigs (%u)\n",
+                tid, reference_seq.n_contig);
+        return 1;
+    }
+    if (reference_seq.contig[tid].seq == NULL) {
+        fprintf(stderr, "Error: reference sequence %s (tid %u) not loaded (or already freed)\n",
+                reference_seq.contig[tid].name, tid);
+        return 1;
+    }
+    free(reference_seq.contig[tid].seq);
+    reference_seq.contig[tid].seq = NULL;
 }
 
 

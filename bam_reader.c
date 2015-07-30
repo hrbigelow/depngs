@@ -318,9 +318,9 @@ find_min_offset(int tid, int ti, hts_idx_t *idx)
 }
 
 
-/* compute initial set of bins that have content in the first tiling
-   window (?), add those chunks to the tree. return the total number
-   of bytes added. */
+/* compute initial set of bins that have content in tiling windows
+   [ti, ti + 1) (?), add those chunks to the tree. return the total
+   number of bytes added. */
 static unsigned
 compute_initial_bins(int tid, 
                      int ti,
@@ -502,7 +502,7 @@ bam_scanner(void *par, unsigned max_bytes)
         }
         mul *= STEP_DOWN;
     } while (min_actual_bytes > max_bytes);
-
+    bp->loaded_range = (struct pair_ordering_range){ cs_stats.pos, min_end };
     cs_stats.pos = min_end;
 }
 
@@ -511,32 +511,43 @@ bam_scanner(void *par, unsigned max_bytes)
    buffer holding the voffset pairs.  
    bytes.  allocates new memory and points *chunks to it. */
 static hts_pair64_t *
-read_voffset_chunks(const struct managed_buf *buf,
-                    unsigned *n_chunks,
-                    size_t *n_bytes_consumed)
+unserialize_info(const struct managed_buf *buf,
+                 struct pair_ordering_range *loaded_range,
+                 unsigned *n_chunks,
+                 size_t *n_bytes_consumed)
 {
-    *n_chunks = *(unsigned *)buf->buf;
-    unsigned
-        sz1 = sizeof(*n_chunks), 
-        sz2 = *n_chunks * sizeof(hts_pair64_t);
-    hts_pair64_t *chunks = malloc(sz2);
-    memcpy(chunks, buf->buf + sz1, sz2);
-    *n_bytes_consumed = sz1 + sz2;
+    unsigned sz[3] = { sizeof(*loaded_range), sizeof(*n_chunks) };
+
+    *loaded_range = *(struct pair_ordering_range *)buf->buf;
+    *n_chunks = *(unsigned *)(buf->buf + item1_sz);
+
+    sz[2] = *n_chunks * sizeof(hts_pair64_t);
+    hts_pair64_t *chunks = malloc(sz[2]);
+    memcpy(chunks, buf->buf + sz[0] + sz[1], sz[2]);
+
+    *n_bytes_consumed = sz[0] + sz[1] + sz[2];
     return chunks;
 }
 
 
 /* serialize chunks into buf */
 static void
-write_voffset_chunks(hts_pair64_t *chunks,
-                     unsigned n_chunks,
-                     struct managed_buf *buf)
+serialize_info(struct pair_ordering_range loaded_range,
+               hts_pair64_t *chunks,
+               unsigned n_chunks,
+               struct managed_buf *buf)
 {
-    buf->size = sizeof(unsigned) + n_chunks * sizeof(hts_pair64_t);
+    unsigned sz[3] = { 
+        sizeof(*loaded_range), 
+        sizeof(*n_chunks), 
+        n_chunks * sizeof(*chunks)
+    };
+
+    buf->size = sz[0] + sz[1] + sz[2];
     ALLOC_GROW(buf->buf, buf->size, buf->alloc);
-    *(unsigned *)buf->buf = n_chunks;
-    size_t sz = n_chunks * sizeof(chunks[0]);
-    memcpy(buf->buf + sizeof(unsigned), chunks, sz);
+    *(struct pair_ordering_range *)buf->buf = loaded_range;
+    *(unsigned *)(buf->buf + sz[0]) = n_chunks;
+    memcpy(buf->buf + sz[0] + sz[1], chunks, sz[2]);
 }
 
 
@@ -570,7 +581,7 @@ bam_reader(void *par, struct managed_buf *bufs)
         struct bam_stats *bs = &bp->m[s];
         if (bs->more_input) more_input = 1;
 
-        write_voffset_chunks(bs->chunks, bs->n_chunks, &bufs[s]);
+        serialize_info(bs->loaded_range, bs->chunks, bs->n_chunks, &bufs[s]);
         wp = bufs[s].buf + bufs[s].size;
         max_grow = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
         ALLOC_GROW_REMAP(bufs[s].buf, wp, bufs[s].size + max_grow, bufs[s].alloc);
@@ -617,7 +628,8 @@ inflate_bgzf_block(char *in, int block_length, char *out);
    defined by the virtual offsets. */
 void
 bam_inflate(const struct managed_buf *bgzf,
-            struct managed_buf *bam)
+            struct managed_buf *bam,
+            struct pair_ordering_range *loaded_range)
 {
     unsigned c;
     int64_t c_beg, c_end; /* sub-regions in a chunk that we want */
@@ -630,7 +642,7 @@ bam_inflate(const struct managed_buf *bgzf,
     unsigned n_chunks;
     size_t n_bytes_consumed;
     hts_pair64_t *chunks = 
-        read_voffset_chunks(bgzf, &n_chunks, &n_bytes_consumed);
+        unserialize_info(bgzf, loaded_range, &n_chunks, &n_bytes_consumed);
 
     bam->size = 0;
     char *in = bgzf->buf + n_bytes_consumed, *out = bam->buf;

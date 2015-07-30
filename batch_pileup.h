@@ -83,6 +83,33 @@ struct indel_count {
 };
 
 
+/* The maximum size of an indel for fixed addressing */
+#define MAX_FIXED_INDEL_SIZE 10
+
+/* structure for recording counts of events of various sizes */
+struct sized_count { int size; unsigned ct; };
+struct pair_count { unsigned ins_ct, del_ct; };
+
+/* complete information about all indels at a given locus for a
+   sample.  this structure will be stored inline as a value in a hash.
+   only positions with indels will have such an entry. */
+struct indel_count {
+    unsigned counts[MAX_FIXED_INDEL_SIZE + 1];
+
+/* counts for up to 10 different lengths of insertions or deletions
+   that are larger than MAX_FIXED_INDEL_SIZE */
+    struct sized_count *indel_ct_extra; 
+
+    unsigned n_indel_extra, n_indel_alloc;
+
+    /* contains catenated nul-terminated strings of individual
+       insertion sequences taken from BAM records, in no particular
+       order. */
+    char *ins_seq;
+    unsigned ins_seq_size, ins_seq_alloc;
+};
+
+
 struct indel_pair_count {
     unsigned indel_id; /* can be used to find the indel */
     unsigned count[2];

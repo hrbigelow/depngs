@@ -23,14 +23,23 @@ extern struct refseq reference_seq;
 
 /* initialize reference_seq */
 void
-genome_init(const char *fasta_file, unsigned do_load_seqs);
+genome_init(const char *fasta_file);
 
 void
 genome_free();
 
 /* return the ordering of the contig, or -1 if not found */
 int
-genome_contig_order(const char *contig);
+genome_contig_index(const char *contig);
+
+/* load a contig */
+void
+genome_load_contig(unsigned tid);
+
+
+/* free a contig from memory */
+void
+genome_free_contig(unsigned tid);
 
 
 /* parse query_range_file.  if NULL, return a single maximal range,
