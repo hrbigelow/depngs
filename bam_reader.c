@@ -477,7 +477,7 @@ unpackInt16(const uint8_t *buffer)
 void
 bam_scanner(void *par, unsigned max_bytes)
 {
-    struct bam_reader_par *bp = par;
+    struct bam_scanner_info *bp = par;
     float mul = STEP_DOWN;
     unsigned tmp_bytes, min_actual_bytes = UINT_MAX, min_wanted_bytes;
     struct pair_ordering tmp_end, min_end = { SIZE_MAX, SIZE_MAX };
@@ -507,50 +507,6 @@ bam_scanner(void *par, unsigned max_bytes)
 }
 
 
-/* reads the virtual offset ranges serialized in buf.  returns a new
-   buffer holding the voffset pairs.  
-   bytes.  allocates new memory and points *chunks to it. */
-static hts_pair64_t *
-unserialize_info(const struct managed_buf *buf,
-                 struct pair_ordering_range *loaded_range,
-                 unsigned *n_chunks,
-                 size_t *n_bytes_consumed)
-{
-    unsigned sz[3] = { sizeof(*loaded_range), sizeof(*n_chunks) };
-
-    *loaded_range = *(struct pair_ordering_range *)buf->buf;
-    *n_chunks = *(unsigned *)(buf->buf + item1_sz);
-
-    sz[2] = *n_chunks * sizeof(hts_pair64_t);
-    hts_pair64_t *chunks = malloc(sz[2]);
-    memcpy(chunks, buf->buf + sz[0] + sz[1], sz[2]);
-
-    *n_bytes_consumed = sz[0] + sz[1] + sz[2];
-    return chunks;
-}
-
-
-/* serialize chunks into buf */
-static void
-serialize_info(struct pair_ordering_range loaded_range,
-               hts_pair64_t *chunks,
-               unsigned n_chunks,
-               struct managed_buf *buf)
-{
-    unsigned sz[3] = { 
-        sizeof(*loaded_range), 
-        sizeof(*n_chunks), 
-        n_chunks * sizeof(*chunks)
-    };
-
-    buf->size = sz[0] + sz[1] + sz[2];
-    ALLOC_GROW(buf->buf, buf->size, buf->alloc);
-    *(struct pair_ordering_range *)buf->buf = loaded_range;
-    *(unsigned *)(buf->buf + sz[0]) = n_chunks;
-    memcpy(buf->buf + sz[0] + sz[1], chunks, sz[2]);
-}
-
-
 /* bgzf points to the start of a bgzf block.  reads the block size
    field of this record, per the BAM spec. */
 static inline int
@@ -568,7 +524,7 @@ bgzf_block_size(char *bgzf)
 unsigned
 bam_reader(void *par, struct managed_buf *bufs)
 {
-    struct bam_reader_par *bp = par;
+    struct bam_scanner_info *bp = par;
     unsigned s, c;
     int block_span, bgzf_block_len, remain;
     ssize_t n_chars_read;
@@ -581,7 +537,6 @@ bam_reader(void *par, struct managed_buf *bufs)
         struct bam_stats *bs = &bp->m[s];
         if (bs->more_input) more_input = 1;
 
-        serialize_info(bs->loaded_range, bs->chunks, bs->n_chunks, &bufs[s]);
         wp = bufs[s].buf + bufs[s].size;
         max_grow = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
         ALLOC_GROW_REMAP(bufs[s].buf, wp, bufs[s].size + max_grow, bufs[s].alloc);
@@ -621,31 +576,22 @@ static size_t
 inflate_bgzf_block(char *in, int block_length, char *out);
 
 
-/* bgzf contains first a header consisting of <n_blocks> and then a
-   number of hts_pair64_t virtual offset pairs.  following that is
-   actual bgzf blocks to be inflated.  stores inflated BAM records in
-   bam.  manage the size of bam.  only copy the portions of blocks
-   defined by the virtual offsets. */
+/* bgzf contains the bgzf blocks to be inflated.  stores inflated BAM
+   records in bam.  manage the size of bam.  only copy the portions of
+   blocks defined by chunks and n_chunks. */
 void
 bam_inflate(const struct managed_buf *bgzf,
-            struct managed_buf *bam,
-            struct pair_ordering_range *loaded_range)
+            hts_pair64_t *chunks,
+            unsigned n_chunks,
+            struct managed_buf *bam)
 {
     unsigned c;
     int64_t c_beg, c_end; /* sub-regions in a chunk that we want */
     size_t n_copy;
     uint64_t bs; /* compressed block size */
 
-    
-    /* parse the first part of the bgzf buffer to get the set of
-       chunks */
-    unsigned n_chunks;
-    size_t n_bytes_consumed;
-    hts_pair64_t *chunks = 
-        unserialize_info(bgzf, loaded_range, &n_chunks, &n_bytes_consumed);
-
     bam->size = 0;
-    char *in = bgzf->buf + n_bytes_consumed, *out = bam->buf;
+    char *in = bgzf->buf, *out = bam->buf;
     size_t n_bytes;
 
 /* current and end coffset as we traverse the chunks within our block

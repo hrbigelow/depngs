@@ -6,14 +6,13 @@
 #include "htslib/sam.h"
 
 #include "cache.h"
+#include "ordering.h"
 
 /* Provides read and scan functions for BAM files for use with
    thread_queue.  Enables user-specified locus ranges, and tandem
    reading of multiple BAM files. */
 
-/* One instance for each of thread_queue's n_readers
-   thread_queue_reader_t instances. It retains state between calls of
-   bam_reader and bam_scanner.  */
+/* one instance of this per input sample per thread. */
 struct bam_stats {
     hts_idx_t *idx;
     bam_hdr_t *hdr;
@@ -23,22 +22,24 @@ struct bam_stats {
     unsigned more_input; /* 1 means there is more input in this file. */
 };
 
-struct bam_reader_par {
+/* one instance per thread. parameter controlling scanning, and
+   collecting certain information from the bam_scanner
+   call. thread_queue passes this also to 'read' and 'worker'
+   functions. */
+struct bam_scanner_info {
     struct bam_stats *m;
     unsigned n;
 
-    /* currently loaded logical range */
-    struct pair_ordering_range loaded_range;
-
     /* set of defined logical ranges */
     struct pair_ordering_range *qbeg, *qend;
+    struct pair_ordering_range loaded_range;
 };
 
 /* called by up to n_readers threads at a time. par instructs the
    reader exactly what contents of each file to populate into
    bufs. returns 1 if there is more input available. */
 unsigned
-bam_reader(void *par, struct managed_buf *bufs);
+bam_reader(void *scanner_info, struct managed_buf *bufs);
 
 /* called by at most one thread at a time.  reserves a logical range
    starting at internal position marker, and updates the marker to
@@ -47,7 +48,7 @@ bam_reader(void *par, struct managed_buf *bufs);
    max_bytes.  updates par with settings to help accelerate the
    bam_reader call.  */
 void
-bam_scanner(void *par, unsigned max_bytes);
+bam_scanner(void *scanner_info, unsigned max_bytes);
 
 
 /* parse the next record of an uncompressed raw bam buffer into b,
@@ -71,8 +72,9 @@ bam_duplicate_buf(char *raw);
    argument loaded_range. */
 void
 bam_inflate(const struct managed_buf *bgzf,
-            struct managed_buf *bam,
-            struct pair_ordering_range *loaded_range);
+            hts_pair64_t *chunks,
+            unsigned n_chunks,
+            struct managed_buf *bam);
 
 /* initialize  */
 void

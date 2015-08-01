@@ -2,7 +2,6 @@
 #include <stdint.h>
 
 #include "locus_diff.h"
-#include "pair_dist_stats.h"
 
 #include "sampling.h"
 
@@ -17,7 +16,6 @@
 
 #include "bam_reader.h"
 #include "batch_pileup.h"
-#include "genome.h"
 #include "khash.h"
 #include "bam_sample_info.h"
 #include "common_tools.h"
@@ -42,8 +40,8 @@ static struct {
 
 
 static struct {
-    struct bam_reader_par *reader_buf;
-    void **reader_par;
+    struct bam_scanner_info *reader_buf;
+    void **reader_pars;
     unsigned n_readers;
     struct pair_ordering_range *ranges;
     unsigned n_ranges;
@@ -192,7 +190,8 @@ dist_on_exit()
 #define NUM_EXTRA_BUFS_PER_THREAD 500
 
 struct thread_queue *
-locus_diff_tq_init(const char *query_range_file,
+locus_diff_tq_init(const char *locus_range_file,
+                   const char *fasta_file,
                    unsigned n_threads,
                    unsigned n_readers,
                    unsigned long max_input_mem,
@@ -204,18 +203,19 @@ locus_diff_tq_init(const char *query_range_file,
 
     unsigned long n_total_loci;
     thread_params.ranges = 
-        parse_query_ranges(query_range_file,
+        parse_locus_ranges(locus_range_file,
+                           fasta_file,
                            &thread_params.n_ranges,
                            &n_total_loci);
 
     unsigned r, s;
     thread_params.reader_buf = 
-        malloc(n_readers * sizeof(struct bam_reader_par));
+        malloc(n_readers * sizeof(struct bam_scanner_info));
 
-    thread_params.reader_par = (void **)malloc(n_readers * sizeof(void *));
+    thread_params.reader_pars = malloc(n_readers * sizeof(void *));
 
     for (r = 0; r != n_readers; ++r) {
-        thread_params.reader_buf[r] = (struct bam_reader_par){
+        thread_params.reader_buf[r] = (struct bam_scanner_info){
             malloc(bam_samples.n * sizeof(struct bam_stats)),
             bam_samples.n,
             
@@ -226,10 +226,10 @@ locus_diff_tq_init(const char *query_range_file,
             bam_stats_init(bam_samples.m[s].bam_file, 
                            &thread_params.reader_buf[r].m[s]);
         
-        thread_params.reader_par[r] = &thread_params.reader_buf[r];
+        thread_params.reader_pars[r] = &thread_params.reader_buf[r];
     }
 
-    if (query_range_file)
+    if (locus_range_file)
         cs_init_by_range(n_total_loci, bam_samples.n);
 
     else {
@@ -258,9 +258,11 @@ locus_diff_tq_init(const char *query_range_file,
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
 
     struct thread_queue *tqueue =
-        thread_queue_init(reader, thread_params.reader_par,
+        thread_queue_init(reader, 
+                          thread_params.reader_pars,
                           locus_diff_worker,
-                          locus_diff_offload, &thread_params.offload_par,
+                          locus_diff_offload, 
+                          &thread_params.offload_par,
                           dist_on_create,
                           dist_on_exit,
                           n_threads, n_extra, n_readers, bam_samples.n,
@@ -282,7 +284,7 @@ locus_diff_tq_free()
     }
 
     free(thread_params.reader_buf);
-    free(thread_params.reader_par);
+    free(thread_params.reader_pars);
     free(thread_params.ranges);
 
 }
@@ -650,17 +652,17 @@ print_indel_distance_quantiles(size_t pair_index,
     eb = events;
 
     /* retrieve each indel one by one */
-    struct indel_seq *isq = NULL;
     mb->size += sprintf(mb->buf + mb->size, "@");
     static char ins[] = "-+";
     while (eb != ee) {
-        pileup_get_indel(eb->indel_id, &isq);
+        struct indel_seq *isq = pileup_current_indel_seq(&eb->indel);
         unsigned grow = 2 + strlen(isq->seq);
         ALLOC_GROW_TYPED(mb->buf, mb->size + grow, mb->alloc);
-        mb->size += sprintf(mb->buf + mb->size, ",%c%s", ins[(unsigned)isq->is_ins], isq->seq);
+        mb->size += sprintf(mb->buf + mb->size, ",%c%s", 
+                            ins[(unsigned)isq->is_ins], isq->seq);
         eb++;
+        free(isq);
     }
-    if (isq) free(isq);
 
     if (worker_options.do_print_pileup) {
         struct pileup_data
@@ -863,6 +865,7 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
 void
 locus_diff_worker(const struct managed_buf *in_bufs,
                   unsigned more_input,
+                  void *vsi,
                   struct managed_buf *out_bufs)
 {
     struct timespec worker_start_time;
@@ -879,9 +882,11 @@ locus_diff_worker(const struct managed_buf *in_bufs,
 
     struct managed_buf bam = { NULL, 0, 0 };
     unsigned s;
+    struct bam_scanner_info *si = vsi;
     for (s = 0; s != bam_samples.n; ++s) {
-        bam_inflate(&in_bufs[s], &bam);
-        pileup_tally_stats(bam, s);
+        struct bam_stats *bs = &si->m[s];
+        bam_inflate(&in_bufs[s], bs->chunks, bs->n_chunks, &bam);
+        pileup_tally_stats(bam, si, s);
     }
 
     if (! more_input)

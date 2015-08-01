@@ -18,7 +18,6 @@ enum buf_status {
 struct output_node {
     struct output_node *next;
     struct managed_buf *buf;
-    size_t n_buf; /* unused and uninitialized. */
     enum buf_status status;
 };
 
@@ -27,8 +26,10 @@ struct output_node {
    use the same one for its lifespan. */
 struct thread_comp_input {
     struct managed_buf *buf;
-    size_t n_buf;
     struct output_node *out;
+    void *scan_info; /* in/out parameter for 'scan'.  also passed to
+                        'read' and 'worker' as a means of
+                        communicating with them */
     struct thread_queue *tq;
 };
 
@@ -42,12 +43,14 @@ struct thread_queue {
     thread_queue_create_t *on_create;
     thread_queue_exit_t *on_exit;
 
-    pthread_mutex_t io_mtx;
-    pthread_cond_t reader_free_cond;
+    pthread_mutex_t scan_mtx;
+    pthread_cond_t can_read_cond;
 
-    /* protected by io_mtx */
-    void **reader_par;
-    unsigned *reader_in_use, n_readers, n_readers_free;
+    /* protected by scan_mtx */
+    unsigned n_max_reading;
+
+    unsigned n_reading; /* # of threads currently invoking 'scan' or
+                             'read' functions. */
 
     void *offload_par;
 
@@ -67,14 +70,16 @@ struct timespec program_start_time;
 
 /* initialize resources */
 struct thread_queue *
-thread_queue_init(thread_queue_reader_t reader, void **reader_par,
+thread_queue_init(thread_queue_reader_t reader,
+                  void **reader_pars,
                   thread_queue_worker_t worker,
-                  thread_queue_offload_t offload, void *offload_par,
+                  thread_queue_offload_t offload,
+                  void *offload_par,
                   thread_queue_create_t on_create,
                   thread_queue_exit_t on_exit,
                   unsigned n_threads,
                   unsigned n_extra,
-                  unsigned n_readers,
+                  unsigned n_max_reading,
                   unsigned n_inputs,
                   unsigned n_outputs,
                   unsigned long max_input_mem)
@@ -82,12 +87,10 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
     unsigned n_pool = n_threads + n_extra;
     struct thread_queue *tq = malloc(sizeof(struct thread_queue));
     tq->reader = reader;
-    tq->reader_par = reader_par;
-    tq->n_readers = n_readers;
-    tq->n_readers_free = n_readers;
-    tq->reader_in_use = calloc(n_readers, sizeof(tq->reader_in_use[0]));
-    pthread_mutex_init(&tq->io_mtx, NULL);
-    pthread_cond_init(&tq->reader_free_cond, NULL);
+    tq->n_max_reading = n_max_reading;
+    tq->n_reading = 0;
+    pthread_mutex_init(&tq->scan_mtx, NULL);
+    pthread_cond_init(&tq->can_read_cond, NULL);
     tq->worker = worker;
     tq->offload = offload;
     tq->offload_par = offload_par;
@@ -113,10 +116,12 @@ thread_queue_init(thread_queue_reader_t reader, void **reader_par,
     for (t = 0; t != n_threads; ++t) {
         tq->input[t].buf = malloc(n_inputs * sizeof(struct managed_buf));
         for (b = 0; b != n_inputs; ++b) {
-            tq->input[t].buf[b].alloc = max_input_mem / n_threads / n_inputs;
-            tq->input[t].buf[b].buf = malloc(tq->input[t].buf[b].alloc);
-            tq->input[t].buf[b].size = 0;
+            struct managed_buf *buf = &tq->input[t].buf[b];
+            buf->alloc = max_input_mem / n_threads / n_inputs;
+            buf->buf = malloc(buf->alloc);
+            buf->size = 0;
         }
+        tq->input[t].scan_info = reader_pars[t];
         tq->input[t].tq = tq;
     }
 
@@ -174,8 +179,8 @@ void
 thread_queue_free(struct thread_queue *tq)
 {
     pthread_mutex_destroy(&tq->out_mtx);
-    pthread_mutex_destroy(&tq->io_mtx);
-    pthread_cond_destroy(&tq->reader_free_cond);
+    pthread_mutex_destroy(&tq->scan_mtx);
+    pthread_cond_destroy(&tq->can_read_cond);
     pthread_cond_destroy(&tq->out_free_cond);
 
     free(tq->threads);
@@ -283,22 +288,16 @@ worker_func(void *args)
 
     while (more_input) {
         PROGRESS_START("WAIT");
-        pthread_mutex_lock(&tq->io_mtx);
-        while (! tq->n_readers_free)
-            pthread_cond_wait(&tq->reader_free_cond, &tq->io_mtx);
+        pthread_mutex_lock(&tq->scan_mtx);
+        while (tq->n_reading == tq->n_max_reading)
+            pthread_cond_wait(&tq->can_read_cond, &tq->scan_mtx);
 
-        /* reserve first free reader */
-        unsigned r;
-        for (r = 0; r != tq->n_readers; ++r)
-            if (! tq->reader_in_use[r]) break;
-        
-        tq->reader_in_use[r] = 1;
-        --tq->n_readers_free;
+        ++tq->n_reading;
         PROGRESS_MSG("WAIT");
 
         /* reserve next input range */
         PROGRESS_START("SCAN");
-        tq->reader.scan(tq->reader_par[r], in->buf[0].alloc);
+        tq->reader.scan(in->scan_info, in->buf[0].alloc);
         PROGRESS_MSG("SCAN");
 
         /* reserve the first empty out buffer */
@@ -322,21 +321,20 @@ worker_func(void *args)
                 break;
             }
         pthread_mutex_unlock(&tq->out_mtx);
-        pthread_mutex_unlock(&tq->io_mtx);
+        pthread_mutex_unlock(&tq->scan_mtx);
 
         PROGRESS_START("READ");
-        more_input = tq->reader.read(tq->reader_par[r], in->buf);
+        more_input = tq->reader.read(in->scan_info, in->buf);
         PROGRESS_MSG("READ");
 
-        pthread_mutex_lock(&tq->io_mtx);
-        tq->reader_in_use[r] = 0;
-        ++tq->n_readers_free;
-        pthread_cond_signal(&tq->reader_free_cond);
-        pthread_mutex_unlock(&tq->io_mtx);
+        pthread_mutex_lock(&tq->scan_mtx);
+        --tq->n_reading;
+        pthread_mutex_unlock(&tq->scan_mtx);
+        pthread_cond_signal(&tq->can_read_cond);
 
         /* load the output buffer. */
         PROGRESS_START("WORK");
-        tq->worker(in->buf, more_input, in->out->buf);
+        tq->worker(in->buf, more_input, in->scan_info, in->out->buf);
         PROGRESS_MSG("WORK");
 
         set_outnode_status(tq, in->out, FULL);

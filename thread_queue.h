@@ -30,15 +30,15 @@ struct thread_queue;
 typedef struct {
     /* read input into bufs according to par.  return 1 if more input
        is still available, or 0 of this is the last input. */
-    unsigned (*read)(void *par, struct managed_buf *bufs);
+    unsigned (*read)(void *scan_info, struct managed_buf *bufs);
 
     /* scan the input (or index on the input) as directed by par,
        updating par so as to instruct the next call to 'read' to read
        <= max_bytes.  invocation of 'scan' is protected by
-       thread_queue's io_mtx mutex, thus there will only be one thread
+       thread_queue's scan_mtx, thus there will only be one thread
        running 'scan' at a time.  this enables scan to consult global
        resources without doing any locking of its own. */
-    void (*scan)(void *par, unsigned max_bytes);
+    void (*scan)(void *scan_info, unsigned max_bytes);
 } thread_queue_reader_t;
 
 /* the client-provided worker consumes the input (one or more in_bufs)
@@ -53,6 +53,7 @@ typedef struct {
 typedef void
 (thread_queue_worker_t)(const struct managed_buf *in_bufs,
                         unsigned more_input,
+                        void *scan_info,
                         struct managed_buf *out_bufs);
 
 /* this function will be called on each output chunk in input order,
@@ -72,10 +73,10 @@ typedef void (thread_queue_exit_t)();
 
 /* initialize resources.
 
-   -- void *reader_par must hold the address of an array of n_readers
-      addresses, each an address to a struct chosen by the
-      user. thread_queue maintains a separate 'in_use' flag for each
-      reader.
+   -- void *reader_pars must hold the address of an array of n_threads
+      addresses, each an address to a struct chosen by the user.  each
+      thread will use this structure in its invocations of 'scan',
+      'read', and 'worker' to communicate information between them.
 
    -- void *offload_par must hold the address of a single struct,
       which will be cast to that struct by the offload function.
@@ -85,14 +86,15 @@ typedef void (thread_queue_exit_t)();
       worker function.  The struct is chosen by the user.
 */
 struct thread_queue *
-thread_queue_init(thread_queue_reader_t reader, void **reader_par,
+thread_queue_init(thread_queue_reader_t reader,
+                  void **reader_pars,
                   thread_queue_worker_t worker,
                   thread_queue_offload_t offload, void *offload_par,
                   thread_queue_create_t on_create,
                   thread_queue_exit_t on_exit,
                   unsigned n_threads,
                   unsigned n_extra_in_pool,
-                  unsigned n_readers,
+                  unsigned max_n_reading,
                   unsigned n_inputs,
                   unsigned n_outputs,
                   unsigned long max_input_mem);

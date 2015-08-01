@@ -179,6 +179,7 @@ main_dist(int argc, char **argv)
 
     struct thread_queue *tqueue =
         locus_diff_tq_init(query_range_file, 
+                           fasta_file,
                            n_threads, n_readers, max_input_mem,
                            dist_fh, comp_fh, indel_fh);
 

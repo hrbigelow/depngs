@@ -6,7 +6,6 @@
 
 #define REFNAME_MAXLEN 300
 
-#define REFERENCE_SAMPLE UINT_MAX
 
 KHASH_MAP_INIT_STR(s, unsigned);
 
@@ -40,14 +39,6 @@ genome_load_contig(unsigned tid);
 /* free a contig from memory */
 void
 genome_free_contig(unsigned tid);
-
-
-/* parse query_range_file.  if NULL, return a single maximal range,
-   setting n_queries to 1 and n_total_loci to a maximal value */
-struct pair_ordering_range *
-parse_query_ranges(const char *query_range_file,
-                   unsigned *n_queries,
-                   unsigned long *n_total_loci);
 
 
 #endif /* _GENOME_H */

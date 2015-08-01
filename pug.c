@@ -9,8 +9,8 @@
 
 #include "cache.h"
 #include "locus.h"
+#include "locus_range.h"
 #include "file_binary_search.h"
-#include "genome.h"
 
 int pug_usage()
 {
@@ -65,13 +65,13 @@ int main_pug(int argc, char ** argv)
     }
     strncpy(fasta_file, fai_file, fl - 4);
     fasta_file[fl] = '\0';
-    genome_init(fasta_file, 0);
+    locus_init(fasta_file);
 
     /* the size of a chunk of file for which it is more efficient to
        read this whole chunk rather than continue to scan through the
        file */
     size_t scan_thresh_size = 1e6;
-    file_bsearch_init(init_locus, scan_thresh_size);
+    file_bsearch_init(parse_pileup_locus, scan_thresh_size);
     
     chunk_buffer = (char *)malloc(max_chunk_size);
     if (! chunk_buffer) {
@@ -82,7 +82,7 @@ int main_pug(int argc, char ** argv)
     unsigned n_queries;
     unsigned long num_total_loci;
     struct pair_ordering_range *queries =
-        parse_query_ranges(locus_file, &n_queries, &num_total_loci);
+        parse_locus_ranges(locus_file, &n_queries, &num_total_loci);
 
     struct pair_ordering_range *q = queries, *qend = q + n_queries;
 
@@ -111,6 +111,7 @@ int main_pug(int argc, char ** argv)
                                           (struct pair_ordering)
                                           { ix.root->span_end.hi, ix.root->span_end.lo - 1 });
     }
+    locus_free();
     free(queries);
     file_bsearch_index_free(ix);
 

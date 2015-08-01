@@ -45,16 +45,7 @@
 #include "khash.h"
 #include "cache.h"
 #include "compat_util.h"
-#include "genome.h"
-
-/* from genome.h, the PILEUP_REF_SAMPLE is a special sample number
-   that produces simulated statistics that match the reference
-   genotype. use for pileup_{basecall,bqs,indel}_stats calls. */
-
-struct indel_seq {
-    char is_ins;
-    char seq[FLEX_ARRAY]; /* zero-terminated */
-};
+#include "bam_reader.h"
 
 /* n_match_lo_q + n_match_hi_q + n_match_fuzzy equal the total number
    of CIGAR match bases at this locus. ct_filt contain the
@@ -77,41 +68,36 @@ struct bqs_count {
     uint32_t ct: 20; /* 1,048,576 */
 };
 
+struct indel {
+    char is_ins;
+    unsigned length;
+    khiter_t ins_itr; /* iterator into tls.seq_hash, if this is an
+                         insertion. */
+};
+
 struct indel_count {
-    khiter_t indel_itr;
+    struct indel idl;
     unsigned ct;
 };
 
+/* the reified version of struct indel. seq is populated either from
+   the str_hash (if it is an insertion) or by querying the reference
+   genome (if deletion) */
+struct indel_seq {
+    char is_ins;
+    char seq[FLEX_ARRAY]; /* zero-terminated */
+};
 
-/* The maximum size of an indel for fixed addressing */
-#define MAX_FIXED_INDEL_SIZE 10
 
-/* structure for recording counts of events of various sizes */
-struct sized_count { int size; unsigned ct; };
-struct pair_count { unsigned ins_ct, del_ct; };
-
-/* complete information about all indels at a given locus for a
-   sample.  this structure will be stored inline as a value in a hash.
-   only positions with indels will have such an entry. */
-struct indel_count {
-    unsigned counts[MAX_FIXED_INDEL_SIZE + 1];
-
-/* counts for up to 10 different lengths of insertions or deletions
-   that are larger than MAX_FIXED_INDEL_SIZE */
-    struct sized_count *indel_ct_extra; 
-
-    unsigned n_indel_extra, n_indel_alloc;
-
-    /* contains catenated nul-terminated strings of individual
-       insertion sequences taken from BAM records, in no particular
-       order. */
-    char *ins_seq;
-    unsigned ins_seq_size, ins_seq_alloc;
+/* value for the hash */
+struct indel_count_ary {
+    struct indel_count *i;
+    unsigned m, n;
 };
 
 
 struct indel_pair_count {
-    unsigned indel_id; /* can be used to find the indel */
+    struct indel indel;
     unsigned count[2];
 };
 
@@ -136,7 +122,9 @@ batch_pileup_free();
 /* perform entire tally phase, for basecalls and for indels for one
    sample. update tls.tally_end to reflect furthest position seen. */
 void
-pileup_tally_stats(const struct managed_buf bam, unsigned s);
+pileup_tally_stats(const struct managed_buf bam, 
+                   struct bam_scanner_info *bsi,
+                   unsigned s);
 
 
 /* prepares internal data structures for fast retrieval.  must call
@@ -169,8 +157,11 @@ pileup_current_bqs(unsigned s, struct bqs_count **cts, unsigned *n_cts);
 void
 pileup_prepare_indels(unsigned s);
 
-/* provide indel stats for a sample at current position.  They will be
-   sorted ascending by ict.indel_itr field */
+/* provide indel stats for a sample at current position.  The order of
+   elements in (*cts) is defined by pos_iter_indel_count_less.  For
+   indels at a current position, the order is: deletions first, then
+   insertions, then by ascending length of deletion (or ascending by
+   insertion iterator key). Admittedly, a weird ordering... */
 void
 pileup_current_indels(unsigned s, struct indel_count **cts, unsigned *n_cts);
 
@@ -202,6 +193,8 @@ pileup_strings(unsigned s, struct managed_buf *call, struct managed_buf *qual);
 int
 pileup_next_pos();
 
+#define REFNAME_MAXLEN 300
+
 struct pileup_locus_info {
     char refname[REFNAME_MAXLEN + 1];
     char refbase;
@@ -230,6 +223,15 @@ struct pileup_data {
 void
 free_pileup_data(struct pileup_data *pd);
 
+
+/* reify the indel, allocating and returning an indel_seq, using the
+   current position.  Note: this function doesn't actually need the
+   current position in order to retrieve sequences for insertions, but
+   it does for deletions. */
+struct indel_seq *
+pileup_current_indel_seq(struct indel *idl);
+
+
 /* produce pileup data (calls, quals, and read depths) from current
    position for sample s.  must call pileup_prepare_bqs and
    pileup_prepare_indels before calling this. */
@@ -247,6 +249,5 @@ pileup_clear_finished_stats();
    remaining residual statistics. */
 void
 pileup_final_input();
-
 
 #endif /* _BATCH_PILEUP_H */

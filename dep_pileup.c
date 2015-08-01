@@ -9,6 +9,7 @@
 #include "batch_pileup.h"
 #include "bam_reader.h"
 #include "common_tools.h"
+#include "locus_range.h"
 
 static struct {
     unsigned min_base_quality; /* minimum base quality to be included in pileup */
@@ -25,8 +26,9 @@ static struct {
 /* a place to hold allocated input for thread_queue that thread_queue
    does not own. */
 static struct {
-    struct bam_reader_par *reader_buf;
-    void **reader_par;
+    struct bam_scanner_info *scanner_info_buf;
+    void **reader_pars;
+    unsigned n_threads;
     unsigned n_readers;
     struct pair_ordering_range *ranges;
     unsigned n_ranges;
@@ -173,19 +175,23 @@ int main_pileup(int argc, char **argv)
 
 
 
-/* provide thread_queue API functions */
+/* provide thread_queue API functions.
+   vsi: cast this to struct bam_scanner_info.
+ */
 void
 pileup_worker(const struct managed_buf *in_bufs,
               unsigned more_input,
+              void *vsi,
               struct managed_buf *out_bufs)
 {
     struct managed_buf bam = { NULL, 0, 0 };
     struct managed_buf *out_buf = &out_bufs[0];
+    struct bam_scanner_info *bsi = vsi;
     unsigned s;
-    struct pair_ordering_range loaded_range;
     for (s = 0; s != bam_samples.n; ++s) {
-        bam_inflate(&in_bufs[s], &bam, &loaded_range);
-        pileup_tally_stats(bam, s);
+        struct bam_stats *bs = &bsi->m[s];
+        bam_inflate(&in_bufs[s], bs->chunks, bs->n_chunks, &bam);
+        pileup_tally_stats(bam, bsi, s);
     }
 
     if (! more_input)
@@ -267,9 +273,9 @@ struct thread_queue *
 pileup_init(const char *samples_file,
             const char *fasta_file,
             const char *pileup_file,
-            const char *query_range_file,
+            const char *locus_range_file,
             unsigned n_threads,
-            unsigned n_readers,
+            unsigned n_max_reading,
             unsigned long max_input_mem,
             unsigned min_qual)
 {
@@ -278,18 +284,20 @@ pileup_init(const char *samples_file,
 
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 
+    /* fasta_init is called from within batch_pileup_init */
     unsigned long n_total_loci;
     thread_params.ranges = 
-        parse_query_ranges(query_range_file,
+        parse_locus_ranges(locus_range_file,
                            &thread_params.n_ranges,
                            &n_total_loci);
 
-    thread_params.reader_buf = malloc(n_readers * sizeof(struct bam_reader_par));
-    thread_params.reader_par = malloc(n_readers * sizeof(void *));
+    thread_params.n_threads = n_threads;
+    thread_params.scanner_info_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
+    thread_params.reader_pars = malloc(n_threads * sizeof(void *));
 
-    unsigned r, s;
-    for (r = 0; r != n_readers; ++r) {
-        thread_params.reader_buf[r] = (struct bam_reader_par){
+    unsigned t, s;
+    for (t = 0; t != n_threads; ++t) {
+        thread_params.scanner_info_buf[t] = (struct bam_scanner_info){
             malloc(bam_samples.n * sizeof(struct bam_stats)),
             bam_samples.n,
             thread_params.ranges, 
@@ -297,13 +305,13 @@ pileup_init(const char *samples_file,
         };
         for (s = 0; s != bam_samples.n; ++s)
             bam_stats_init(bam_samples.m[s].bam_file, 
-                           &thread_params.reader_buf[r].m[s]);
+                           &thread_params.scanner_info_buf[t].m[s]);
         
-        thread_params.reader_par[r] = &thread_params.reader_buf[r];
+        thread_params.reader_pars[t] = &thread_params.scanner_info_buf[t];
     }
 
     /* chunking strategy */
-    if (query_range_file)
+    if (locus_range_file)
         cs_init_by_range(n_total_loci, bam_samples.n);
     else
         cs_init_whole_file(bam_samples.n);
@@ -321,12 +329,13 @@ pileup_init(const char *samples_file,
 
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
     struct thread_queue *tq =
-        thread_queue_init(reader, thread_params.reader_par,
+        thread_queue_init(reader,
+                          thread_params.reader_pars,
                           pileup_worker,
                           pileup_offload, thread_params.pileup_fh,
                           pileup_on_create,
                           pileup_on_exit,
-                          n_threads, n_extra, n_readers, bam_samples.n,
+                          n_threads, n_extra, n_max_reading, bam_samples.n,
                           n_outputs, max_input_mem);
 
     return tq;
@@ -340,14 +349,14 @@ pileup_free()
     batch_pileup_free();
     fclose(thread_params.pileup_fh);
 
-    unsigned r, s;
-    for (r = 0; r != thread_params.n_readers; ++r) {
+    unsigned t, s;
+    for (t = 0; t != thread_params.n_threads; ++t) {
         for (s = 0; bam_samples.n; ++s)
-            bam_stats_free(&thread_params.reader_buf[r].m[s]);
-        free(thread_params.reader_buf[r].m);
+            bam_stats_free(&thread_params.scanner_info_buf[t].m[s]);
+        free(thread_params.scanner_info_buf[t].m);
     }
 
-    free(thread_params.reader_buf);
-    free(thread_params.reader_par);
+    free(thread_params.scanner_info_buf);
+    free(thread_params.reader_pars);
     free(thread_params.ranges);
 }

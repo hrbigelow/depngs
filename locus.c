@@ -1,6 +1,6 @@
 #include "locus.h"
 #include "defs.h"
-#include "genome.h"
+#include "fasta.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -8,9 +8,23 @@
 #include <stdio.h>
 
 
+/* initialize fasta index resources */
+void
+locus_init(const char *fasta_file)
+{
+    fasta_init(fasta_file);
+}
+
+
+void
+locus_free()
+{
+    fasta_free();
+}
+
 /* initialize a locus from a character line */
 struct pair_ordering
-init_locus(const char *line)
+parse_pileup_locus(const char *line)
 {
     char contig[200];
     unsigned pos;
@@ -27,9 +41,9 @@ init_locus(const char *line)
 
     /* int nparsed = sscanf(line, "%s\t%u\t", contig, &pos); */
     /* assert(nparsed == 2); */
-    int ix;
-    if ((ix = genome_contig_order(contig)) >= 0)
-        o.hi = (size_t)ix;
+    int tid;
+    if ((tid = fasta_get_tid(contig)) >= 0)
+        o.hi = (size_t)tid;
     else {
         fprintf(stderr, "%s:%u: Error: Couldn't find contig %s in fasta index\n",
                 __FILE__, __LINE__, contig);

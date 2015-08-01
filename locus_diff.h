@@ -8,6 +8,7 @@
 #include "thread_queue.h"
 #include "dirichlet_diff_cache.h"
 #include "batch_pileup.h"
+#include "bam_reader.h"
 
 /* program-wide initialization of static variables */
 void
@@ -36,6 +37,7 @@ void locus_diff_free();
    thread-queue. (also calls thread_queue_init) */
 struct thread_queue *
 locus_diff_tq_init(const char *query_range_file,
+                   const char *fasta_file,
                    unsigned n_threads,
                    unsigned n_readers,
                    unsigned long max_input_mem,
@@ -114,6 +116,7 @@ struct locus_diff_offload_par {
 void
 locus_diff_worker(const struct managed_buf *in_bufs,
                   unsigned more_input,
+                  void *vsi, /* cast to struct bam_scanner_info */
                   struct managed_buf *out_bufs);
 
 /* conforms to thread_queue_offload_t */

@@ -13,6 +13,7 @@ struct pair_ordering_range {
     struct pair_ordering beg, end;
 };
 
+
 /* defines the ordering logic for the pair_ordering structure. */
 int cmp_pair_ordering(const void *pa, const void *pb);
 
