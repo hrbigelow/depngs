@@ -43,7 +43,7 @@ static struct {
     struct bam_scanner_info *reader_buf;
     void **reader_pars;
     unsigned n_readers;
-    struct pair_ordering_range *ranges;
+    struct contig_region *ranges;
     unsigned n_ranges;
     unsigned n_threads;
     struct locus_diff_offload_par offload_par;
@@ -204,7 +204,6 @@ locus_diff_tq_init(const char *locus_range_file,
     unsigned long n_total_loci;
     thread_params.ranges = 
         parse_locus_ranges(locus_range_file,
-                           fasta_file,
                            &thread_params.n_ranges,
                            &n_total_loci);
 

@@ -13,6 +13,7 @@
 #include "bam_reader.h"
 #include "bam_sample_info.h"
 #include "fasta.h"
+#include "locus_range.h"
 
 #include <stdint.h>
 #include <assert.h>
@@ -39,10 +40,6 @@ struct pbqt {
                          to get the base */
     uint32_t qual: 7; /* numeric quality score */
     uint32_t strand: 1; /* 1 for positive, 0 for negative */
-};
-
-struct contig_pos {
-    unsigned tid, pos;
 };
 
 
@@ -259,26 +256,32 @@ equal_contig_pos(struct contig_pos a, struct contig_pos b)
 #define MAX_CONTIG_POS(a, b) (less_contig_pos((a), (b)) ? (b) : (a))
 
 
-
-
-
 /* load specific ranges of reference sequence. [qbeg, qend) defines
-   the total set of ranges to consider.  subset defines the
-   overlapping intersection of these ranges that will be loaded into
-   tls.refseqs.  assume that each interval in [qbeg, qend) is on one
-   contig, but that 'subset' may span multiple contigs. */
+   the total set of (non-overlapping) ranges to consider.  subset
+   defines the overlapping intersection of these ranges that will be
+   loaded into tls.refseqs.  assume that each interval in [qbeg, qend)
+   is on one contig, but that 'subset' may span multiple contigs. */
 static void
-load_refseq_ranges(struct pair_ordering_range *qbeg,
-                   struct pair_ordering_range *qend,
-                   struct pair_ordering_range subset)
+load_refseq_ranges(struct contig_region *qbeg,
+                   struct contig_region *qend,
+                   struct contig_span subset)
 {
     if (qbeg == qend) return;
 
-    struct pair_ordering_range *q, *qlo, *qhi;
-    for (qlo = qbeg; qlo != qend; ++qlo)
-        if (cmp_pair_ordering(&qlo->end, &subset.beg) == 1) break;
-    for (qhi = qend; qhi != qbeg; --qhi)
-        if (cmp_pair_ordering(&subset.end, &qhi->beg) == 1) break;
+    /* find the first region in [qbeg, qend) */
+    struct contig_region *q, *qlo, *qhi, *qhi_r;
+    struct contig_pos sbeg = { subset.beg.tid, subset.beg.pos };
+    struct contig_pos send = { subset.end.tid, subset.end.pos };
+    
+    for (qlo = qbeg; qlo != qend; ++qlo) {
+        struct contig_pos qpos = { qlo->tid, qlo->end };
+        if (cmp_contig_pos(qpos, sbeg) == 1) break;
+    }
+    for (qhi = qend; qhi != qbeg; --qhi) {
+        qhi_r = qhi - 1; /* the 'reverse' iterator */
+        struct contig_pos qpos = { qhi_r->tid, qhi_r->beg };
+        if (cmp_contig_pos(send, qpos) == 1) break;
+    }
 
     if (qlo == qhi) return;
 
@@ -286,8 +289,8 @@ load_refseq_ranges(struct pair_ordering_range *qbeg,
     for (q = qlo; q != qhi; ++q) {
         ALLOC_GROW(tls.refseqs, r + 1, alloc);
         tls.refseqs[r++] = (struct contig_fragment){
-            .start = { q->beg.hi, q->beg.lo },
-            .len = (q->end.lo - q->beg.lo),
+            .start = { q->tid, q->beg },
+            .len = q->end - q->beg,
             .seq = NULL
         };
     }
@@ -296,8 +299,8 @@ load_refseq_ranges(struct pair_ordering_range *qbeg,
     /* alter ranges of first and last (may be the same range) */
     struct contig_fragment *adj = &tls.refseqs[0];
     unsigned trim = 
-        (subset.beg.hi == adj->start.tid) 
-        ? subset.beg.lo - adj->start.pos
+        (subset.beg.tid == adj->start.tid) 
+        ? subset.beg.pos - adj->start.pos
         : 0;
 
     adj->start.pos += trim;
@@ -306,20 +309,17 @@ load_refseq_ranges(struct pair_ordering_range *qbeg,
     /* adjust last fragment */
     adj = &tls.refseqs[tls.n_refseqs - 1];
     trim = 
-        (subset.end.hi == adj->start.tid)
-        ? subset.end.lo - adj->start.pos
+        (subset.end.tid == adj->start.tid)
+        ? subset.end.pos - (adj->start.pos + adj->len)
         : 0;
     adj->len -= trim;
 
     /* now load all sequences */
-    const char *contig;
-    char *seq;
-    int fetch_len;
     for (r = 0; r != tls.n_refseqs; ++r) {
         struct contig_fragment *frag = &tls.refseqs[r];
-        seq = fasta_fetch_iseq(frag->start.tid,
-                               frag->start.pos, 
-                               frag->start.pos + frag->len);
+        char *seq = fasta_fetch_iseq(frag->start.tid,
+                                     frag->start.pos, 
+                                     frag->start.pos + frag->len);
         if (frag->len <= FRAGMENT_MAX_INLINE_SEQLEN) {
             strcpy(frag->buf, seq);
             frag->seq = frag->buf;
@@ -354,7 +354,7 @@ pileup_tally_stats(const struct managed_buf bam,
                    unsigned s)
 {
     /* initialize refseqs */
-    load_refseq_ranges(bsi->qbeg, bsi->qend, bsi->loaded_range);
+    load_refseq_ranges(bsi->qbeg, bsi->qend, bsi->loaded_span);
     struct contig_pos bpos =
         process_bam_block(bam.buf, bam.buf + bam.size, &tls.ts[s]);
     tls.tally_end = MAX_CONTIG_POS(tls.tally_end, bpos);

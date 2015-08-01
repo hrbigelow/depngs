@@ -75,13 +75,29 @@ fasta_get_tid(const char *contig)
 }
 
 
+int
+fasta_seq_len(const char *contig)
+{
+    return faidx_seq_len(fasta_index, contig);
+}
+
+
+int
+fasta_seq_ilen(unsigned tid)
+{
+    const char *contig = faidx_iseq(fasta_index, tid);
+    return faidx_seq_len(fasta_index, contig);
+}
+
+
+
 /* fetch the sub-sequence of the fasta reference.  returns NULL on
    error. returned sequence must be freed by caller. */
-const char *
+char *
 fasta_fetch_seq(const char *contig, int beg, int end)
 {
     int fetch_len;
-    const char *seq =
+    char *seq =
         faidx_fetch_seq(fasta_index, contig, beg, end, &fetch_len);
     assert(fetch_len == end - beg);
     return seq;
@@ -92,12 +108,12 @@ fasta_fetch_seq(const char *contig, int beg, int end)
 /* fetch sub-sequence of the fasta reference, using tid to identify
    contig.  return NULL on error.  returned sequence must be freed by
    the caller. */
-const char *
+char *
 fasta_fetch_iseq(unsigned tid, int beg, int end)
 {
     int fetch_len;
     const char *contig = faidx_iseq(fasta_index, tid);
-    const char *seq = 
+    char *seq = 
         faidx_fetch_seq(fasta_index, contig, beg, end, &fetch_len);
 
     if (! seq || fetch_len != (end - beg)) {

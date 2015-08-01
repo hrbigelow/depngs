@@ -1,7 +1,7 @@
 #ifndef _CHUNK_STRATEGY_H
 #define _CHUNK_STRATEGY_H
 
-#include "ordering.h"
+#include "locus_range.h"
 
 /* tallys statistics that allow the reader to adjust its strategy
    during program execution. one of two strategies is used to estimate
@@ -21,7 +21,7 @@
  */
 struct chunk_strategy {
     /* marker that informs all threads where to resume reading */
-    struct pair_ordering pos;
+    struct contig_pos pos;
 
     unsigned do_range_estimation;
 

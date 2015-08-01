@@ -7,20 +7,59 @@
 #include <stdio.h>
 #include <assert.h>
 
-struct pair_ordering_range *
+
+#define CMP(a, b) ((a) == (b) ? 0 : ((a) < (b) ? -1 : 1))
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
+
+
+int
+cmp_contig_region(const struct contig_region a, 
+                  const struct contig_region b)
+{
+    int cmp;
+    if ((cmp = CMP(a.tid, b.tid)) != 0) return cmp;
+    if (CMP(a.end, b.beg) < 1) return -1;
+    if (CMP(b.end, a.beg) < 1) return 1;
+    return 0;
+}
+
+
+int
+cmp_contig_pos(const struct contig_pos a,
+               const struct contig_pos b)
+{
+    int cmp;
+    if ((cmp = CMP(a.tid, b.tid)) != 0) return cmp;
+    return CMP(a.pos, b.pos);
+}
+
+
+static int
+qsort_wrapper(const void *a, const void *b)
+{
+    const struct contig_region *ca = a, *cb = b;
+    return cmp_contig_region(*ca, *cb);
+}
+
+struct contig_region *
 parse_locus_ranges(const char *locus_range_file,
                    unsigned *n_queries,
                    unsigned long *n_total_loci)
 {
-    struct pair_ordering_range *queries;
+    struct contig_region *queries;
     if (! locus_range_file) {
-        queries = malloc(sizeof(struct pair_ordering_range));
-        queries[0] = 
-            (struct pair_ordering_range){ 
-            { 0, 0 }, { SIZE_MAX - 2, 0 } 
-        };
-        *n_queries = 1;
-        *n_total_loci = ULONG_MAX;
+        *n_total_loci = 0;
+        unsigned c, n = fasta_nseq();
+        queries = malloc(n * sizeof(struct contig_region));
+        *n_queries = n;
+        int len;
+        for (c = 0; c != n; ++c) {
+            len = fasta_seq_ilen(c);
+            queries[c] = (struct contig_region){ c, 0, len };
+            *n_total_loci += len;
+        }
         return queries;
     }
         
@@ -32,13 +71,11 @@ parse_locus_ranges(const char *locus_range_file,
     }
         
     size_t n_alloc = 10;
-    queries = malloc(n_alloc * sizeof(struct pair_ordering_range));
+    queries = malloc(n_alloc * sizeof(struct contig_region));
         
     /* construct the set of non-overlapping query ranges */
     char contig[1000];
-    unsigned beg_pos, end_pos, rval;
-    *n_queries = 0;
-    *n_total_loci = 0;
+    unsigned beg_pos, end_pos, rval, nq = 0;
 
     while (!feof(locus_range_fh)) {
         if ((rval = fscanf(locus_range_fh, "%s\t%u\t%u\n",
@@ -53,33 +90,33 @@ parse_locus_ranges(const char *locus_range_file,
                     __FILE__, __LINE__, contig);
             exit(1);
         }
-        
-        queries[*n_queries] = (struct pair_ordering_range) {
-            { tid, beg_pos }, { tid, end_pos }
-        };
-            
-        ++*n_queries;
-        ALLOC_GROW_TYPED(queries, *n_queries + 1, n_alloc);
+        queries[nq++] = (struct contig_region){ tid, beg_pos, end_pos };
+        ALLOC_GROW(queries, nq + 1, n_alloc);
     }   
     fclose(locus_range_fh);
 
-    qsort(queries, *n_queries, sizeof(queries[0]), cmp_pair_ordering_range);
+    /* non-overlapping intervals are well ordered.  overlaps compare
+       equal and thus the ordering is undefined. */
+    qsort(queries, nq, sizeof(queries[0]), qsort_wrapper);
     
-    struct pair_ordering_range *q, *p = NULL;
-    for (q = queries; q != queries + *n_queries - 1; ++q) {
-        if (p && cmp_pair_ordering(&p->end, &q->beg) > 0) {
-            /* must be on same contig if they are overlapping and
-               sorted */
-            assert(p->end.hi == q->beg.hi);
-            q->beg.lo = p->end.lo;
-            if (q->end.lo < q->beg.lo)
-                q->end.lo = q->beg.lo;
+    /* resolve overlaps. p = previous, q = current, w = write pointer.
+       NOTE: K&R p 103: "The address of the first element past the end
+       of an array can be used in pointer arithmetic".  Therefore the
+       loop test 'q < queries + nq' will properly fail if nq == 0 and q
+       == queries + 1) */
+    struct contig_region *q, *p = NULL, *w;
+    for (p = w = queries, q = p + 1; q < queries + nq; ++q) {
+        if (cmp_contig_region(*p, *q) == 0) {
+            p->beg = MIN(p->beg, q->beg);
+            p->end = MAX(p->end, q->end);
+        } else {
+            *w++ = *p;
+            p = q;
         }
-
-        p = q;
     }
-    for (q = queries; q != queries + *n_queries; ++q)
-        *n_total_loci += q->end.lo - q->beg.lo;
+    *n_queries = w - queries;
+    for (q = queries, *n_total_loci = 0; q != queries + *n_queries; ++q)
+        *n_total_loci += q->end - q->beg;
 
     return queries;
 }

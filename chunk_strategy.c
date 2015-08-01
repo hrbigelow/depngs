@@ -9,7 +9,7 @@ struct chunk_strategy cs_stats;
 /* call this if a range file is given */
 void cs_init_by_range(unsigned n_loci_total, unsigned n_files)
 {
-    cs_stats.pos = (struct pair_ordering){ 0, 0 };
+    cs_stats.pos = (struct contig_pos){ 0, 0 };
     cs_stats.do_range_estimation = 1;
     cs_stats.n_bytes_total = NULL;
     cs_stats.n_bytes_read = calloc(n_files, sizeof(cs_stats.n_bytes_read[0]));
@@ -21,7 +21,7 @@ void cs_init_by_range(unsigned n_loci_total, unsigned n_files)
 /* call this if no range file is given */
 void cs_init_whole_file(unsigned n_files)
 {
-    cs_stats.pos = (struct pair_ordering){ 0, 0 };
+    cs_stats.pos = (struct contig_pos){ 0, 0 };
     cs_stats.do_range_estimation = 0;
     cs_stats.n_bytes_total = malloc(n_files * sizeof(cs_stats.n_bytes_total[0]));
     cs_stats.n_bytes_read = calloc(n_files, sizeof(cs_stats.n_bytes_read[0]));

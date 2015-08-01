@@ -22,8 +22,8 @@ extern struct chunk_strategy cs_stats;
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
 
-#define MIN_PAIR_ORD(a, b) (cmp_pair_ordering(&(a), &(b)) < 0 ? (a) : (b))
-#define MAX_PAIR_ORD(a, b) (cmp_pair_ordering(&(a), &(b)) < 0 ? (b) : (a))
+#define MIN_CONTIG_POS(a, b) (cmp_contig_pos((a), (b)) < 0 ? (a) : (b))
+#define MAX_CONTIG_POS(a, b) (cmp_contig_pos((a), (b)) < 0 ? (b) : (a))
 
 /* Estimate the total size in bytes of blocks in this chunk. If the
    within-block offset of the last block is zero, then we don't need
@@ -366,8 +366,8 @@ accumulate_chunks(kbtree_t(itree_t) *itree,
 }
 
 struct virt_less_range_par {
-    struct pair_ordering_range *ary;
-    struct pair_ordering q;
+    struct contig_region *ary;
+    struct contig_pos q;
 };
 
 /* uses par both as a source of elements elem and a query element q.
@@ -377,7 +377,8 @@ static int
 less_rng_end(unsigned pos, void *par)
 {
     struct virt_less_range_par *vl = par;
-    return cmp_pair_ordering(&vl->q, &vl->ary[pos].end) < 0;
+    struct contig_pos end_pos = { vl->ary[pos].tid, vl->ary[pos].end };
+    return cmp_contig_pos(vl->q, end_pos) < 0;
 }
 
 /* using forward scanning through the index, return the largest
@@ -389,12 +390,12 @@ less_rng_end(unsigned pos, void *par)
    (*chunks)[c] = chunk c
    (*n_chunks) = number of chunks
 */
-static struct pair_ordering
-hts_size_to_range(struct pair_ordering beg,
-                  struct pair_ordering max_end,
+static struct contig_pos
+hts_size_to_range(struct contig_pos beg,
+                  struct contig_pos max_end,
                   unsigned min_wanted_bytes,
-                  struct pair_ordering_range *qbeg,
-                  struct pair_ordering_range *qend,
+                  struct contig_region *qbeg,
+                  struct contig_region *qend,
                   hts_idx_t *idx,
                   hts_pair64_t **chunks,
                   unsigned *n_chunks,
@@ -408,52 +409,50 @@ hts_size_to_range(struct pair_ordering beg,
 
     /* initialize qcur */
     struct virt_less_range_par vpar = { qbeg, beg };
-    struct pair_ordering_range *qcur = qbeg
+    struct contig_region *qcur = qbeg
         + virtual_upper_bound(0, qend - qbeg, less_rng_end, &vpar);
         
-    int ms = idx->min_shift;
-    struct pair_ordering cpos;
-    struct pair_ordering_range cur_rng; /* current range */
+    int ms = idx->min_shift; /* convert between 16kb window index and
+                                position */
+    struct contig_pos cpos; /* current contig position */
+    struct contig_region creg;
     unsigned bgzf_bytes;
 
-    for (*n_chunks = 0, bgzf_bytes = 0; qcur != qend; ++qcur) {
-        cur_rng = (struct pair_ordering_range){ MAX_PAIR_ORD(qcur->beg, beg), qcur->end };
-        size_t tid, tid_end = MIN(cur_rng.end.hi + 1, idx->n);
+    for (*n_chunks = bgzf_bytes = 0; qcur != qend; ++qcur) {
+        creg = (struct contig_region){ 
+            qcur->tid, MAX(qcur->beg, beg.pos), qcur->end
+        };
         int ti, b;
-        for (tid = cur_rng.beg.hi; tid != tid_end; ++tid) {
-            int ti_beg = tid == cur_rng.beg.hi ? cur_rng.beg.lo>>ms : 0;
-            int ti_end = tid == cur_rng.end.hi ? cur_rng.end.lo>>ms : n_small_bins;
-            if (ti_beg == ti_end) continue;
+        int ti_beg = creg.beg>>ms,
+            ti_end = (creg.end>>ms) + 1; /* !!! correct ? */
+        uint64_t min_off = find_min_offset(creg.tid, ti_beg, idx);
+        kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
+        bgzf_bytes += compute_initial_bins(creg.tid, ti_beg, min_off, itree, idx);
 
-            uint64_t min_off = find_min_offset(tid, ti_beg, idx);
+        cpos.tid = creg.tid;
+        cpos.pos = (ti_beg + 1)<<ms;
 
-            kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
-            bgzf_bytes += compute_initial_bins(tid, ti_beg, min_off, itree, idx);
-
-            cpos.hi = tid;
-            cpos.lo = (ti_beg + 1)<<ms;
-
-            for (ti = ti_beg + 1; ti <= ti_end; ++ti) {
-                if (bgzf_bytes >= min_wanted_bytes
-                    || cmp_pair_ordering(&cpos, &max_end) >= 0) {
-                    /* break if window touches or exceeds max_end, or
-                       we have enough content */
-                    accumulate_chunks(itree, chunks, n_chunks);
-                    kb_destroy(itree_t, itree);
-                    goto END;
-                }
-
-                /* process this 16kb window */
-                n_bins = next_bins_aux(ti, bins, firstbin0, n_small_bins);
-                for (b = 0; b != n_bins; ++b)
-                    bgzf_bytes += add_bin_chunks_aux(bins[b], idx->bidx[tid], min_off, itree);
-                cpos.lo = (ti + 1)<<ms;
+        for (ti = ti_beg + 1; ti <= ti_end; ++ti) {
+            if (bgzf_bytes >= min_wanted_bytes
+                || cmp_contig_pos(cpos, max_end) >= 0) {
+                /* break if window touches or exceeds max_end, or
+                   we have enough content */
+                accumulate_chunks(itree, chunks, n_chunks);
+                kb_destroy(itree_t, itree);
+                goto END;
             }
-            accumulate_chunks(itree, chunks, n_chunks);
-            kb_destroy(itree_t, itree);
+            
+            /* process this 16kb window */
+            n_bins = next_bins_aux(ti, bins, firstbin0, n_small_bins);
+            for (b = 0; b != n_bins; ++b)
+                bgzf_bytes += add_bin_chunks_aux(bins[b], idx->bidx[creg.tid], min_off, itree);
+            cpos.pos = (ti + 1)<<ms;
         }
+        accumulate_chunks(itree, chunks, n_chunks);
+        kb_destroy(itree_t, itree);
+
         /* beg is only relevant within the first value of qcur */
-        beg = (struct pair_ordering){ 0, 0 }; 
+        beg = (struct contig_pos){ 0, 0 }; 
     }
  END:
     *more_input = qcur != qend;
@@ -480,7 +479,7 @@ bam_scanner(void *par, unsigned max_bytes)
     struct bam_scanner_info *bp = par;
     float mul = STEP_DOWN;
     unsigned tmp_bytes, min_actual_bytes = UINT_MAX, min_wanted_bytes;
-    struct pair_ordering tmp_end, min_end = { SIZE_MAX, SIZE_MAX };
+    struct contig_pos tmp_end, min_end = { UINT_MAX, UINT_MAX };
     do {
         min_wanted_bytes = max_bytes * mul;
         unsigned s;
@@ -496,13 +495,13 @@ bam_scanner(void *par, unsigned max_bytes)
                                   &bs->chunks,
                                   &bs->n_chunks,
                                   &bs->more_input);
-            min_end = MIN_PAIR_ORD(min_end, tmp_end);
+            min_end = MIN_CONTIG_POS(min_end, tmp_end);
             tmp_bytes = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
             min_actual_bytes = MIN(min_actual_bytes, tmp_bytes);
         }
         mul *= STEP_DOWN;
     } while (min_actual_bytes > max_bytes);
-    bp->loaded_range = (struct pair_ordering_range){ cs_stats.pos, min_end };
+    bp->loaded_span = (struct contig_span){ cs_stats.pos, min_end };
     cs_stats.pos = min_end;
 }
 

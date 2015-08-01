@@ -11,6 +11,7 @@
 #include "locus.h"
 #include "locus_range.h"
 #include "file_binary_search.h"
+#include "fasta.h"
 
 int pug_usage()
 {
@@ -81,23 +82,29 @@ int main_pug(int argc, char ** argv)
 
     unsigned n_queries;
     unsigned long num_total_loci;
-    struct pair_ordering_range *queries =
+    struct contig_region *queries =
         parse_locus_ranges(locus_file, &n_queries, &num_total_loci);
 
-    struct pair_ordering_range *q = queries, *qend = q + n_queries;
+    struct contig_region *q = queries, *qend = q + n_queries;
 
-    /* main loop */
+    /* main loop.  annoyingly, we are working with contig_region (tid,
+       beg, end) and pair_ordering (hi, lo). tid is like 'hi', and lo
+       is like beg or end) */
     struct file_bsearch_index ix = file_bsearch_make_index(pileup_file);
     struct pair_ordering cur_beg, cur_end;
     while (q != qend) {
-        fprintf(stderr, "Processed %zu: %zu-%zu\n", q->beg.hi, q->beg.lo, q->end.lo);
-        size_t bytes_to_write = range_to_size(&ix, q->beg, q->end);
+        fprintf(stderr, "Processed %s: %u-%u\n", 
+                fasta_get_contig(q->tid), q->beg, q->end);
+        struct pair_ordering 
+            pbeg = { q->tid, q->beg },
+            pend = { q->tid, q->end };
+            size_t bytes_to_write = range_to_size(&ix, pbeg, pend);
 
-        cur_beg = q->beg;
+        cur_beg = pbeg;
 
         while (bytes_to_write) {
             cur_end = bytes_to_write <= max_chunk_size
-                ? q->end
+                ? pend
                 : size_to_range(&ix, cur_beg, max_chunk_size);
             size_t nbytes_read = read_range(&ix, cur_beg, cur_end, chunk_buffer);
             (void)write(1, chunk_buffer, nbytes_read);

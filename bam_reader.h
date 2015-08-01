@@ -6,7 +6,7 @@
 #include "htslib/sam.h"
 
 #include "cache.h"
-#include "ordering.h"
+#include "locus_range.h"
 
 /* Provides read and scan functions for BAM files for use with
    thread_queue.  Enables user-specified locus ranges, and tandem
@@ -31,8 +31,8 @@ struct bam_scanner_info {
     unsigned n;
 
     /* set of defined logical ranges */
-    struct pair_ordering_range *qbeg, *qend;
-    struct pair_ordering_range loaded_range;
+    struct contig_region *qbeg, *qend;
+    struct contig_span loaded_span;
 };
 
 /* called by up to n_readers threads at a time. par instructs the

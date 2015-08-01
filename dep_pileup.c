@@ -30,7 +30,7 @@ static struct {
     void **reader_pars;
     unsigned n_threads;
     unsigned n_readers;
-    struct pair_ordering_range *ranges;
+    struct contig_region *ranges;
     unsigned n_ranges;
     FILE *pileup_fh;
 } thread_params;

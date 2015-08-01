@@ -9,9 +9,10 @@
    'elem_is_less' returns 1 if the virtual element value at p is less
    than the query value.
   */
-unsigned virtual_lower_bound(unsigned beg, unsigned end, 
-                             int (*elem_is_less)(unsigned pos, void *par),
-                             void *par);
+unsigned
+virtual_lower_bound(unsigned beg, unsigned end, 
+                    int (*elem_is_less)(unsigned pos, void *par),
+                    void *par);
 
 /* find the lowest position p in [beg, end) s.t. query_is_less(p, par)
    = 1 */

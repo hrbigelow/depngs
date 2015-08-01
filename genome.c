@@ -7,7 +7,6 @@
 #include <assert.h>
 
 #include "htslib/faidx.h"
-#include "ordering.h"
 #include "cache.h"
 
 struct refseq reference_seq;
