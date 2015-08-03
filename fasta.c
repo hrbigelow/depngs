@@ -105,20 +105,20 @@ fasta_fetch_seq(const char *contig, int beg, int end)
 
 
 
-/* fetch sub-sequence of the fasta reference, using tid to identify
-   contig.  return NULL on error.  returned sequence must be freed by
-   the caller. */
+/* fetch sub-sequence of the fasta reference [beg, end), using tid to
+   identify contig.  return NULL on error.  returned sequence must be
+   freed by the caller. */
 char *
 fasta_fetch_iseq(unsigned tid, int beg, int end)
 {
     int fetch_len;
     const char *contig = faidx_iseq(fasta_index, tid);
     char *seq = 
-        faidx_fetch_seq(fasta_index, contig, beg, end, &fetch_len);
+        faidx_fetch_seq(fasta_index, contig, beg, (end - 1), &fetch_len);
 
     if (! seq || fetch_len != (end - beg)) {
-        fprintf(stderr, "Error: Couldn't retrieve reference subsequence %s:%u-%u\n",
-                contig, beg, end);
+        fprintf(stderr, "Error: %s:%u: Couldn't retrieve reference subsequence %s:%u-%u\n",
+                __FILE__, __LINE__, contig, beg, end);
         exit(1);
     }
     return seq;

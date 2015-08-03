@@ -746,7 +746,7 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
             }
         } else if (op == BAM_CINS) {
             struct contig_pos ins_pos = { tid, rpos };
-            incr_insert_count(ts, ins_pos, ln, bam_seq, q);
+            incr_insert_count(ts, ins_pos, ln, bam_seq, qpos);
         } else if (op == BAM_CDEL) {
             struct contig_pos del_pos = { tid, rpos };
             incr_delete_count(ts, del_pos, ln);
@@ -978,16 +978,17 @@ incr_indel_count_aux(struct tally_stats *ts,
     struct indel_count_ary ica = kh_val(ih, itr);
 
     char is_ins = (len >= 0);
-    char *seq;
+    char *seq, *seqp;
     khiter_t seq_itr = 0; /* to suppress warnings */
     if (is_ins) {
         seq = malloc(len + 1);
+        seqp = seq;
         unsigned q = bam_rec_start, qe = q + len;
         while (q != qe) {
-            *seq++ = seq_nt16_str[bam_seqi(bam_seq, q)]; /* macro!  don't touch q */
+            *seqp++ = seq_nt16_str[bam_seqi(bam_seq, q)]; /* macro!  don't touch q */
             ++q;
         }
-        *seq++ = '\0';
+        *seqp++ = '\0';
         if ((seq_itr = kh_get(str_h, tls.seq_hash, seq)) == kh_end(tls.seq_hash))
             seq_itr = kh_put(str_h, tls.seq_hash, seq, &ret);
         else

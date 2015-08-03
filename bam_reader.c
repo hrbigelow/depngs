@@ -622,10 +622,15 @@ bam_inflate(const struct managed_buf *bgzf,
             
             n_bytes = inflate_bgzf_block(in, bs, out);
             c_beg = (coff == coff_beg ? BAM_UOFFSET(chunks[c].u) : 0);
-            c_end = (coff == coff_end ? BAM_UOFFSET(chunks[c].v) : n_bytes);
+            c_end = (coff == coff_end ? uoff_end : n_bytes);
             n_copy = c_end - c_beg; /* number of bytes to copy to output buffer */
 
             if (c_beg != 0) memmove(out, out + c_beg, n_copy);
+
+            /* test the first record in this block */
+            bam1_t brec;
+            if (coff == coff_beg) bam_parse(out, &brec);
+            // assert(brec.core.tid == 0);
 
             bam->size += n_copy;
             in += bs;
