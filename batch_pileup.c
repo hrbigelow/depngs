@@ -308,11 +308,11 @@ load_refseq_ranges(struct contig_region *qbeg,
 
     /* adjust last fragment */
     adj = &tls.refseqs[tls.n_refseqs - 1];
-    trim = 
+    unsigned new_len = 
         (subset.end.tid == adj->start.tid)
-        ? subset.end.pos - (adj->start.pos + adj->len)
-        : 0;
-    adj->len -= trim;
+        ? subset.end.pos - adj->start.pos
+        : adj->len;
+    adj->len = new_len;
 
     /* now load all sequences */
     for (r = 0; r != tls.n_refseqs; ++r) {

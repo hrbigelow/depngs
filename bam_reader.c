@@ -423,20 +423,32 @@ hts_size_to_range(struct contig_pos beg,
             qcur->tid, MAX(qcur->beg, beg.pos), qcur->end
         };
         int ti, b;
+
+        /* creg overlaps positions [creg.beg, creg.end), and overlaps
+           16kb windows [ti_beg, ti_end).  if creg.end == 16384, we
+           want ti_end == 1.  but if creg.end == 16385, we want ti_end
+           = 2. (creg.end - 1) is the last position that creg
+           contains, and thus (creg.end - 1)>>ms is the 16kb window
+           index of the window containing this position.  we thus add
+           1 to this last containing window to get the bound. */
         int ti_beg = creg.beg>>ms,
-            ti_end = (creg.end>>ms) + 1; /* !!! correct ? */
+            ti_end = ((creg.end - 1)>>ms) + 1;
         uint64_t min_off = find_min_offset(creg.tid, ti_beg, idx);
         kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
         bgzf_bytes += compute_initial_bins(creg.tid, ti_beg, min_off, itree, idx);
 
         cpos.tid = creg.tid;
-        cpos.pos = (ti_beg + 1)<<ms;
 
-        for (ti = ti_beg + 1; ti <= ti_end; ++ti) {
+        /* we use ti = ti_beg + 1 because compute_initial_bins gives
+           the chunks for tiling windows [ti, ti + 1). */
+        for (ti = ti_beg + 1; ti != ti_end; ++ti) {
+            cpos.pos = (ti + 1)<<ms; /* boundary position (one greater
+                                        than last position covered by
+                                        ti)*/
             if (bgzf_bytes >= min_wanted_bytes
-                || cmp_contig_pos(cpos, max_end) >= 0) {
-                /* break if window touches or exceeds max_end, or
-                   we have enough content */
+                || cmp_contig_pos(cpos, max_end) == 1) {
+                /* break if window touches max_end, or we have enough
+                   content */
                 accumulate_chunks(itree, chunks, n_chunks);
                 kb_destroy(itree_t, itree);
                 goto END;
@@ -445,8 +457,8 @@ hts_size_to_range(struct contig_pos beg,
             /* process this 16kb window */
             n_bins = next_bins_aux(ti, bins, firstbin0, n_small_bins);
             for (b = 0; b != n_bins; ++b)
-                bgzf_bytes += add_bin_chunks_aux(bins[b], idx->bidx[creg.tid], min_off, itree);
-            cpos.pos = (ti + 1)<<ms;
+                bgzf_bytes += 
+                    add_bin_chunks_aux(bins[b], idx->bidx[creg.tid], min_off, itree);
         }
         accumulate_chunks(itree, chunks, n_chunks);
         kb_destroy(itree_t, itree);
