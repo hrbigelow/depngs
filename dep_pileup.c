@@ -193,6 +193,7 @@ pileup_worker(const struct managed_buf *in_bufs,
         bam_inflate(&in_bufs[s], bs->chunks, bs->n_chunks, &bam);
         pileup_tally_stats(bam, bsi, s);
     }
+    if (bam.buf != NULL) free(bam.buf);
 
     if (! more_input)
         pileup_final_input();
@@ -203,7 +204,6 @@ pileup_worker(const struct managed_buf *in_bufs,
         pileup_prepare_indels(s);
     }
 
-    if (bam.buf != NULL) free(bam.buf);
 
     struct pileup_data pdat = { 
         .calls = { NULL, 0, 0 },
@@ -218,6 +218,7 @@ pileup_worker(const struct managed_buf *in_bufs,
     out_buf->size = 0;
     while (pileup_next_pos()) {
         pileup_current_info(&ploc);
+#if 1
         for (s = 0; s != bam_samples.n; ++s) {
             pileup_current_data(s, &pdat);
             unsigned add = pdat.calls.size + pdat.quals.size + MAX_LABEL_LEN + 5;
@@ -238,11 +239,18 @@ pileup_worker(const struct managed_buf *in_bufs,
             *out++ = '\n';
             out_buf->size = out - out_buf->buf;
         }
+#endif
     }   
 
     /* frees statistics that have already been used in one of the
        distance calculations. */
+    free(pdat.calls.buf);
+    free(pdat.quals.buf);
+
     pileup_clear_finished_stats();
+    fprintf(stdout, "Finished processing %s %u\t(out_buf->alloc = %Zu)\n", 
+            ploc.refname, ploc.pos, out_buf->alloc);
+    fflush(stdout);
 }
 
 

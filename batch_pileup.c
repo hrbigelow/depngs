@@ -88,9 +88,6 @@ KHASH_MAP_INIT_INT64(pbqt_h, unsigned);
    pos_key' as the key. */
 KHASH_MAP_INIT_INT64(pb_h, struct base_count);
 
-/* hash type for storing distinct indel types. */
-/* KHASH_INIT(indel_h, struct indel_seq *, char, 0, indel_hash_func, indel_hash_equal); */
-
 /* hash type for storing plain old strings (for the insertion
    sequences) */
 KHASH_SET_INIT_STR(str_h);
@@ -144,6 +141,8 @@ struct contig_fragment {
     char *seq;
 };
 
+
+#define CONTIG_FRAG_END(f) (struct contig_pos){ (f).start.tid, (f).start.pos + (f).len }
  
 
 
@@ -234,8 +233,10 @@ batch_pileup_thread_free()
 }
 
 
-static struct contig_pos
-process_bam_block(char *rec, char *end, struct tally_stats *ts);
+static void
+process_bam_block(char *rec, char *end, 
+                  struct contig_pos tally_end,
+                  struct tally_stats *ts);
 
 
 
@@ -355,9 +356,9 @@ pileup_tally_stats(const struct managed_buf bam,
 {
     /* initialize refseqs */
     load_refseq_ranges(bsi->qbeg, bsi->qend, bsi->loaded_span);
-    struct contig_pos bpos =
-        process_bam_block(bam.buf, bam.buf + bam.size, &tls.ts[s]);
-    tls.tally_end = MAX_CONTIG_POS(tls.tally_end, bpos);
+    process_bam_block(bam.buf, bam.buf + bam.size,
+                      bsi->loaded_span.end, &tls.ts[s]);
+    tls.tally_end = bsi->loaded_span.end;
 }    
 
 
@@ -655,6 +656,7 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         for (p = p_cur; p != p_end; ++p) pd->quals.buf[p] = qs;
     }
     pd->quals.size = p;
+    free(base_ct);
 
     /* print out all indel representations */
     struct indel_seq *isq;
@@ -667,6 +669,7 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         free(isq);
     }
     pd->calls.size = p;
+    free(indel_ct);
 }
 
 
@@ -726,6 +729,9 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
     uint8_t *bam_seq = bam_get_seq(b);
     uint8_t *bam_qual = bam_get_qual(b);
     
+    /* initialize the constant parts of 'stat' here, then reuse
+       this key in the loop */
+    union pbqt_key stat = { .v = { .tid = tid, .strand = strand } };
     for (c = 0; c != b->core.n_cigar; ++c) {
         op = bam_cigar_op(cigar[c]);
         ln = bam_cigar_oplen(cigar[c]);
@@ -735,9 +741,9 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
         if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
             qe = qpos + ln;
             for (q = qpos, r = rpos; q != qe; ++q, ++r) {
-                union pbqt_key stat = {
-                    .v = { r, tid, bam_seqi(bam_seq, q), bam_qual[q], strand }
-                };
+                stat.v.pos = r;
+                stat.v.base = bam_seqi(bam_seq, q);
+                stat.v.qual = bam_qual[q];
                 if ((it = kh_get(pbqt_h, ph, stat.k)) == kh_end(ph)) {
                     it = kh_put(pbqt_h, ph, stat.k, &ret);
                     kh_val(ph, it) = 0;
@@ -763,19 +769,26 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
 
 
 
-/* process an entire set of raw (uncompressed) BAM records in [rec,
-   end).  maintains a map of possibly overlapping reads and resolves
-   their quality scores. returns the last position processed, or { 0,
-   0 } if given empty input. */
-static struct contig_pos
-process_bam_block(char *rec, char *end, struct tally_stats *ts)
+/* process the subset of raw (uncompressed) BAM records in [rec, end)
+   up until before tally_end position (skip any records starting at or
+   after tally_end).  maintain a map of possibly overlapping read
+   pairs and resolves their quality scores. */
+static void
+process_bam_block(char *rec, char *end,
+                  struct contig_pos tally_end, 
+                  struct tally_stats *ts)
 {
     bam1_t b, b_mate;
     int ret;
     char *rec_next;
-    struct contig_pos last_pos = { 0, 0 };
     while (rec != end) {
         rec_next = bam_parse(rec, &b);
+        struct contig_pos rec_start = { b.core.tid, b.core.pos };
+        if (cmp_contig_pos(rec_start, tally_end) != -1) {
+            rec = rec_next;
+            continue;
+        }
+        // if (1) {
         if (! (b.core.flag & BAM_FPAIRED) || ! (b.core.flag & BAM_FPROPER_PAIR)) {
             /* either this read is not paired or it is paired but not
                mapped in a proper pair.  tally and don't store. */
@@ -790,6 +803,7 @@ process_bam_block(char *rec, char *end, struct tally_stats *ts)
                        do not tally yet. */
                     char *qname = strdup(bam_get_qname(&b));
                     khiter_t it = kh_put(olap_h, ts->overlap_hash, qname, &ret);
+                    assert(ret == 1 || ret == 2);
                     kh_val(ts->overlap_hash, it) = bam_duplicate_buf(rec);
                 }
             } else {
@@ -814,23 +828,21 @@ process_bam_block(char *rec, char *end, struct tally_stats *ts)
                         /* b is first in the pair to be encountered.  store it */
                         char *qname = strdup(bam_get_qname(&b));
                         khiter_t it = kh_put(olap_h, ts->overlap_hash, qname, &ret);
+                        assert(ret == 1 || ret == 2);
                         kh_val(ts->overlap_hash, it) = bam_duplicate_buf(rec);
                     }
                 }
             }
         }
-        if (rec_next == end) last_pos = (struct contig_pos){ b.core.tid, b.core.pos };
         rec = rec_next;
-        assert(rec <= end);
     }
-    return last_pos;
 }
 
 
 /* marginalize out q and t from pbqt_hash, storing results in pb_hash.
    counts are only tallied if q >= min_quality_score (global var).   */
 static khash_t(pb_h) *
-                     summarize_base_counts(unsigned s, struct contig_pos tally_end)
+summarize_base_counts(unsigned s, struct contig_pos tally_end)
 {
     union pbqt_key src_k;
     khash_t(pbqt_h) *src_h = tls.ts[s].pbqt_hash;
@@ -1134,7 +1146,12 @@ pileup_next_pos()
         tmp = MIN_CONTIG_POS(tmp, tmp_i);
     }
     tls.cur_pos = tmp;
-    return less_contig_pos(tls.cur_pos, unset_pos);
+    int more = less_contig_pos(tls.cur_pos, unset_pos);
+    if (more) 
+        while (less_contig_pos(CONTIG_FRAG_END(*tls.cur_refseq), tls.cur_pos))
+            ++tls.cur_refseq;
+
+    return more;
 }
 
 

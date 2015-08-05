@@ -114,6 +114,8 @@ parse_locus_ranges(const char *locus_range_file,
             p = q;
         }
     }
+    *w++ = *p;
+
     *n_queries = w - queries;
     for (q = queries, *n_total_loci = 0; q != queries + *n_queries; ++q)
         *n_total_loci += q->end - q->beg;

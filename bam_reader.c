@@ -228,13 +228,8 @@ add_bin_chunks_aux(int bin,
     if ((k = kh_get(bin, bidx, bin)) != kh_end(bidx)) {
         bins_t *p = &kh_val(bidx, k);
         for (j = 0; j != p->n; ++j)
-            if (p->list[j].v > min_off) {
-                int64_t before_bytes = total_itree_bytes(itree);
-                int64_t bytes_added = add_chunk_to_itree(itree, p->list[j]);
-                bgzf_bytes += bytes_added;
-                int64_t after_bytes = total_itree_bytes(itree);
-                assert(bytes_added == (after_bytes - before_bytes));
-            }
+            if (p->list[j].v > min_off)
+                bgzf_bytes += add_chunk_to_itree(itree, p->list[j]);
     }
     return bgzf_bytes;
 }
@@ -417,7 +412,7 @@ hts_size_to_range(struct contig_pos beg,
     struct contig_pos cpos; /* current contig position */
     struct contig_region creg;
     unsigned bgzf_bytes;
-
+    uint64_t min_off;
     for (*n_chunks = bgzf_bytes = 0; qcur != qend; ++qcur) {
         creg = (struct contig_region){ 
             qcur->tid, MAX(qcur->beg, beg.pos), qcur->end
@@ -433,7 +428,7 @@ hts_size_to_range(struct contig_pos beg,
            1 to this last containing window to get the bound. */
         int ti_beg = creg.beg>>ms,
             ti_end = ((creg.end - 1)>>ms) + 1;
-        uint64_t min_off = find_min_offset(creg.tid, ti_beg, idx);
+        min_off = find_min_offset(creg.tid, ti_beg, idx);
         kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
         bgzf_bytes += compute_initial_bins(creg.tid, ti_beg, min_off, itree, idx);
 
@@ -445,6 +440,10 @@ hts_size_to_range(struct contig_pos beg,
             cpos.pos = (ti + 1)<<ms; /* boundary position (one greater
                                         than last position covered by
                                         ti)*/
+            /* at the ends of contigs, the last 16kb window may run
+               off the end.  correct for this. */
+            cpos.pos = MIN(cpos.pos, qcur->end);
+
             if (bgzf_bytes >= min_wanted_bytes
                 || cmp_contig_pos(cpos, max_end) == 1) {
                 /* break if window touches max_end, or we have enough
@@ -455,6 +454,7 @@ hts_size_to_range(struct contig_pos beg,
             }
             
             /* process this 16kb window */
+            min_off = find_min_offset(cpos.tid, ti, idx);
             n_bins = next_bins_aux(ti, bins, firstbin0, n_small_bins);
             for (b = 0; b != n_bins; ++b)
                 bgzf_bytes += 
@@ -537,7 +537,7 @@ bam_reader(void *par, struct managed_buf *bufs)
 {
     struct bam_scanner_info *bp = par;
     unsigned s, c;
-    int block_span, bgzf_block_len, remain;
+    int block_span, block_sz, remain;
     ssize_t n_chars_read;
     char *wp;
 
@@ -547,6 +547,7 @@ bam_reader(void *par, struct managed_buf *bufs)
     for (s = 0; s != bp->n; ++s) {
         struct bam_stats *bs = &bp->m[s];
         if (bs->more_input) more_input = 1;
+        bufs[s].size = 0;
 
         wp = bufs[s].buf + bufs[s].size;
         max_grow = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
@@ -568,9 +569,9 @@ bam_reader(void *par, struct managed_buf *bufs)
                 /* determine size of last block and read remainder */
                 n_chars_read = hread(fp, wp, BLOCK_HEADER_LENGTH);
                 
-                bgzf_block_len = bgzf_block_size(wp);
+                block_sz = bgzf_block_size(wp);
                 wp += BLOCK_HEADER_LENGTH;
-                remain = bgzf_block_len - BLOCK_HEADER_LENGTH;
+                remain = block_sz - BLOCK_HEADER_LENGTH;
                 
                 n_chars_read = hread(fp, wp, remain);
                 assert(n_chars_read == remain);
@@ -599,10 +600,13 @@ bam_inflate(const struct managed_buf *bgzf,
     unsigned c;
     int64_t c_beg, c_end; /* sub-regions in a chunk that we want */
     size_t n_copy;
-    uint64_t bs; /* compressed block size */
+    uint64_t block_sz; /* compressed block size */
 
     bam->size = 0;
-    char *in = bgzf->buf, *out = bam->buf;
+    /* pre-allocate a reasonable size.  this  */
+    ALLOC_GROW(bam->buf, bgzf->size * 3, bam->alloc);
+
+    char *in = bgzf->buf;
     size_t n_bytes;
 
 /* current and end coffset as we traverse the chunks within our block
@@ -613,30 +617,56 @@ bam_inflate(const struct managed_buf *bgzf,
         coff_end = BAM_COFFSET(chunks[c].v); /* offset of last block, if it exists  */
         uoff_end = BAM_UOFFSET(chunks[c].v); /* if non-zero, block at coff_end is present */
         coff = coff_beg;
+
+        size_t off0 = bam->size;
+        unsigned cnum = 0;
         /* inflate all blocks starting in [coff_beg, coff_end).
            optionally, inflate block starting at coff_end if it has
            non-zero uoffset (i.e. there are records we need from it) */
         while (coff < coff_end || (coff == coff_end && uoff_end != 0)) {
-            ALLOC_GROW_REMAP(bam->buf, out, bam->size + BGZF_MAX_BLOCK_SIZE, bam->alloc);
-            bs = bgzf_block_size(in);
+            ALLOC_GROW(bam->buf, bam->size + BGZF_MAX_BLOCK_SIZE, bam->alloc);
+            block_sz = bgzf_block_size(in);
             
-            n_bytes = inflate_bgzf_block(in, bs, out);
+            n_bytes = inflate_bgzf_block(in, block_sz, bam->buf + bam->size);
+
+
             c_beg = (coff == coff_beg ? BAM_UOFFSET(chunks[c].u) : 0);
             c_end = (coff == coff_end ? uoff_end : n_bytes);
             n_copy = c_end - c_beg; /* number of bytes to copy to output buffer */
 
-            if (c_beg != 0) memmove(out, out + c_beg, n_copy);
+            /* fprintf(stdout, "%u\t%u\t%zu\t%zu\t%zu\t%zu\t%zu\t%zu\t%zu\n", */
+            /*         cnum++, c, block_sz, n_bytes, coff, coff_end, coff_end - coff, c_beg, c_end); */
 
-            /* test the first record in this block */
-            bam1_t brec;
-            if (coff == coff_beg) bam_parse(out, &brec);
-            // assert(brec.core.tid == 0);
+            if (c_beg != 0) 
+                memmove(bam->buf + bam->size,
+                        bam->buf + bam->size + c_beg, n_copy);
+            
 
             bam->size += n_copy;
-            in += bs;
-            out += n_copy;
-            coff += bs;
+            in += block_sz;
+            coff += block_sz;
         }
+        assert((coff - block_sz) == coff_end || coff == coff_end);
+
+        /* check all records in this chunk */
+#if 0
+        bam1_t brec;
+        char *rec_tmp, *rec = bam->buf + off0;
+        while (rec != bam->buf + bam->size) {
+            rec_tmp = bam_parse(rec, &brec);
+            if (rec == bam->buf + off0) {
+                fprintf(stdout, "u: %zu (%zu, %zu), v: %zu (%zu, %zu), chunk %u: %u - ", 
+                        chunks[c].u, BAM_COFFSET(chunks[c].u), BAM_UOFFSET(chunks[c].u), 
+                        chunks[c].v, BAM_COFFSET(chunks[c].v), BAM_UOFFSET(chunks[c].v),
+                        c, brec.core.pos);
+                fflush(stdout);
+            }
+            assert(brec.core.tid < 86);
+            rec = rec_tmp;
+        }
+        fprintf(stdout, "%u\n", brec.core.pos);
+        fflush(stdout);
+#endif
     }
 }
 
