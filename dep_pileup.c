@@ -288,7 +288,8 @@ pileup_init(const char *samples_file,
             unsigned min_qual)
 {
     bam_sample_info_init(samples_file, NULL);
-    batch_pileup_init(min_qual, fasta_file);
+    unsigned skip_empty_loci = 1;
+    batch_pileup_init(min_qual, skip_empty_loci, fasta_file);
 
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 

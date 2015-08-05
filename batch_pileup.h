@@ -112,8 +112,15 @@ void
 batch_pileup_thread_free();
 
 
+/* skip_empty_loci: if 0, pileup_next_pos() will visit all loci in the
+   region of interest.  if set to 1, skip those loci in the region of
+   interest that have no data for any sample.  setting this to 0
+   allows the client to account for these no-data loci in the main
+   loop. */
 void
-batch_pileup_init(unsigned min_qual, const char *fasta_file);
+batch_pileup_init(unsigned min_qual, 
+                  unsigned skip_empty_loci,
+                  const char *fasta_file);
 
 
 void

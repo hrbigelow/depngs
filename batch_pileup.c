@@ -125,9 +125,9 @@ static __thread struct tls {
     struct tally_stats *ts; /* tally stats for each sample */
     struct contig_pos cur_pos; /* current position being queried */
 
-
     /* these fields refreshed at pileup_tally_stats, freed at
-       pileup_clear_finished_stats() */
+       pileup_clear_finished_stats().  they define the region of
+       interest. */
     struct contig_fragment *refseqs, *cur_refseq;
     unsigned n_refseqs;
 } tls;
@@ -147,11 +147,17 @@ struct contig_fragment {
 
 
 static unsigned min_quality_score;
+static unsigned skip_empty_loci; /* if 1, pileup_next_pos() advances
+                                      past loci that have no data. */
+
 
 void
-batch_pileup_init(unsigned min_qual, const char *fasta_file)
+batch_pileup_init(unsigned min_qual, 
+                  unsigned skip_empty, 
+                  const char *fasta_file)
 {
     min_quality_score = min_qual;
+    skip_empty_loci = skip_empty;
     fasta_init(fasta_file);
 }
 
@@ -162,8 +168,14 @@ batch_pileup_free()
     fasta_free();
 }
 
+/* used to represent the position after we run out of loci. also
+   defined as the maximum possible position. */
+static const struct contig_pos g_end_pos = { UINT_MAX, UINT_MAX };
 
-#define TID_UNSET UINT_MAX
+/* use to represent the current position after a new batch was loaded
+   but before pileup_next_pos() is called. */
+static const struct contig_pos g_unset_pos = { UINT_MAX - 1, 0 };
+
 
 /* */
 void
@@ -172,7 +184,7 @@ batch_pileup_thread_init(unsigned n_samples)
     tls.seq_hash = kh_init(str_h);
     tls.n_samples = n_samples;
     tls.tally_end = (struct contig_pos){ 0, 0 };
-    tls.cur_pos = (struct contig_pos){ TID_UNSET, 0 };
+    tls.cur_pos = g_unset_pos;
     tls.ts = malloc(n_samples * sizeof(struct tally_stats));
     tls.refseqs = NULL;
     tls.n_refseqs = 0;
@@ -234,10 +246,11 @@ batch_pileup_thread_free()
 
 
 static void
-process_bam_block(char *rec, char *end, 
-                  struct contig_pos tally_end,
+process_bam_block(char *rec, char *end,
+                  struct contig_region *qbeg,
+                  struct contig_region *qend,
+                  struct contig_span loaded_span,
                   struct tally_stats *ts);
-
 
 
 static inline int
@@ -257,6 +270,34 @@ equal_contig_pos(struct contig_pos a, struct contig_pos b)
 #define MAX_CONTIG_POS(a, b) (less_contig_pos((a), (b)) ? (b) : (a))
 
 
+/* find the subrange of the sorted range [qbeg, qend) that intersects
+   subset, storing it in *qlo, *qhi. */
+static void
+find_intersecting_span(struct contig_region *qbeg,
+                       struct contig_region *qend,
+                       struct contig_span subset,
+                       struct contig_region **qlo,
+                       struct contig_region **qhi)
+{
+    struct contig_pos sbeg = { subset.beg.tid, subset.beg.pos };
+    struct contig_pos send = { subset.end.tid, subset.end.pos };
+    
+    struct contig_region *lo, *hi, *hi_r;
+    for (lo = qbeg; lo != qend; ++lo) {
+        struct contig_pos qpos = { lo->tid, lo->end };
+        if (cmp_contig_pos(qpos, sbeg) == 1) break;
+    }
+    for (hi = qend; hi != qbeg; --hi) {
+        hi_r = hi - 1; /* the 'reverse' iterator */
+        struct contig_pos qpos = { hi_r->tid, hi_r->beg };
+        if (cmp_contig_pos(send, qpos) == 1) break;
+    }
+    (*qlo) = lo;
+    (*qhi) = hi;
+}
+
+
+
 /* load specific ranges of reference sequence. [qbeg, qend) defines
    the total set of (non-overlapping) ranges to consider.  subset
    defines the overlapping intersection of these ranges that will be
@@ -269,23 +310,11 @@ load_refseq_ranges(struct contig_region *qbeg,
 {
     if (qbeg == qend) return;
 
-    /* find the first region in [qbeg, qend) */
-    struct contig_region *q, *qlo, *qhi, *qhi_r;
-    struct contig_pos sbeg = { subset.beg.tid, subset.beg.pos };
-    struct contig_pos send = { subset.end.tid, subset.end.pos };
-    
-    for (qlo = qbeg; qlo != qend; ++qlo) {
-        struct contig_pos qpos = { qlo->tid, qlo->end };
-        if (cmp_contig_pos(qpos, sbeg) == 1) break;
-    }
-    for (qhi = qend; qhi != qbeg; --qhi) {
-        qhi_r = qhi - 1; /* the 'reverse' iterator */
-        struct contig_pos qpos = { qhi_r->tid, qhi_r->beg };
-        if (cmp_contig_pos(send, qpos) == 1) break;
-    }
-
+    struct contig_region *q, *qlo, *qhi;
+    find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
     if (qlo == qhi) return;
 
+    /* find the first region in [qbeg, qend) */
     unsigned r = 0, alloc = 0;
     for (q = qlo; q != qhi; ++q) {
         ALLOC_GROW(tls.refseqs, r + 1, alloc);
@@ -357,7 +386,8 @@ pileup_tally_stats(const struct managed_buf bam,
     /* initialize refseqs */
     load_refseq_ranges(bsi->qbeg, bsi->qend, bsi->loaded_span);
     process_bam_block(bam.buf, bam.buf + bam.size,
-                      bsi->loaded_span.end, &tls.ts[s]);
+                      bsi->qbeg, bsi->qend, bsi->loaded_span,
+                      &tls.ts[s]);
     tls.tally_end = bsi->loaded_span.end;
 }    
 
@@ -769,25 +799,55 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
 
 
 
-/* process the subset of raw (uncompressed) BAM records in [rec, end)
-   up until before tally_end position (skip any records starting at or
-   after tally_end).  maintain a map of possibly overlapping read
-   pairs and resolves their quality scores. */
+/* records are provided in [rec, end) ascending by start
+   position. these are the minimal set of records that were identified
+   by bam_scanner to overlap the region of interest defined by the
+   intersection of 'loaded_span' and [qbeg, qend). but due to the
+   limited resolution of the BSI index, there will be records in [rec,
+   end) that do not overlap the region of interest. 
+
+   proceeds by loading each record and determining whether it process the subset of raw (uncompressed)
+   BAM records in [rec, end) up until before tally_end position (skip
+   any records starting at or after tally_end).  maintain a map of
+   possibly overlapping read pairs and resolves their quality
+   scores. */
 static void
 process_bam_block(char *rec, char *end,
-                  struct contig_pos tally_end, 
+                  struct contig_region *qbeg,
+                  struct contig_region *qend,
+                  struct contig_span loaded_span,
                   struct tally_stats *ts)
 {
     bam1_t b, b_mate;
     int ret;
     char *rec_next;
+
+    struct contig_region *qcur, *qhi;
+    find_intersecting_span(qbeg, qend, loaded_span, &qcur, &qhi);
+
+    if (qcur == qhi) return;
+
+    /* our region of interest is the intersection of [qcur, qhi) and
+       loaded_span.  qcur_end is the end point of this region. */
+    struct contig_pos qcur_end = { qcur->tid, qcur->end };
+    qcur_end = MIN_CONTIG_POS(qcur_end, loaded_span.end);
+
+    struct contig_pos rec_beg;
     while (rec != end) {
         rec_next = bam_parse(rec, &b);
-        struct contig_pos rec_start = { b.core.tid, b.core.pos };
-        if (cmp_contig_pos(rec_start, tally_end) != -1) {
-            rec = rec_next;
-            continue;
+        rec_beg = (struct contig_pos){ b.core.tid, b.core.pos };
+        
+        /* update qcur when it is passed up */
+        if (cmp_contig_pos(rec_beg, qcur_end) != -1) {
+            ++qcur;
+
+            /* if we have passed up the region of interest, done. */
+            if (qcur == qhi) break;
+
+            struct contig_pos qcur_tmp = { qcur->tid, qcur->end };
+            qcur_end = MIN_CONTIG_POS(qcur_tmp, loaded_span.end);
         }
+
         // if (1) {
         if (! (b.core.flag & BAM_FPAIRED) || ! (b.core.flag & BAM_FPROPER_PAIR)) {
             /* either this read is not paired or it is paired but not
@@ -1092,6 +1152,123 @@ pileup_clear_finished_stats()
 }
 
 
+/* advance the internal position marker to the next available position
+   in the region of interest. assume refseqs, cur_refseq and n_refseqs
+   are initialized appropriately. use */
+static void
+next_pos_aux()
+{
+    if (cmp_contig_pos(tls.cur_pos, g_unset_pos) == 0) {
+        if (tls.n_refseqs)
+            tls.cur_pos = tls.cur_refseq->start;
+        return;
+    }
+    tls.cur_pos.pos++;
+    if (cmp_contig_pos(tls.cur_pos, CONTIG_FRAG_END(*tls.cur_refseq)) != -1) {
+        ++tls.cur_refseq;
+        if (tls.cur_refseq - tls.refseqs == tls.n_refseqs)
+            tls.cur_pos = g_end_pos;
+        else
+            tls.cur_pos = tls.cur_refseq->start;
+    }
+}
+
+
+/* advance the internal position marker to the next valid position
+   within the region of interest.  if the current position is already
+   within it, do nothing.  for this purpose, consider the 'UNSET'
+   position to be valid. return 0 if the position was okay, or 1 if it needed fixing. */
+static int
+fix_pos_aux()
+{
+    if (cmp_contig_pos(tls.cur_pos, g_end_pos) == 0)
+        return 0;
+    assert(tls.n_refseqs);
+    if (cmp_contig_pos(tls.cur_pos, CONTIG_FRAG_END(*tls.cur_refseq)) != -1) {
+        next_pos_aux();
+        return 1;
+    }
+    return 0;
+}
+
+
+
+/* update data iterators bqs_cur, base_cur, and indel_cur to point to
+   the next available data at or beyond tls.cur_pos */
+static void
+update_data_iters()
+{
+    /* update all cur pointers. this works correctly even if  */
+    unsigned s;
+    struct tally_stats *ts;
+    for (s = 0; s != tls.n_samples; ++s) {
+        ts = &tls.ts[s];
+        /* increment bqs iterator ('while' is used here, because bqs
+           have multiple entries per position) */
+        while (ts->bqs_cur != ts->bqs_end
+               && less_contig_pos(ts->bqs_cur->cpos, tls.cur_pos))
+            ++ts->bqs_cur;
+
+        /* increment base iterator */
+        if (ts->base_cur != ts->base_end
+            && less_contig_pos(ts->base_cur->cpos, tls.cur_pos))
+            ++ts->base_cur;
+
+        /* increment indel iterator ('while' used here, because may be
+           multiple entries per position) */
+        while (ts->indel_cur != ts->indel_end
+               && less_contig_pos(ts->indel_cur->cpos, tls.cur_pos))
+            ++ts->indel_cur;
+    }
+}
+
+/* advance internal position marker to the first position that has
+   data (bqs, base or indel) in any sample.  if tls.cur_pos has data,
+   this function does not update it. this position may not be in the
+   region of interest, and may need to be advanced further. assumes
+   that bqs_cur, base_cur, and indel_cur are current w.r.t
+   tls.cur_pos. */
+static void
+next_data_pos()
+{
+    struct contig_pos min_pos = g_end_pos;
+    /* test bqs */
+    unsigned s;
+    struct tally_stats *ts;
+    if (tls.ts[0].bqs_ct)
+        for (s = 0; s != tls.n_samples; ++s) {
+            ts = &tls.ts[s];
+            if (ts->bqs_cur == ts->bqs_end) continue;
+            min_pos = MIN_CONTIG_POS(min_pos, ts->bqs_cur->cpos);
+            if (cmp_contig_pos(tls.cur_pos, min_pos) == 0)
+                return;
+        }
+
+    /* test bases */
+    if (tls.ts[0].base_ct)
+        for (s = 0; s != tls.n_samples; ++s) {
+            ts = &tls.ts[s];
+            if (ts->base_cur == ts->base_end) continue;
+            min_pos = MIN_CONTIG_POS(min_pos, ts->base_cur->cpos);
+            if (cmp_contig_pos(tls.cur_pos, min_pos) == 0)
+                return;
+        }
+
+    /* test indels */
+    if (tls.ts[0].indel_ct)
+        for (s = 0; s != tls.n_samples; ++s) {
+            ts = &tls.ts[s];
+            if (ts->indel_cur == ts->indel_end) continue;
+            min_pos = MIN_CONTIG_POS(min_pos, ts->indel_cur->cpos);
+            if (cmp_contig_pos(tls.cur_pos, min_pos) == 0)
+                return;
+        }
+
+    /* the minimum position does not coincide with our current
+       position, so update the current position. */
+    tls.cur_pos = min_pos;
+}
+
 /* advance tls.cur_pos to next position for which at least one sample
    has base or indel entries. update base_cur and indel_cur pointers
    for each sample so that calls to pileup_{basecall,bqs,indel}_stats
@@ -1102,56 +1279,19 @@ pileup_clear_finished_stats()
 int
 pileup_next_pos()
 {
-    unsigned s;
-    struct tally_stats *ts;
-    
-    /* update all cur pointers.  */
-    struct contig_pos suc;
-    if (tls.cur_pos.tid == TID_UNSET)
-        suc = (struct contig_pos){ 0, 0 };
-    else
-        suc = (struct contig_pos){ tls.cur_pos.tid, tls.cur_pos.pos + 1 };
+    next_pos_aux();
 
-    for (s = 0; s != tls.n_samples; ++s) {
-        ts = &tls.ts[s];
-        /* increment bqs iterator ('while' is used here, because bqs
-           have multiple entries per position) */
-        while (ts->bqs_cur != ts->bqs_end
-               && less_contig_pos(ts->bqs_cur->cpos, suc))
-            ++ts->bqs_cur;
+    if (skip_empty_loci) {
+        unsigned was_fixed = 0;
+        do {
+            update_data_iters();
+            next_data_pos();
+            was_fixed = fix_pos_aux();
+        } while (was_fixed);
+    } else
+        update_data_iters();
 
-        /* increment base iterator */
-        if (ts->base_cur != ts->base_end
-            && less_contig_pos(ts->base_cur->cpos, suc))
-            ++ts->base_cur;
-
-        /* increment indel iterator ('while' used here, because may be
-           multiple entries per position) */
-        while (ts->indel_cur != ts->indel_end
-               && less_contig_pos(ts->indel_cur->cpos, suc))
-            ++ts->indel_cur;
-    }
-    /* recalculate tls.cur_pos to be the minimum position among all
-       valid base_cur and indel_cur pointers in all samples. (we don't
-       need to test ts->bqs_cur since it is */
-    struct contig_pos unset_pos = { TID_UNSET, 0 };
-    struct contig_pos tmp_b, tmp_i, tmp_q, tmp = unset_pos;
-    for (s = 0; s != tls.n_samples; ++s) {
-        ts = &tls.ts[s];
-        tmp_q = (ts->bqs_cur == ts->bqs_end) ? tmp : ts->bqs_cur->cpos;
-        tmp_b = (ts->base_cur == ts->base_end) ? tmp : ts->base_cur->cpos;
-        tmp_i = (ts->indel_cur == ts->indel_end) ? tmp : ts->indel_cur->cpos;
-        tmp = MIN_CONTIG_POS(tmp, tmp_q);
-        tmp = MIN_CONTIG_POS(tmp, tmp_b);
-        tmp = MIN_CONTIG_POS(tmp, tmp_i);
-    }
-    tls.cur_pos = tmp;
-    int more = less_contig_pos(tls.cur_pos, unset_pos);
-    if (more) 
-        while (less_contig_pos(CONTIG_FRAG_END(*tls.cur_refseq), tls.cur_pos))
-            ++tls.cur_refseq;
-
-    return more;
+    return less_contig_pos(tls.cur_pos, g_end_pos);
 }
 
 
@@ -1169,5 +1309,5 @@ pileup_current_info(struct pileup_locus_info *pli)
 void
 pileup_final_input()
 {
-    tls.tally_end = (struct contig_pos){ UINT_MAX, UINT_MAX };
+    tls.tally_end = g_end_pos;
 }

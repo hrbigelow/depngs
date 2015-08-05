@@ -119,7 +119,10 @@ locus_diff_init(double _post_confidence,
 
     bam_sample_info_init(samples_file, sample_pairs_file);
 
-    batch_pileup_init(min_quality_score, fasta_file);
+    /* we do not want to skip empty loci, because we need to traverse
+       these in order to get statistics for missing data */
+    unsigned skip_empty_loci = 0;
+    batch_pileup_init(min_quality_score, skip_empty_loci, fasta_file);
 
     dirichlet_diff_cache_init(PSEUDO_DEPTH,
                               GEN_POINTS_BATCH,
