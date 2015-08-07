@@ -33,6 +33,12 @@ struct contig_span {
 };
 
 
+#define CONTIG_REGION_BEG(r) (struct contig_pos){ (r).tid, (r).beg }
+#define CONTIG_REGION_END(r) (struct contig_pos){ (r).tid, (r).end }
+
+#define MIN_CONTIG_POS(a, b) (cmp_contig_pos((a), (b)) < 0 ? (a) : (b))
+#define MAX_CONTIG_POS(a, b) (cmp_contig_pos((a), (b)) < 0 ? (b) : (a))
+
 /* 0 if there is any overlap.  -1 if a is less, 1 if a is greater */
 int
 cmp_contig_region(const struct contig_region a, 
@@ -44,10 +50,29 @@ cmp_contig_pos(const struct contig_pos a,
                const struct contig_pos b);
 
 
+/* parse locus range file in the format of 'contig <tab> start <tab>
+   end'.  assume start and end are given in 1-based coordinates. store
+   as zero-based coordinates. */
 struct contig_region *
 parse_locus_ranges(const char *locus_range_file,
+                   const char *fasta_file,
                    unsigned *n_queries,
                    unsigned long *n_total_loci);
+
+
+/* find the subrange of the sorted range [qbeg, qend) that intersects
+   subset, storing it in *qlo, *qhi. */
+void
+find_intersecting_span(struct contig_region *qbeg,
+                       struct contig_region *qend,
+                       struct contig_span subset,
+                       struct contig_region **qlo,
+                       struct contig_region **qhi);
+
+/* returns the contig_region that is the intersection between r and s,
+   or a zero-length region if there is no intersection. */
+struct contig_region
+region_span_intersect(struct contig_region r, struct contig_span s);
 
 
 #endif /* _LOCUS_RANGE_H */

@@ -135,15 +135,10 @@ static __thread struct tls {
 
 #define FRAGMENT_MAX_INLINE_SEQLEN 10
 struct contig_fragment {
-    struct contig_pos start;
-    unsigned len;
+    struct contig_region reg;
     char buf[FRAGMENT_MAX_INLINE_SEQLEN + 1];
     char *seq;
 };
-
-
-#define CONTIG_FRAG_END(f) (struct contig_pos){ (f).start.tid, (f).start.pos + (f).len }
- 
 
 
 static unsigned min_quality_score;
@@ -153,19 +148,16 @@ static unsigned skip_empty_loci; /* if 1, pileup_next_pos() advances
 
 void
 batch_pileup_init(unsigned min_qual, 
-                  unsigned skip_empty, 
-                  const char *fasta_file)
+                  unsigned skip_empty)
 {
     min_quality_score = min_qual;
     skip_empty_loci = skip_empty;
-    fasta_init(fasta_file);
 }
 
 
 void
 batch_pileup_free()
 {
-    fasta_free();
 }
 
 /* used to represent the position after we run out of loci. also
@@ -179,8 +171,10 @@ static const struct contig_pos g_unset_pos = { UINT_MAX - 1, 0 };
 
 /* */
 void
-batch_pileup_thread_init(unsigned n_samples)
+batch_pileup_thread_init(unsigned n_samples, const char *fasta_file)
 {
+    fasta_thread_init(fasta_file);
+
     tls.seq_hash = kh_init(str_h);
     tls.n_samples = n_samples;
     tls.tally_end = (struct contig_pos){ 0, 0 };
@@ -211,6 +205,8 @@ batch_pileup_thread_init(unsigned n_samples)
 void
 batch_pileup_thread_free()
 {
+    fasta_thread_free();
+
     khiter_t it;
     for (it = kh_begin(tls.seq_hash); it != kh_end(tls.seq_hash); ++it)
         if (kh_exist(tls.seq_hash, it))
@@ -266,38 +262,6 @@ equal_contig_pos(struct contig_pos a, struct contig_pos b)
     return a.tid == b.tid && a.pos == b.pos;
 }
 
-#define MIN_CONTIG_POS(a, b) (less_contig_pos((a), (b)) ? (a) : (b))
-#define MAX_CONTIG_POS(a, b) (less_contig_pos((a), (b)) ? (b) : (a))
-
-
-/* find the subrange of the sorted range [qbeg, qend) that intersects
-   subset, storing it in *qlo, *qhi. */
-static void
-find_intersecting_span(struct contig_region *qbeg,
-                       struct contig_region *qend,
-                       struct contig_span subset,
-                       struct contig_region **qlo,
-                       struct contig_region **qhi)
-{
-    struct contig_pos sbeg = { subset.beg.tid, subset.beg.pos };
-    struct contig_pos send = { subset.end.tid, subset.end.pos };
-    
-    struct contig_region *lo, *hi, *hi_r;
-    for (lo = qbeg; lo != qend; ++lo) {
-        struct contig_pos qpos = { lo->tid, lo->end };
-        if (cmp_contig_pos(qpos, sbeg) == 1) break;
-    }
-    for (hi = qend; hi != qbeg; --hi) {
-        hi_r = hi - 1; /* the 'reverse' iterator */
-        struct contig_pos qpos = { hi_r->tid, hi_r->beg };
-        if (cmp_contig_pos(send, qpos) == 1) break;
-    }
-    (*qlo) = lo;
-    (*qhi) = hi;
-}
-
-
-
 /* load specific ranges of reference sequence. [qbeg, qend) defines
    the total set of (non-overlapping) ranges to consider.  subset
    defines the overlapping intersection of these ranges that will be
@@ -318,39 +282,30 @@ load_refseq_ranges(struct contig_region *qbeg,
     unsigned r = 0, alloc = 0;
     for (q = qlo; q != qhi; ++q) {
         ALLOC_GROW(tls.refseqs, r + 1, alloc);
-        tls.refseqs[r++] = (struct contig_fragment){
-            .start = { q->tid, q->beg },
-            .len = q->end - q->beg,
-            .seq = NULL
-        };
+        tls.refseqs[r++] = (struct contig_fragment){ .reg = *q, .seq = NULL };
     }
     tls.n_refseqs = r;
 
     /* alter ranges of first and last (may be the same range) */
     struct contig_fragment *adj = &tls.refseqs[0];
-    unsigned trim = 
-        (subset.beg.tid == adj->start.tid) 
-        ? subset.beg.pos - adj->start.pos
-        : 0;
-
-    adj->start.pos += trim;
-    adj->len -= trim;
+    struct contig_pos new_beg = MAX_CONTIG_POS(CONTIG_REGION_BEG(adj->reg), subset.beg);
+    assert(new_beg.tid == adj->reg.tid);
+    adj->reg.beg = new_beg.pos;
 
     /* adjust last fragment */
     adj = &tls.refseqs[tls.n_refseqs - 1];
-    unsigned new_len = 
-        (subset.end.tid == adj->start.tid)
-        ? subset.end.pos - adj->start.pos
-        : adj->len;
-    adj->len = new_len;
+
+    struct contig_pos new_end = MIN_CONTIG_POS(CONTIG_REGION_END(adj->reg), subset.end);
+    assert(new_end.tid == adj->reg.tid);
+    adj->reg.end = new_end.pos;
 
     /* now load all sequences */
     for (r = 0; r != tls.n_refseqs; ++r) {
         struct contig_fragment *frag = &tls.refseqs[r];
-        char *seq = fasta_fetch_iseq(frag->start.tid,
-                                     frag->start.pos, 
-                                     frag->start.pos + frag->len);
-        if (frag->len <= FRAGMENT_MAX_INLINE_SEQLEN) {
+        char *seq = fasta_fetch_iseq(frag->reg.tid,
+                                     frag->reg.beg, 
+                                     frag->reg.end);
+        if ((frag->reg.end - frag->reg.beg) <= FRAGMENT_MAX_INLINE_SEQLEN) {
             strcpy(frag->buf, seq);
             frag->seq = frag->buf;
             free(seq);
@@ -372,6 +327,7 @@ free_refseq_ranges()
             free(tls.refseqs[r].seq);
     free(tls.refseqs);
     tls.refseqs = NULL;
+    tls.n_refseqs = 0;
 }
 
 
@@ -388,7 +344,6 @@ pileup_tally_stats(const struct managed_buf bam,
     process_bam_block(bam.buf, bam.buf + bam.size,
                       bsi->qbeg, bsi->qend, bsi->loaded_span,
                       &tls.ts[s]);
-    tls.tally_end = bsi->loaded_span.end;
 }    
 
 
@@ -398,8 +353,8 @@ pileup_tally_stats(const struct managed_buf bam,
 static unsigned
 get_cur_refbase_code16()
 {
-    assert(tls.cur_pos.tid == tls.cur_refseq->start.tid);
-    unsigned offset = tls.cur_pos.pos - tls.cur_refseq->start.pos;
+    assert(tls.cur_pos.tid == tls.cur_refseq->reg.tid);
+    unsigned offset = tls.cur_pos.pos - tls.cur_refseq->reg.beg;
     char refbase = tls.cur_refseq->seq[offset];
     return seq_nt16_table[(int)refbase];
 }
@@ -806,11 +761,12 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
    limited resolution of the BSI index, there will be records in [rec,
    end) that do not overlap the region of interest. 
 
-   proceeds by loading each record and determining whether it process the subset of raw (uncompressed)
-   BAM records in [rec, end) up until before tally_end position (skip
-   any records starting at or after tally_end).  maintain a map of
-   possibly overlapping read pairs and resolves their quality
-   scores. */
+   loads each record, tallies its statistics if the record overlaps
+   the region of interest. maintain a map of possibly overlapping read
+   pairs and resolves their quality scores. return the upper bound
+   position of complete tally statistics.  (this is the lowest start
+   position of any records still in the overlaps_hash, or if empty,
+   the start position of the last record parsed). */
 static void
 process_bam_block(char *rec, char *end,
                   struct contig_region *qbeg,
@@ -818,6 +774,11 @@ process_bam_block(char *rec, char *end,
                   struct contig_span loaded_span,
                   struct tally_stats *ts)
 {
+    /* the call to this function tallies all data in loaded_span.
+       this signals the downstream consumers that it is complete to
+       this point. */
+    tls.tally_end = loaded_span.end;
+
     bam1_t b, b_mate;
     int ret;
     char *rec_next;
@@ -827,28 +788,22 @@ process_bam_block(char *rec, char *end,
 
     if (qcur == qhi) return;
 
-    /* our region of interest is the intersection of [qcur, qhi) and
-       loaded_span.  qcur_end is the end point of this region. */
-    struct contig_pos qcur_end = { qcur->tid, qcur->end };
-    qcur_end = MIN_CONTIG_POS(qcur_end, loaded_span.end);
-
     struct contig_pos rec_beg;
+    khiter_t itr;
     while (rec != end) {
         rec_next = bam_parse(rec, &b);
-        rec_beg = (struct contig_pos){ b.core.tid, b.core.pos };
-        
-        /* update qcur when it is passed up */
-        if (cmp_contig_pos(rec_beg, qcur_end) != -1) {
-            ++qcur;
-
-            /* if we have passed up the region of interest, done. */
+        if (! rec_overlaps(&b, &qcur, qhi)) {
             if (qcur == qhi) break;
-
-            struct contig_pos qcur_tmp = { qcur->tid, qcur->end };
-            qcur_end = MIN_CONTIG_POS(qcur_tmp, loaded_span.end);
+            else {
+                rec = rec_next;
+                continue;
+            }
         }
 
-        // if (1) {
+        rec_beg = (struct contig_pos){ b.core.tid, b.core.pos };
+        if (cmp_contig_pos(loaded_span.end, rec_beg) == -1)
+            break; /* no more records overlapping the region of interest. done. */
+
         if (! (b.core.flag & BAM_FPAIRED) || ! (b.core.flag & BAM_FPROPER_PAIR)) {
             /* either this read is not paired or it is paired but not
                mapped in a proper pair.  tally and don't store. */
@@ -858,38 +813,40 @@ process_bam_block(char *rec, char *end,
                 if (bam_endpos(&b) < b.core.mpos) { /* does not overlap with mate */
                     process_bam_stats(&b, ts);
                 } else {
-                    /* b overlaps mate.  since b is upstream, it won't
-                       have been stored in overlaps hash yet. store;
-                       do not tally yet. */
+                    /* b overlaps mate.  since b is upstream, it
+                       shouldn't be in overlaps hash. store; do not
+                       tally yet. */
                     char *qname = strdup(bam_get_qname(&b));
-                    khiter_t it = kh_put(olap_h, ts->overlap_hash, qname, &ret);
+                    itr = kh_put(olap_h, ts->overlap_hash, qname, &ret);
+
                     assert(ret == 1 || ret == 2);
-                    kh_val(ts->overlap_hash, it) = bam_duplicate_buf(rec);
+                    kh_val(ts->overlap_hash, itr) = bam_duplicate_buf(rec);
                 }
             } else {
                 /* b is downstream mate. must search overlaps hash to
                    see if it overlaps with its upstream mate. */
-                khiter_t it =
-                    kh_get(olap_h, ts->overlap_hash, bam_get_qname(&b));
-                if (it != kh_end(ts->overlap_hash)) {
-                    (void)bam_parse(kh_val(ts->overlap_hash, it), &b_mate);
+                itr = kh_get(olap_h, ts->overlap_hash, bam_get_qname(&b));
+                if (itr != kh_end(ts->overlap_hash)) {
+                    (void)bam_parse(kh_val(ts->overlap_hash, itr), &b_mate);
                     // !!! NEED TO IMPLEMENT: tweak_overlap_quality(&b, &b_mate);
                     process_bam_stats(&b, ts);
                     process_bam_stats(&b_mate, ts);
-                    free((void *)kh_key(ts->overlap_hash, it));
-                    free((void *)kh_val(ts->overlap_hash, it));
-                    kh_del(olap_h, ts->overlap_hash, it);
+                    free((void *)kh_key(ts->overlap_hash, itr));
+                    free((void *)kh_val(ts->overlap_hash, itr));
+                    kh_del(olap_h, ts->overlap_hash, itr);
                 } else {
                     if (b.core.pos != b.core.mpos) {
                         /* downstream mate does not overlap with its
-                           upstream partner */
+                           upstream partner.  or, upstream mate was
+                           never loaded since it was not within the
+                           region of interest. */
                         process_bam_stats(&b, ts);
                     } else {
                         /* b is first in the pair to be encountered.  store it */
                         char *qname = strdup(bam_get_qname(&b));
-                        khiter_t it = kh_put(olap_h, ts->overlap_hash, qname, &ret);
+                        itr = kh_put(olap_h, ts->overlap_hash, qname, &ret);
                         assert(ret == 1 || ret == 2);
-                        kh_val(ts->overlap_hash, it) = bam_duplicate_buf(rec);
+                        kh_val(ts->overlap_hash, itr) = bam_duplicate_buf(rec);
                     }
                 }
             }
@@ -1103,40 +1060,31 @@ incr_indel_count_aux(struct tally_stats *ts,
 }
 
 
-
-/* clear statistics that are no longer needed. call this function
-   after pileup_next_pos() returns 1. */
 void
-pileup_clear_finished_stats()
+pileup_clear_stats()
 {
-    khiter_t it;
     unsigned s;
-    struct contig_pos kpos;
-
+    khiter_t itr;
     for (s = 0; s != tls.n_samples; ++s) {
-        /* clear finished entries in pbqt hash */
         struct tally_stats *ts = &tls.ts[s];
-        khash_t(pbqt_h) *ph = ts->pbqt_hash;
-        union pbqt_key pk;
-        for (it = kh_begin(ph); it != kh_end(ph); ++it) {
-            if (! kh_exist(ph, it)) continue;
-            pk.k = kh_key(ph, it);
-            kpos = (struct contig_pos){ pk.v.tid, pk.v.pos };
-            if (less_contig_pos(kpos, tls.tally_end))
-                kh_del(pbqt_h, ph, it);
-        }
+        kh_clear(pbqt_h, ts->pbqt_hash);
 
         /* clear finished entries in indel counts hash */
         khash_t(indel_ct_h) *ih = ts->indel_ct_hash;
-        union pos_key pk2;
-        for (it = kh_begin(ih); it != kh_end(ih); ++it) {
-            if (! kh_exist(ih, it)) continue;
-            pk2.k = kh_key(ih, it);
-            if (less_contig_pos(pk2.v, tls.tally_end)) {
-                free(kh_val(ih, it).i);
-                kh_del(indel_ct_h, ih, it);
-            }
+        for (itr = kh_begin(ih); itr != kh_end(ih); ++itr) {
+            if (! kh_exist(ih, itr)) continue;
+            free(kh_val(ih, itr).i);
+            kh_del(indel_ct_h, ih, itr);
         }
+        kh_clear(indel_ct_h, ih);
+
+        khash_t(olap_h) *oh = ts->overlap_hash;
+        for (itr = kh_begin(oh); itr != kh_end(oh); ++itr)
+            if (kh_exist(oh, itr)) {
+                free((void *)kh_key(oh, itr));
+                free((void *)kh_val(oh, itr));
+                kh_del(olap_h, oh, itr);
+            }
 
         /* completely clear temporary data */
         free(ts->base_ct);
@@ -1149,7 +1097,9 @@ pileup_clear_finished_stats()
 
     /* free refseqs */
     free_refseq_ranges();
+    
 }
+
 
 
 /* advance the internal position marker to the next available position
@@ -1160,16 +1110,16 @@ next_pos_aux()
 {
     if (cmp_contig_pos(tls.cur_pos, g_unset_pos) == 0) {
         if (tls.n_refseqs)
-            tls.cur_pos = tls.cur_refseq->start;
+            tls.cur_pos = CONTIG_REGION_BEG(tls.cur_refseq->reg);
         return;
     }
     tls.cur_pos.pos++;
-    if (cmp_contig_pos(tls.cur_pos, CONTIG_FRAG_END(*tls.cur_refseq)) != -1) {
+    if (cmp_contig_pos(tls.cur_pos, CONTIG_REGION_END(tls.cur_refseq->reg)) != -1) {
         ++tls.cur_refseq;
         if (tls.cur_refseq - tls.refseqs == tls.n_refseqs)
             tls.cur_pos = g_end_pos;
         else
-            tls.cur_pos = tls.cur_refseq->start;
+            tls.cur_pos = CONTIG_REGION_BEG(tls.cur_refseq->reg);
     }
 }
 
@@ -1184,7 +1134,7 @@ fix_pos_aux()
     if (cmp_contig_pos(tls.cur_pos, g_end_pos) == 0)
         return 0;
     assert(tls.n_refseqs);
-    if (cmp_contig_pos(tls.cur_pos, CONTIG_FRAG_END(*tls.cur_refseq)) != -1) {
+    if (cmp_contig_pos(tls.cur_pos, CONTIG_REGION_END(tls.cur_refseq->reg)) != -1) {
         next_pos_aux();
         return 1;
     }

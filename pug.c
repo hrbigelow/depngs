@@ -83,7 +83,7 @@ int main_pug(int argc, char ** argv)
     unsigned n_queries;
     unsigned long num_total_loci;
     struct contig_region *queries =
-        parse_locus_ranges(locus_file, &n_queries, &num_total_loci);
+        parse_locus_ranges(locus_file, fasta_file, &n_queries, &num_total_loci);
 
     struct contig_region *q = queries, *qend = q + n_queries;
 

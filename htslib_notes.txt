@@ -138,6 +138,7 @@ level   bin_first  (range at this level)
 6       37449
 
 
+1 + 8 + 64 + 512
 
 idx->min_shift equals 14.  Note, 1<<14 = 16384, the minimum bin size
 

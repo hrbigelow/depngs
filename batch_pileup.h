@@ -26,12 +26,9 @@
   3. Call pileup_next_pos() to advance base and indel iterators and
   repeat from step 2. These return 1 if end is reached.
   
-  4. Once you reach the end of a chunk of input, call
-  clear_finished_stats() to release the set of stats that are no
-  longer needed.  Residual statistics that are only partially compiled
-  will be retained, and added to in the next call to
-  tally_pileup_stats().  If this is the last chunk of input, call
-  pileup_final_input() before calling summarize_pileup_stats(s).
+  4. Once you reach the end of a chunk of input, call clear_stats() to
+  prepare for the next chunk.  If this is the last chunk of input,
+  call pileup_final_input() before calling summarize_pileup_stats(s).
   Then, summarize_pileup_stats() will regard all available statistics
   as complete and thus summarize them up until the end.
 
@@ -104,7 +101,7 @@ struct indel_pair_count {
 /* called once for each thread when starting to use the batch_pileup
    functionality. */
 void
-batch_pileup_thread_init(unsigned n_samples);
+batch_pileup_thread_init(unsigned n_samples, const char *fasta_file);
 
 /* called once for each thread at end of using batch_pileup
    functionality */
@@ -119,8 +116,7 @@ batch_pileup_thread_free();
    loop. */
 void
 batch_pileup_init(unsigned min_qual, 
-                  unsigned skip_empty_loci,
-                  const char *fasta_file);
+                  unsigned skip_empty_loci);
 
 
 void
@@ -246,10 +242,10 @@ void
 pileup_current_data(unsigned s, struct pileup_data *pd);
 
 
-/* clear statistics that are no longer needed. call this function
-   after next_base() and next_indel() return 1. */
+/* clear all statistics in preparation for a new chunk */
 void
-pileup_clear_finished_stats();
+pileup_clear_stats();
+
 
 /* call to signal that there will be no more input.  After calling
    this, a call to summarize_pileup_stats() will summarize all

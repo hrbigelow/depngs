@@ -1,0 +1,77 @@
+This is my own summary of BAM files to help understand how to code for
+them.
+
+A sorted and indexed BAM file stores each BAM record in order of start
+coordinate.  Each BAM record also spans a window (that can be computed
+from its start coordinate and CIGAR).  There is also a tree of
+so-called 'bins'.  The tree has six levels, and the lowest level have
+the smallest bins, 16kb in length, each covering a consecutive 16kb
+window on the contig (contig identified by 'tid').  Each level up is 8
+times larger, so there is one bin of size 128 kb containing 8 bins.
+
+Each BAM record is 'assigned' to exactly one bin: the smallest bin
+that completely contains it.  So, sorted by start coordinate, we would
+expect to see consecutively stored BAM records all falling into the
+left-most smallest bin, and as they near the 16kb boundary, some bins
+will be assigned to its parent, the 128kb bin.  Then, the records
+after that will predominantly fall into the second of the 16kb bins,
+and so on.  
+
+A common query on BAMs is, "retrieve all BAM records that overlap a
+given window".  This query is efficiently achieved with the help of
+the bins, but it isn't straightforward.
+
+The BAM file compresses these BAM records in individual blocks of less
+than 64kb in size into individual BGZF blocks, catenated in the file.
+This allows one to seek to the start of a block, decompress it, and
+read the individual records without having decompressed other blocks.
+
+But this also requires a different coordinate system in order to
+identify records: the "virtual offset" or 'voffset'.  The voffset for
+locating a record in a BAM file is a 64 bit integer.  The high 48 bits
+are called the 'coffset', or "compressed offset", and they are the
+physical offset into the BAM file where the BGZF block starts.  The
+low 16 bits are the 'uoffset' or "uncompressed offset", which is the
+offset into the uncompressed contents of that BGZF block where the BAM
+record starts.  Using the voffset, one can locate and retrieve a BAM
+record.
+
+Beyond this, a pair of voffsets define a contiguous range of BAM
+records.  For example, supposing we have a pair (u, v) of voffsets,
+then u defines a right portion of a BGZF block, v defines a left
+portion, possibly of the same block.  The intersection defines the
+range.  A pair of voffsets like this is called a 'chunk'.
+
+Because of the fact that BAM records are sorted by start coordinate,
+if we ask "what are the contiguous physical ranges in the
+(uncompressed) BAM file containing BAM records that span a particular
+window, we would expect that the majority of those records all lie
+together.  But, there may be a set of other records scattered about,
+lying upstream of this main group.  Those would be the records with
+start positions much earlier, but with gaps in their alignment, and
+thus they span the region of interest.
+
+In any case, a set of contiguous regions in an uncompressed BAM file
+map affinely to the same number of contiguous regions in a compressed
+BAM file.  These regions become the so-called chunks.
+
+The BAI index maps the set of BAM records in a given bin to a set of
+chunks.
+
+So, the index gives us a set of chunks for a given bin.  If our window
+of interest coincides exactly with the bin, and if all we wanted to
+find were the set of BAM records that were contained in the window, we
+would be done.  However, we also need the set of BAM records that
+*overlap* the window.  This will entail looking in all parent bins of
+this bin.
+
+The problem is that parent bins are larger.  A parent bin will have
+many chunks associated with it.  There is an optimization though.  The
+smaller bin gives us a hint: the loff field.  This is the lowest
+voffset of a BAM record that overlapped the bin.  Given this, we need
+only traverse the subset of chunks in the parent bin that fall beyond
+this voffset.  Furthermore, once we identify this subset of chunks (or
+sub-chunks), we need only to scan forward until the start position is
+at the end of our window of interest, thus we have two ways to save.
+
+With the above in mind, here is pseudo-code for retrieving all BAM records 

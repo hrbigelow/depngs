@@ -47,6 +47,7 @@ static struct {
     unsigned n_ranges;
     unsigned n_threads;
     struct locus_diff_offload_par offload_par;
+    const char *fasta_file;
 } thread_params;
 
 
@@ -122,7 +123,7 @@ locus_diff_init(double _post_confidence,
     /* we do not want to skip empty loci, because we need to traverse
        these in order to get statistics for missing data */
     unsigned skip_empty_loci = 0;
-    batch_pileup_init(min_quality_score, skip_empty_loci, fasta_file);
+    batch_pileup_init(min_quality_score, skip_empty_loci);
 
     dirichlet_diff_cache_init(PSEUDO_DEPTH,
                               GEN_POINTS_BATCH,
@@ -166,7 +167,7 @@ dist_on_create()
     tls_dw.do_print_progress = 1; /* !!! how to choose which thread prints progress? */
     tls_dw.bep.points_hash_frozen = 0;
 
-    batch_pileup_thread_init(bam_samples.n);
+    batch_pileup_thread_init(bam_samples.n, thread_params.fasta_file);
 }
 
 
@@ -207,6 +208,7 @@ locus_diff_tq_init(const char *locus_range_file,
     unsigned long n_total_loci;
     thread_params.ranges = 
         parse_locus_ranges(locus_range_file,
+                           fasta_file,
                            &thread_params.n_ranges,
                            &n_total_loci);
 
@@ -230,6 +232,7 @@ locus_diff_tq_init(const char *locus_range_file,
         
         thread_params.reader_pars[r] = &thread_params.reader_buf[r];
     }
+    thread_params.fasta_file = fasta_file;
 
     if (locus_range_file)
         cs_init_by_range(n_total_loci, bam_samples.n);
@@ -936,7 +939,7 @@ locus_diff_worker(const struct managed_buf *in_bufs,
 
     /* frees statistics that have already been used in one of the
        distance calculations. */
-    pileup_clear_finished_stats();
+    pileup_clear_stats();
 
     if (tls_dw.do_print_progress) {
         struct timespec now;

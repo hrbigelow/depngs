@@ -51,6 +51,16 @@ void
 bam_scanner(void *scanner_info, unsigned max_bytes);
 
 
+
+/* return 1 if b overlaps any of the regions in [beg, end), 0
+   otherwise. update (*beg) to point to first region that overlaps, or
+   set (*beg) == end if no overlap found. */
+int
+rec_overlaps(bam1_t *b, 
+             struct contig_region **beg,
+             struct contig_region *end);
+
+
 /* parse the next record of an uncompressed raw bam buffer into b,
    reallocating fields in b as necessary. return position of next bam
    record in the raw bam memory. adapted from

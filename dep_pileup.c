@@ -10,6 +10,7 @@
 #include "bam_reader.h"
 #include "common_tools.h"
 #include "locus_range.h"
+#include "fasta.h"
 
 static struct {
     unsigned min_base_quality; /* minimum base quality to be included in pileup */
@@ -33,6 +34,7 @@ static struct {
     struct contig_region *ranges;
     unsigned n_ranges;
     FILE *pileup_fh;
+    const char *fasta_file;
 } thread_params;
 
 
@@ -218,7 +220,6 @@ pileup_worker(const struct managed_buf *in_bufs,
     out_buf->size = 0;
     while (pileup_next_pos()) {
         pileup_current_info(&ploc);
-#if 1
         for (s = 0; s != bam_samples.n; ++s) {
             pileup_current_data(s, &pdat);
             unsigned add = pdat.calls.size + pdat.quals.size + MAX_LABEL_LEN + 5;
@@ -227,7 +228,7 @@ pileup_worker(const struct managed_buf *in_bufs,
                 sprintf(out, "%s\t%s\t%u\t%c\t%u\t",
                         bam_samples.m[s].label,
                         ploc.refname,
-                        ploc.pos,
+                        ploc.pos + 1,
                         ploc.refbase,
                         pdat.n_match_hi_q);
             
@@ -239,7 +240,6 @@ pileup_worker(const struct managed_buf *in_bufs,
             *out++ = '\n';
             out_buf->size = out - out_buf->buf;
         }
-#endif
     }   
 
     /* frees statistics that have already been used in one of the
@@ -247,9 +247,13 @@ pileup_worker(const struct managed_buf *in_bufs,
     free(pdat.calls.buf);
     free(pdat.quals.buf);
 
-    pileup_clear_finished_stats();
-    fprintf(stdout, "Finished processing %s %u\t(out_buf->alloc = %Zu)\n", 
-            ploc.refname, ploc.pos, out_buf->alloc);
+    pileup_clear_stats();
+    fprintf(stdout, "Finished processing range [%s:%u, %s:%u), ploc = (%s:%u)\n", 
+            fasta_get_contig(bsi->loaded_span.beg.tid),
+            bsi->loaded_span.beg.pos,
+            fasta_get_contig(bsi->loaded_span.end.tid),
+            bsi->loaded_span.end.pos, 
+            ploc.refname, ploc.pos);
     fflush(stdout);
 }
 
@@ -266,7 +270,7 @@ pileup_offload(void *par, const struct managed_buf *bufs)
 void
 pileup_on_create()
 {
-    batch_pileup_thread_init(bam_samples.n);
+    batch_pileup_thread_init(bam_samples.n, thread_params.fasta_file);
 }
 
 
@@ -289,7 +293,7 @@ pileup_init(const char *samples_file,
 {
     bam_sample_info_init(samples_file, NULL);
     unsigned skip_empty_loci = 1;
-    batch_pileup_init(min_qual, skip_empty_loci, fasta_file);
+    batch_pileup_init(min_qual, skip_empty_loci);
 
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 
@@ -297,6 +301,7 @@ pileup_init(const char *samples_file,
     unsigned long n_total_loci;
     thread_params.ranges = 
         parse_locus_ranges(locus_range_file,
+                           fasta_file,
                            &thread_params.n_ranges,
                            &n_total_loci);
 
@@ -318,6 +323,8 @@ pileup_init(const char *samples_file,
         
         thread_params.reader_pars[t] = &thread_params.scanner_info_buf[t];
     }
+    thread_params.fasta_file = fasta_file;
+
 
     /* chunking strategy */
     if (locus_range_file)

@@ -1,0 +1,91 @@
+We could use a cumulative approach:
+
+w1 = 0, w2 = 0;
+while (1) {
+   draw point p1 from I1;
+   draw point p2 from I2;
+   w1 = P1(p1) / I1(p1);
+   w2 = P2(p2) / I2(p2);
+   w1w2 = w1 * w2;
+   sum_w1w2 += w1w2;
+   dist2 = dist(p1, p2);
+   if (dist2 < min_dist2)
+      cut += w1w2;
+
+   if (cut / sum_w1w2 > min_qtile) break;
+}
+
+
+
+Why would the above work?
+
+Let's break it down.
+
+By principle (2), if we generate many points from I1 and
+calculate the weights w1 = P1(p1) / I1(p1), then the set of
+weighted points gives us the proper distribution of P1(*).
+
+Similarly we could have a proper distribution of P2(*) by that
+process.
+
+Now, let's assume that we have the set of S (a large number)
+weighted points {(p_i, w_i)}, and further that each point is
+labeled as either 'P' ('positive') or 'N' ('negative').
+
+Answer the question: Does this set have at least 99.9% of the
+mass of its points in the positive class?  How would we find this
+out?
+
+We can't know the answer for certain unless we inspect all S of
+the points.  But, suppose we do:
+
+i = 0;
+ws = 0;
+wps = 0;
+frac_pos;
+quant = 0.999;
+while (i < S) {
+   ws += w_i;
+   if (p_i is 'positive') wps += w_i;
+   frac_pos = wps / ws;
+
+}
+
+comp starts out undefined, and after each iteration, it equals
+the fraction of mass that is in the positive class.  it will be a
+noisy measure at first, and slowly stabilize to the true value.
+
+But, note that if it is significantly less than 0.999 after 10 or
+20 or so iterations, (let's say it is still 0), then there is
+only a very small chance that it will be above 0.999 after S
+iterations.  So, as a heuristic, we could stop early with a
+particular confidence in getting the right answer.
+
+But, how to do this with pairs of points?
+
+When sampling a pair of points with their individual weights, we can
+imagine that this is simply a single point with 8 coordinates, rather
+than two points.  And, the weight is simply the joint density, (which
+it is, by definition of independence).
+
+And, this has the advantage that it naturally collects the
+distribution as it goes, and if it passes muster, then we already have
+the needed (weighted) distances.
+
+There is then the question of how many are needed.
+
+Some extra optimizations: It is entirely fine to save the set of
+weighted points for a given sample, so far as they have been
+simulated.  Reuse of these points is logically not redundant since
+they are being paired with a new sample.
+
+One 'fuzzy' heuristic that should be attended to though, is that, if
+it is found that the weight ratios are quite skewed, this will
+indicate undersampling, and should be used to make the stopping
+criterion more stringent.
+
+The reason is that the error bars on the running mass fraction
+estimate depend both on the number of points sampled and on the
+distribution of weights as well.
+
+

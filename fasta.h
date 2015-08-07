@@ -6,12 +6,12 @@
 /* initialize index (do not load any sequences).  call at start of
    program. */
 void
-fasta_init(const char *fasta_file);
+fasta_thread_init(const char *fasta_file);
 
 
 /* free index.  call at end of program. */
 void
-fasta_free();
+fasta_thread_free();
 
 
 /* return number of sequences in this fasta index */

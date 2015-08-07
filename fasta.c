@@ -5,19 +5,18 @@
 #include <stdio.h>
 #include <assert.h>
 
-static faidx_t *fasta_index; /* needed to efficiently retrieve sub-ranges of the
-                         reference sequence. */
+static __thread faidx_t *fasta_index;
 
 KHASH_MAP_INIT_STR(contig_h, unsigned);
 
 /* does not own keys (keys owned by fasta_index) */
-khash_t(contig_h) *contig_order;
+static __thread khash_t(contig_h) *contig_order;
 
 
 /* initialize index (do not load any sequences).  call at start of
-   program. */
+   program, once for each thread. */
 void
-fasta_init(const char *fasta_file)
+fasta_thread_init(const char *fasta_file)
 {
     fasta_index = fai_load(fasta_file);
     if (fasta_index == NULL) {
@@ -40,10 +39,13 @@ fasta_init(const char *fasta_file)
 }
 
 
-/* free index.  call at end of program. */
+
+
+/* free index.  call at end of program, once for each thread */
 void
-fasta_free()
+fasta_thread_free()
 {
+    fai_destroy(fasta_index);
     kh_destroy(contig_h, contig_order);
 }
 

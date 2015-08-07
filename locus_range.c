@@ -1,4 +1,5 @@
 #include "locus_range.h"
+#include "virtual_bound.h"
 #include "fasta.h"
 #include "cache.h"
 
@@ -43,11 +44,15 @@ qsort_wrapper(const void *a, const void *b)
     return cmp_contig_region(*ca, *cb);
 }
 
+
 struct contig_region *
 parse_locus_ranges(const char *locus_range_file,
+                   const char *fasta_file,
                    unsigned *n_queries,
                    unsigned long *n_total_loci)
 {
+    fasta_thread_init(fasta_file);
+
     struct contig_region *queries;
     if (! locus_range_file) {
         *n_total_loci = 0;
@@ -90,10 +95,11 @@ parse_locus_ranges(const char *locus_range_file,
                     __FILE__, __LINE__, contig);
             exit(1);
         }
-        queries[nq++] = (struct contig_region){ tid, beg_pos, end_pos };
+        queries[nq++] = (struct contig_region){ tid, beg_pos - 1, end_pos - 1 };
         ALLOC_GROW(queries, nq + 1, n_alloc);
     }   
     fclose(locus_range_fh);
+    fasta_thread_free();
 
     /* non-overlapping intervals are well ordered.  overlaps compare
        equal and thus the ordering is undefined. */
@@ -121,4 +127,61 @@ parse_locus_ranges(const char *locus_range_file,
         *n_total_loci += q->end - q->beg;
 
     return queries;
+}
+
+
+struct virt_less_range_par {
+    struct contig_region *ary;
+    struct contig_pos q;
+};
+
+/* uses par both as a source of elements elem and a query element q.
+   return 1 if q < elem[pos], 0 otherwise.  */
+static int
+less_rng_end(unsigned pos, void *par)
+{
+    struct virt_less_range_par *vl = par;
+    struct contig_pos end_pos = { vl->ary[pos].tid, vl->ary[pos].end };
+    return cmp_contig_pos(vl->q, end_pos) < 0;
+}
+
+
+
+/* find the subrange of the sorted range [qbeg, qend) that intersects
+   subset, storing it in *qlo, *qhi. */
+void
+find_intersecting_span(struct contig_region *qbeg,
+                       struct contig_region *qend,
+                       struct contig_span subset,
+                       struct contig_region **qlo,
+                       struct contig_region **qhi)
+{
+    struct virt_less_range_par vpar;
+    vpar.ary = qbeg;
+    vpar.q = (struct contig_pos){ subset.beg.tid, subset.beg.pos };
+    *qlo = qbeg + virtual_upper_bound(0, qend - qbeg, less_rng_end, &vpar);
+    
+    vpar.q = (struct contig_pos){ subset.end.tid, subset.end.pos };
+    *qhi = qbeg + virtual_upper_bound(0, qend - qbeg, less_rng_end, &vpar);
+}
+
+
+
+/* returns the contig_region that is the intersection between r and s,
+   or a zero-length region if there is no intersection. */
+struct contig_region
+region_span_intersect(struct contig_region r, struct contig_span s)
+{
+    struct contig_pos 
+        rbeg = CONTIG_REGION_BEG(r),
+        rend = CONTIG_REGION_END(r);
+
+    struct contig_pos
+        rbeg_max = MAX_CONTIG_POS(rbeg, s.beg),
+        rend_min = MIN_CONTIG_POS(rend, s.end);
+
+    if (cmp_contig_pos(rbeg_max, rend_min) == 1)
+        return (struct contig_region){ rbeg.tid, rbeg.pos, rbeg.pos };
+    else
+        return (struct contig_region){ rbeg_max.tid, rbeg_max.pos, rend_min.pos };
 }

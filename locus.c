@@ -12,14 +12,14 @@
 void
 locus_init(const char *fasta_file)
 {
-    fasta_init(fasta_file);
+    fasta_thread_init(fasta_file);
 }
 
 
 void
 locus_free()
 {
-    fasta_free();
+    fasta_thread_free();
 }
 
 /* initialize a locus from a character line */

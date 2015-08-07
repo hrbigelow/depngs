@@ -22,33 +22,75 @@ extern struct chunk_strategy cs_stats;
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
 
-#define MIN_CONTIG_POS(a, b) (cmp_contig_pos((a), (b)) < 0 ? (a) : (b))
-#define MAX_CONTIG_POS(a, b) (cmp_contig_pos((a), (b)) < 0 ? (b) : (a))
-
 /* Estimate the total size in bytes of blocks in this chunk. If the
    within-block offset of the last block is zero, then we don't need
    to parse that last block.  Otherwise, we need to parse it, and
-   cannot know its size in advance, so use 0x10000 as the maximum
+   cannot know its size in advance.  use  as the maximum
    possible size. */
-static unsigned
-chunk_bytes(hts_pair64_t chunk)
+#define BGZF_AVG_BLOCK_SIZE 16000
+
+static size_t
+est_chunk_bytes(hts_pair64_t chunk)
 {
     return 
         BAM_COFFSET(chunk.v) 
         - BAM_COFFSET(chunk.u) 
-        + (BAM_UOFFSET(chunk.v) ? BGZF_MAX_BLOCK_SIZE : 0);
+        + (BAM_UOFFSET(chunk.v) ? BGZF_AVG_BLOCK_SIZE : 0);
 }
 
 /* Return an estimate for the bytes required to hold the BGZF blocks
    contained in the chunks.  Each chunk
    assuming the last block is the maximal size of 0x10000 */
-static unsigned
-tally_bgzf_bytes(hts_pair64_t *chunks, unsigned n_chunks)
+static size_t
+tally_est_bgzf_bytes(hts_pair64_t *chunks, unsigned n_chunks)
 {
-    unsigned c, sz = 0;
+    unsigned c;
+    size_t sz = 0;
     for (c = 0; c != n_chunks; ++c)
-        sz += chunk_bytes(chunks[c]);
+        sz += est_chunk_bytes(chunks[c]);
     return sz;
+}
+
+
+/* returns an allocated array of the set of bins that overlap the
+   contiguous tiling window range [tbeg, tend).  sets *n_bins to the
+   number of bins found.  same as reg2bins, except that the [tbeg,
+   tend) subset of contiguous 16kb windows is given.  windows 0, 1,
+   and 2 are respectively [0, 16kb), [16kb, 32kb), [32kb, 48kb).
+   n_lvls: number of levels.  i.e. 6 levels gives levels [0, 6).  */
+static inline void
+win2bins(int tbeg, int tend, int n_lvls, int *bins, unsigned *n_bins)
+{
+    if (tbeg == tend) {
+        *n_bins = 0;
+    }
+
+    unsigned add, n = 0, alloc = n_lvls;
+
+    int i, l, t, b = tbeg, e = tend - 1;
+    /* annoyingly, we need to first compute t */
+    for (l = 0, t = 0; l != n_lvls - 1; t += (1<<(l++ * 3)))
+        ;
+
+    for (l = n_lvls - 1; l >= 0; t -= 1<<(--l * 3)) {
+        add = e - b + 1;
+        ALLOC_GROW(bins, n + add, alloc);
+        for (i = b; i <= e; ++i) bins[n++] = i + t;
+        b>>=3;
+        e>>=3;
+    }
+    *n_bins = n;
+}
+
+
+/* find the set of bins that overlap tiling window [ti, ti + 1) and
+   that have content past min_off. */
+static int
+first_bins_aux(int ti, int n_lvls, int *bins)
+{
+    unsigned n_bins;
+    win2bins(ti, ti + 1, n_lvls, bins, &n_bins);
+    return n_bins;
 }
 
 
@@ -122,8 +164,8 @@ merge_chunks(hts_pair64_t c1, hts_pair64_t c2)
 
 KBTREE_INIT(itree_t, hts_pair64_t, cmp_bgzf_chunks);
 
-/* add an interval to the itree, resolving overlaps. return the total
-   size of blocks.
+/* add an interval to the itree, resolving overlaps. return the
+   estimated size added.
 
    Approach: query the itree for any item that compares equal to
    q. For any existing item e found, determine whether e contains q.
@@ -147,13 +189,13 @@ add_chunk_to_itree(kbtree_t(itree_t) *itree, hts_pair64_t q)
             if (bgzf_contains(*ex, q))
                 break;
             else {
-                del_sz += chunk_bytes(*ex);
+                del_sz += est_chunk_bytes(*ex);
                 q = merge_chunks(*ex, q);
                 kb_del(itree_t, itree, *ex);
                 continue;
             }
         } else {
-            ins_sz += chunk_bytes(q);
+            ins_sz += est_chunk_bytes(q);
             kb_put(itree_t, itree, q);
             break;
         }
@@ -172,7 +214,7 @@ total_itree_bytes(kbtree_t(itree_t) *itree)
     kb_itr_first_itree_t(itree, &itr);
     while (iret) {
         ck = kb_itr_key(hts_pair64_t, &itr);
-        sz += chunk_bytes(ck);
+        sz += est_chunk_bytes(ck);
         iret = kb_itr_next_itree_t(itree, &itr);
     }
     return sz;
@@ -217,14 +259,15 @@ struct __hts_idx_t {
 
 /* add the set of chunk intervals from bin into the itree. resolve
    overlaps, tally the total length of intervals in the tree. */
-static unsigned
+static size_t
 add_bin_chunks_aux(int bin,
                    bidx_t *bidx, 
                    uint64_t min_off, 
                    kbtree_t(itree_t) *itree)
 {
     khiter_t k;
-    unsigned j, bgzf_bytes = 0;
+    unsigned j;
+    size_t bgzf_bytes = 0;
     if ((k = kh_get(bin, bidx, bin)) != kh_end(bidx)) {
         bins_t *p = &kh_val(bidx, k);
         for (j = 0; j != p->n; ++j)
@@ -245,45 +288,6 @@ round_up_pow8(unsigned v, unsigned p)
     static unsigned r1[] = { 0, 7, 63, 511, 4095, 32767 };
     static unsigned r2[] = { ~0, ~7, ~63, ~511, ~4095, ~32767 };
     return (v + r1[p]) & r2[p];
-}
-
-
-/* returns an allocated array of the set of bins that overlap the
-   contiguous tiling window range [tbeg, tend).  sets *n_bins to the
-   number of bins found.  same as reg2bins, except that the [tbeg,
-   tend) subset of contiguous 16kb windows is given.  windows 0, 1,
-   and 2 are respectively [0, 16kb), [16kb, 32kb), [32kb, 48kb).
-   n_lvls: number of levels.  i.e. 6 levels gives levels [0, 6).  */
-static inline int *
-win2bins(int tbeg, int tend, int n_lvls, unsigned *n_bins)
-{
-    if (tbeg == tend) {
-        *n_bins = 0;
-        return NULL;
-    }
-
-    int l, t, max_lvl = n_lvls - 1, s = (max_lvl<<1) + max_lvl;
-    assert(tbeg <= tend);
-    assert(tend <= 1<<s);
-
-    unsigned n = 0, alloc = n_lvls;
-    int *bins = malloc(alloc * sizeof(int));
-
-    /* identify the bin range [b, e) at each level l such that each
-       bin in the range overlaps at least one tiling window in the
-       range [tbeg, tend). t gives the bin number of the first bin on
-       level l. */
-    for (l = 0, t = 0; l != n_lvls; s -= 3, t += 1<<((l<<1)+l), ++l) {
-        int b, e, add, i;
-        unsigned p = n_lvls - l - 1;
-        b = t + (round_up_pow8(tbeg, p)>>s);
-        e = t + (round_up_pow8(tend, p)>>s);
-        add = e - b;
-        ALLOC_GROW(bins, n + add, alloc);
-        for (i = b; i != e; ++i) bins[n++] = i;
-    }
-    *n_bins = n;
-    return bins;
 }
 
 
@@ -313,30 +317,6 @@ find_min_offset(int tid, int ti, hts_idx_t *idx)
 }
 
 
-/* compute initial set of bins that have content in tiling windows
-   [ti, ti + 1) (?), add those chunks to the tree. return the total
-   number of bytes added. */
-static unsigned
-compute_initial_bins(int tid, 
-                     int ti,
-                     uint64_t min_off, 
-                     kbtree_t(itree_t) *itree, 
-                     hts_idx_t *idx)
-{
-    int actual_n_lvls = idx->n_lvls + 1; /* semantic correction */
-    unsigned n_bins;
-    int *bins = win2bins(ti, ti + 1, actual_n_lvls, &n_bins);
-    unsigned bgzf_bytes = 0;
-
-    /* add initial chunks for [ti, ti + 1) */
-    int i;
-    for (i = 0; i != n_bins; ++i)
-        bgzf_bytes += 
-            add_bin_chunks_aux(bins[i], idx->bidx[tid], min_off, itree);
-    free(bins);
-    return bgzf_bytes;
-}
-
 
 /* transfer all chunks in itree to chunks, appending from initial
    position *n_chunks and updating both chunks and n_chunks. */
@@ -360,37 +340,16 @@ accumulate_chunks(kbtree_t(itree_t) *itree,
     }
 }
 
-struct virt_less_range_par {
-    struct contig_region *ary;
-    struct contig_pos q;
-};
-
-/* uses par both as a source of elements elem and a query element q.
-   return 1 if q < elem[pos], 0 otherwise.
- */
-static int
-less_rng_end(unsigned pos, void *par)
-{
-    struct virt_less_range_par *vl = par;
-    struct contig_pos end_pos = { vl->ary[pos].tid, vl->ary[pos].end };
-    return cmp_contig_pos(vl->q, end_pos) < 0;
-}
-
-/* using forward scanning through the index, return the largest
-   position end such that the total size of bgzf blocks overlapping
-   [beg, end) is at or slightly above min_wanted_bytes. use [qbeg,
-   qend) to define the subset of ranges to consider.  max_end defines
-   the maximum logical end range to consider.
-
-   (*chunks)[c] = chunk c
-   (*n_chunks) = number of chunks
+/* finds <= max_wanted_bytes in the range of interest defined by the
+   intersection of [qbeg, qend) and [beg, end), starting at beg.
+   return the position found, and populate (*chunks) and (*n_chunks)
+   with the contents found.
 */
 static struct contig_pos
-hts_size_to_range(struct contig_pos beg,
-                  struct contig_pos max_end,
-                  unsigned min_wanted_bytes,
-                  struct contig_region *qbeg,
+hts_size_to_range(struct contig_region *qbeg,
                   struct contig_region *qend,
+                  struct contig_span subset,
+                  size_t min_wanted_bytes,
                   hts_idx_t *idx,
                   hts_pair64_t **chunks,
                   unsigned *n_chunks,
@@ -402,72 +361,64 @@ hts_size_to_range(struct contig_pos beg,
     int n_small_bins = firstbin0 - firstbin1;
     int n_bins, *bins = malloc(idx->n_lvls * sizeof(int));
 
-    /* initialize qcur */
-    struct virt_less_range_par vpar = { qbeg, beg };
-    struct contig_region *qcur = qbeg
-        + virtual_upper_bound(0, qend - qbeg, less_rng_end, &vpar);
-        
+    /* find the first item in the query range [qbeg, qend) that
+       overlaps beg. */
+
+    struct contig_region *qlo, *qhi;
+    find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
     int ms = idx->min_shift; /* convert between 16kb window index and
                                 position */
-    struct contig_pos cpos; /* current contig position */
+
+    /* [subset.beg, cpos) defines the accumulating region. */
+    struct contig_pos cpos; 
+
+    /* creg is the intersection of the current interval with the subset */
     struct contig_region creg;
-    unsigned bgzf_bytes;
+    size_t bgzf_bytes;
     uint64_t min_off;
-    for (*n_chunks = bgzf_bytes = 0; qcur != qend; ++qcur) {
-        creg = (struct contig_region){ 
-            qcur->tid, MAX(qcur->beg, beg.pos), qcur->end
-        };
-        int ti, b;
+    kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
+    int ti_beg, ti_end;
 
-        /* creg overlaps positions [creg.beg, creg.end), and overlaps
-           16kb windows [ti_beg, ti_end).  if creg.end == 16384, we
-           want ti_end == 1.  but if creg.end == 16385, we want ti_end
-           = 2. (creg.end - 1) is the last position that creg
-           contains, and thus (creg.end - 1)>>ms is the 16kb window
-           index of the window containing this position.  we thus add
-           1 to this last containing window to get the bound. */
-        int ti_beg = creg.beg>>ms,
-            ti_end = ((creg.end - 1)>>ms) + 1;
-        min_off = find_min_offset(creg.tid, ti_beg, idx);
-        kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
-        bgzf_bytes += compute_initial_bins(creg.tid, ti_beg, min_off, itree, idx);
-
+    for (*n_chunks = bgzf_bytes = 0; qlo != qhi; ++qlo) {
+        creg = region_span_intersect(*qlo, subset);
+        
+        /* creg covers positions [creg.beg, creg.end), and 16kb
+           windows [ti_beg, ti_end). */
+        ti_beg = creg.beg>>ms;
+        ti_end = ((creg.end - 1)>>ms) + 1;
         cpos.tid = creg.tid;
 
-        /* we use ti = ti_beg + 1 because compute_initial_bins gives
-           the chunks for tiling windows [ti, ti + 1). */
-        for (ti = ti_beg + 1; ti != ti_end; ++ti) {
-            cpos.pos = (ti + 1)<<ms; /* boundary position (one greater
-                                        than last position covered by
-                                        ti)*/
+        int ti, b;
+        for (ti = ti_beg; ti != ti_end; ++ti) {
+            /* boundary position (one greater than last position
+               covered by ti)*/
+            cpos.pos = (ti + 1)<<ms; 
             /* at the ends of contigs, the last 16kb window may run
                off the end.  correct for this. */
-            cpos.pos = MIN(cpos.pos, qcur->end);
+            cpos.pos = MIN(cpos.pos, qlo->end);
 
-            if (bgzf_bytes >= min_wanted_bytes
-                || cmp_contig_pos(cpos, max_end) == 1) {
-                /* break if window touches max_end, or we have enough
+            if (bgzf_bytes >= min_wanted_bytes 
+                || cmp_contig_pos(cpos, CONTIG_REGION_END(creg)) == 1) {
+                /* break if window touches end, or we have enough
                    content */
-                accumulate_chunks(itree, chunks, n_chunks);
-                kb_destroy(itree_t, itree);
                 goto END;
             }
             
             /* process this 16kb window */
             min_off = find_min_offset(cpos.tid, ti, idx);
-            n_bins = next_bins_aux(ti, bins, firstbin0, n_small_bins);
+            if (ti == ti_beg)
+                n_bins = first_bins_aux(ti, idx->n_lvls + 1, bins);
+            else
+                n_bins = next_bins_aux(ti, bins, firstbin0, n_small_bins);
             for (b = 0; b != n_bins; ++b)
                 bgzf_bytes += 
                     add_bin_chunks_aux(bins[b], idx->bidx[creg.tid], min_off, itree);
         }
-        accumulate_chunks(itree, chunks, n_chunks);
-        kb_destroy(itree_t, itree);
-
-        /* beg is only relevant within the first value of qcur */
-        beg = (struct contig_pos){ 0, 0 }; 
     }
  END:
-    *more_input = qcur != qend;
+    *more_input = qlo != qhi;
+    accumulate_chunks(itree, chunks, n_chunks);
+    kb_destroy(itree_t, itree);
     free(bins);
     return cpos;
 }
@@ -490,25 +441,22 @@ bam_scanner(void *par, unsigned max_bytes)
 {
     struct bam_scanner_info *bp = par;
     float mul = STEP_DOWN;
-    unsigned tmp_bytes, min_actual_bytes = UINT_MAX, min_wanted_bytes;
+    size_t tmp_bytes, min_actual_bytes = SIZE_MAX, min_wanted_bytes;
     struct contig_pos tmp_end, min_end = { UINT_MAX, UINT_MAX };
     do {
         min_wanted_bytes = max_bytes * mul;
         unsigned s;
         for (s = 0; s != bp->n; ++s) {
             struct bam_stats *bs = &bp->m[s];
+            struct contig_span subset = { cs_stats.pos, min_end };
             tmp_end =
-                hts_size_to_range(cs_stats.pos,
-                                  min_end,
+                hts_size_to_range(bp->qbeg, bp->qend, subset,
                                   min_wanted_bytes,
-                                  bp->qbeg,
-                                  bp->qend,
                                   bs->idx, 
-                                  &bs->chunks,
-                                  &bs->n_chunks,
+                                  &bs->chunks, &bs->n_chunks,
                                   &bs->more_input);
             min_end = MIN_CONTIG_POS(min_end, tmp_end);
-            tmp_bytes = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
+            tmp_bytes = tally_est_bgzf_bytes(bs->chunks, bs->n_chunks);
             min_actual_bytes = MIN(min_actual_bytes, tmp_bytes);
         }
         mul *= STEP_DOWN;
@@ -516,6 +464,23 @@ bam_scanner(void *par, unsigned max_bytes)
     bp->loaded_span = (struct contig_span){ cs_stats.pos, min_end };
     cs_stats.pos = min_end;
 }
+
+
+/* return 1 if b overlaps any of the regions in [beg, end), 0
+   otherwise. update (*beg) to point to first region that overlaps */
+int
+rec_overlaps(bam1_t *b, 
+             struct contig_region **beg,
+             struct contig_region *end)
+{
+    /* increment beg until it intersects or passes b */
+    struct contig_region bam_reg = { b->core.tid, b->core.pos, bam_endpos(b) };
+    int cmp = -1;
+    while ((*beg) != end && (cmp = cmp_contig_region(**beg, bam_reg)) == -1)
+        ++(*beg);
+    return (cmp == 0);
+}
+
 
 
 /* bgzf points to the start of a bgzf block.  reads the block size
@@ -541,7 +506,7 @@ bam_reader(void *par, struct managed_buf *bufs)
     ssize_t n_chars_read;
     char *wp;
 
-    unsigned max_grow;
+    size_t max_grow;
     unsigned more_input = 0;
 
     for (s = 0; s != bp->n; ++s) {
@@ -549,16 +514,19 @@ bam_reader(void *par, struct managed_buf *bufs)
         if (bs->more_input) more_input = 1;
         bufs[s].size = 0;
 
-        wp = bufs[s].buf + bufs[s].size;
-        max_grow = tally_bgzf_bytes(bs->chunks, bs->n_chunks);
-        ALLOC_GROW_REMAP(bufs[s].buf, wp, bufs[s].size + max_grow, bufs[s].alloc);
+        max_grow = tally_est_bgzf_bytes(bs->chunks, bs->n_chunks);
+        ALLOC_GROW(bufs[s].buf, bufs[s].size + max_grow, bufs[s].alloc);
 
+        wp = bufs[s].buf;
         hFILE *fp = bs->bgzf->fp;
         for (c = 0; c != bs->n_chunks; ++c) {
             bgzf_seek(bs->bgzf, bs->chunks[c].u, SEEK_SET);
 
             /* read all but possibly the last block */
             block_span = BAM_COFFSET(bs->chunks[c].v) - BAM_COFFSET(bs->chunks[c].u);
+            ALLOC_GROW_REMAP(bufs[s].buf, wp, 
+                             bufs[s].size + block_span + 0x10000, bufs[s].alloc);
+
             n_chars_read = hread(fp, wp, block_span);
             wp += block_span;
             
@@ -578,6 +546,7 @@ bam_reader(void *par, struct managed_buf *bufs)
                 
                 wp += remain;
             }
+            bufs[s].size = wp - bufs[s].buf;
         }
         bufs[s].size = wp - bufs[s].buf;
     }
@@ -618,8 +587,6 @@ bam_inflate(const struct managed_buf *bgzf,
         uoff_end = BAM_UOFFSET(chunks[c].v); /* if non-zero, block at coff_end is present */
         coff = coff_beg;
 
-        size_t off0 = bam->size;
-        unsigned cnum = 0;
         /* inflate all blocks starting in [coff_beg, coff_end).
            optionally, inflate block starting at coff_end if it has
            non-zero uoffset (i.e. there are records we need from it) */
@@ -633,9 +600,6 @@ bam_inflate(const struct managed_buf *bgzf,
             c_beg = (coff == coff_beg ? BAM_UOFFSET(chunks[c].u) : 0);
             c_end = (coff == coff_end ? uoff_end : n_bytes);
             n_copy = c_end - c_beg; /* number of bytes to copy to output buffer */
-
-            /* fprintf(stdout, "%u\t%u\t%zu\t%zu\t%zu\t%zu\t%zu\t%zu\t%zu\n", */
-            /*         cnum++, c, block_sz, n_bytes, coff, coff_end, coff_end - coff, c_beg, c_end); */
 
             if (c_beg != 0) 
                 memmove(bam->buf + bam->size,
