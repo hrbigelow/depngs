@@ -369,8 +369,10 @@ hts_size_to_range(struct contig_region *qbeg,
     int ms = idx->min_shift; /* convert between 16kb window index and
                                 position */
 
-    /* [subset.beg, cpos) defines the accumulating region. */
-    struct contig_pos cpos; 
+    /* [subset.beg, cpos) defines the accumulating region. if loop
+       below never executes, it means there was no data in the subset
+       region, and we are done with this subset. */
+    struct contig_pos cpos = { subset.end.tid, subset.end.pos };
 
     /* creg is the intersection of the current interval with the subset */
     struct contig_region creg;
@@ -442,7 +444,10 @@ bam_scanner(void *par, unsigned max_bytes)
     struct bam_scanner_info *bp = par;
     float mul = STEP_DOWN;
     size_t tmp_bytes, min_actual_bytes = SIZE_MAX, min_wanted_bytes;
-    struct contig_pos tmp_end, min_end = { UINT_MAX, UINT_MAX };
+    struct contig_pos tmp_end;
+
+    /* the largest position in the region of interest */
+    struct contig_pos min_end = { (bp->qend - 1)->tid, (bp->qend - 1)->end };
     do {
         min_wanted_bytes = max_bytes * mul;
         unsigned s;
@@ -462,6 +467,7 @@ bam_scanner(void *par, unsigned max_bytes)
         mul *= STEP_DOWN;
     } while (min_actual_bytes > max_bytes);
     bp->loaded_span = (struct contig_span){ cs_stats.pos, min_end };
+    assert(min_end.pos != 0);
     cs_stats.pos = min_end;
 }
 

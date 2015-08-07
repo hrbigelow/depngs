@@ -53,7 +53,7 @@ struct pair_dist_stats {
 
 struct bam_sample_pair_info {
     struct { 
-        int s1, s2; 
+        unsigned s1, s2; 
         struct pair_dist_stats stats;
     } *m;
     unsigned n;

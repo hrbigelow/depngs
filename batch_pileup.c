@@ -160,12 +160,16 @@ batch_pileup_free()
 {
 }
 
-/* used to represent the position after we run out of loci. also
-   defined as the maximum possible position. */
+/* used to represent the position after we run out of loci in a
+   chunk. also defined as the maximum possible position. tls.cur_pos
+   is set to this value when pileup_next_pos() is called and
+   tls.cur_pos is incremented out of the region of interest */
 static const struct contig_pos g_end_pos = { UINT_MAX, UINT_MAX };
 
 /* use to represent the current position after a new batch was loaded
-   but before pileup_next_pos() is called. */
+   but before pileup_next_pos() is called. tls.cur_pos is set to this
+   value after calling pileup_clear_stats() and also after
+   batch_pileup_thread_init() */
 static const struct contig_pos g_unset_pos = { UINT_MAX - 1, 0 };
 
 
@@ -659,6 +663,17 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
 
 
 void
+init_pileup_data(struct pileup_data *pd)
+{
+    pd->calls = (struct managed_buf){ NULL, 0, 0 };
+    pd->quals = (struct managed_buf){ NULL, 0, 0 };
+    pd->n_match_lo_q = 0;
+    pd->n_match_hi_q = 0;
+    pd->n_indel = 0;
+}
+
+
+void
 free_pileup_data(struct pileup_data *pd)
 {
     if (pd->calls.buf != NULL) {
@@ -1097,14 +1112,14 @@ pileup_clear_stats()
 
     /* free refseqs */
     free_refseq_ranges();
-    
+    tls.cur_pos = g_unset_pos;
 }
 
 
 
 /* advance the internal position marker to the next available position
    in the region of interest. assume refseqs, cur_refseq and n_refseqs
-   are initialized appropriately. use */
+   are initialized appropriately. */
 static void
 next_pos_aux()
 {
@@ -1174,10 +1189,11 @@ update_data_iters()
 
 /* advance internal position marker to the first position that has
    data (bqs, base or indel) in any sample.  if tls.cur_pos has data,
-   this function does not update it. this position may not be in the
-   region of interest, and may need to be advanced further. assumes
-   that bqs_cur, base_cur, and indel_cur are current w.r.t
-   tls.cur_pos. */
+   this function does not update it. if there is no data altogether,
+   tls.cur_pos is set to g_end_pos, indicating that we are at the end
+   of data. this position may not be in the region of interest, and
+   may need to be advanced further. assumes that bqs_cur, base_cur,
+   and indel_cur are current w.r.t tls.cur_pos. */
 static void
 next_data_pos()
 {

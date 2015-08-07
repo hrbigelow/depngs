@@ -21,7 +21,8 @@ int dist_usage()
             "-d STRING   name of output distance file.  If absent, skip distance calculation.\n"
             "-c STRING   name of output composition file.  If absent, skip composition estimates.\n"
             "-i STRING   name of output indel distance file.  If absent, skip indel distance calculation.\n"
-            "-r STRING   input range file (lines 'contig<tab>start<tab>end') to process. If absent, process all input.\n"
+            "-l STRING   input locus range file (lines 'contig<tab>start<tab>end') to process.\n"
+            "              If absent, process all input.\n"
             "-x STRING   name of output summary statistics file of differing loci.\n"
             "\n"
             "STATISTICAL PARAMETERS\n"
@@ -36,8 +37,8 @@ int dist_usage()
             "-q INT      minimum quality score to include bases as evidence [5]\n"
             "-g <empty>  if present, print extra pileup fields in the output distance file [absent]\n"
             "-t INT      number of threads to use [1]\n"
-            "-R INT      number of readers to use [2] (See NOTE)\n"
-            "-m INT      number bytes of memory to use [50e9]\n"
+            "-R INT      number of readers to use [same as -t] (See NOTE)\n"
+            "-m INT      number bytes of memory to use [10e9]\n"
             "\n"
             "\n"
             "samples.rdb has lines of <sample_id><tab></path/to/sample.bam>\n"
@@ -53,8 +54,9 @@ int dist_usage()
             "inputs must be aligned to this reference.  there must be a fasta\n"
             "index file (produced by samtools faidx) called <ref.fasta>.fai\n"
             "\n"
-            "On machines where 2 or more concurrent reads achieve higher\n"
-            "throughput than one read, set -R (number of readers) accordingly.\n"
+            "NOTE: -R may be used to restrict how many threads are allowed to\n"
+            "read input concurrently, which may improve performance if there\n"
+            "are many threads and reading is a bottleneck\n"
             "\n"
             );
     return 1;
@@ -68,8 +70,9 @@ int
 main_dist(int argc, char **argv)
 {
     size_t n_threads = 1;
-    size_t max_mem = 50e9;
-    unsigned n_readers = 2;
+    size_t max_mem = 10e9;
+    unsigned n_readers = n_threads;
+    int n_readers_set = 0;
 
     unsigned min_quality_score = 5;
     double post_confidence = 0.99;
@@ -90,14 +93,12 @@ main_dist(int argc, char **argv)
 #define SQRT2 1.41421356237309504880
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:i:r:x:t:R:f:y:X:Z:p:t:m:q:Q:g")) >= 0)
-    {
-        switch(c)
-        {
+    while ((c = getopt(argc, argv, "d:c:i:l:x:t:R:f:y:X:Z:p:t:m:q:Q:g")) >= 0) {
+        switch(c) {
         case 'd': dist_file = optarg; break;
         case 'c': comp_file = optarg; break;
         case 'i': indel_dist_file = optarg; break;
-        case 'r': query_range_file = optarg; break;
+        case 'l': query_range_file = optarg; break;
         case 'x': summary_stats_file = optarg; break;
 
         case 'f': max_sample_points = 
@@ -109,7 +110,10 @@ main_dist(int argc, char **argv)
         case 'p': prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
 
         case 't': n_threads = strtol_errmsg(optarg, "-t (n_threads)"); break;
-        case 'R': n_readers = strtol_errmsg(optarg, "-R (n_readers)"); break;
+        case 'R': 
+            n_readers = strtol_errmsg(optarg, "-R (n_readers)"); 
+            n_readers_set = 1;
+            break;
         case 'm': max_mem = (size_t)strtod_errmsg(optarg, "-m (max_mem)"); break;
         case 'q': min_quality_score = strtol_errmsg(optarg, "-q (min_quality_score)"); break;
         case 'Q': quantiles_string = optarg; break;
@@ -118,6 +122,9 @@ main_dist(int argc, char **argv)
         }
     }
     if (argc - optind != 3) return dist_usage();
+
+    if (! n_readers_set)
+        n_readers = n_threads;
 
     /* This adjustment makes max_sample_points a multiple of GEN_POINTS_BATCH */
     max_sample_points += GEN_POINTS_BATCH - (max_sample_points % GEN_POINTS_BATCH);
@@ -172,7 +179,7 @@ main_dist(int argc, char **argv)
     set_points_hash_flag(1);
 
     printf("Precomputing difference hash...");
-    /* prepopulate_bounds_keys(n_threads); */
+    prepopulate_bounds_keys(n_threads);
     printf("done.\n");
 
     set_points_hash_flag(0);

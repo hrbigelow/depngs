@@ -170,10 +170,11 @@ void *init_beta_func(void *args)
         exit(1);                                                        \
     }                                                                   \
     
-void binomial_est_init(double beta_conf, 
-                       unsigned batch_size, 
-                       unsigned num_beta_precalc,
-                       size_t n_threads)
+void
+binomial_est_init(double beta_conf, 
+                  unsigned batch_size, 
+                  unsigned num_beta_precalc,
+                  size_t n_threads)
 {
     pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
     struct beta_input *inputs = malloc(n_threads * sizeof(struct beta_input));
@@ -202,10 +203,8 @@ void binomial_est_init(double beta_conf,
 
     unsigned t;
     int rc;
-    for (t = 0; t != n_threads; ++t)
-    {
+    for (t = 0; t != n_threads; ++t) {
         inputs[t] = (struct beta_input){ t, n_threads };
-
         rc = pthread_create(&threads[t], NULL, init_beta_func, &inputs[t]);
         CHECK_THREAD(t, rc);
     }

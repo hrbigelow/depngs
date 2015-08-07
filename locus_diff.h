@@ -70,13 +70,17 @@ struct locus_data {
     struct pileup_data sample_data;
 };
 
+void
+alloc_locus_data(struct locus_data *ld);
+
+void
+free_locus_data(struct locus_data *ld);
+
 
 void
 reset_locus_data(struct locus_data *ld);
 
 
-void
-free_locus_data(struct locus_data *ld);
 
 
 /* there will be one of these instantiated for each thread.  Each of

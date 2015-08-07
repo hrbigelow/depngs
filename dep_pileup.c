@@ -97,13 +97,17 @@ int main_pileup(int argc, char **argv)
 {
     int c;
     char *query_range_file = NULL;
+    int n_readers_set = 0;
 
     /* adapted from samtools/bam_plcmd.c.*/
     while ((c = getopt(argc, argv, "t:R:m:F:ABC:EG:l:q:Q:x:X:")) >= 0) {
         switch (c) {
         case 't': opts.n_threads = strtol_errmsg(optarg, "-t (n_threads)"); break;
         case 'm': opts.max_mem = (size_t)strtod_errmsg(optarg, "-m (max_mem)"); break; 
-        case 'R': opts.n_readers = strtol_errmsg(optarg, "-R (n_readers)"); break;
+        case 'R': 
+            opts.n_readers = strtol_errmsg(optarg, "-R (n_readers)"); 
+            n_readers_set = 1;
+            break;
         case 'F': opts.phred_offset = strtol_errmsg(optarg, "-F (phred_offset)"); break;
         /* case 'A': opts.use_orphan = 1; break; */
         /* case 'B': mplp.flag &= ~MPLP_REALN; break; */
@@ -141,6 +145,10 @@ int main_pileup(int argc, char **argv)
             return 1;
         }
     }
+
+    /* by default, allow each thread to read unrestricted */
+    if (! n_readers_set)
+        opts.n_readers = opts.n_threads;
 
     if (argc - optind != 3) return pileup_usage();
         
@@ -216,8 +224,12 @@ pileup_worker(const struct managed_buf *in_bufs,
     };
 
     struct pileup_locus_info ploc;
+
     char *out = out_buf->buf;
     out_buf->size = 0;
+
+    /* NOTE: this loop might have zero iterations if there is no data
+       that intersected the region of interest.  */
     while (pileup_next_pos()) {
         pileup_current_info(&ploc);
         for (s = 0; s != bam_samples.n; ++s) {
@@ -248,12 +260,11 @@ pileup_worker(const struct managed_buf *in_bufs,
     free(pdat.quals.buf);
 
     pileup_clear_stats();
-    fprintf(stdout, "Finished processing range [%s:%u, %s:%u), ploc = (%s:%u)\n", 
+    fprintf(stdout, "Finished processing range [%s:%u, %s:%u)\n", 
             fasta_get_contig(bsi->loaded_span.beg.tid),
             bsi->loaded_span.beg.pos,
             fasta_get_contig(bsi->loaded_span.end.tid),
-            bsi->loaded_span.end.pos, 
-            ploc.refname, ploc.pos);
+            bsi->loaded_span.end.pos);
     fflush(stdout);
 }
 

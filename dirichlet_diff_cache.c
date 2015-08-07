@@ -234,8 +234,8 @@ dirichlet_diff_cache_init(unsigned pseudo_depth,
     dirichlet_points_gen_init(prior_alpha);
 
     printf("Precomputing confidence interval statistics...");
-    /* binomial_est_init(beta_confidence, GEN_POINTS_BATCH,  */
-    /*                   max_sample_points, n_threads); */
+    binomial_est_init(beta_confidence, GEN_POINTS_BATCH,
+                      max_sample_points, n_threads);
     printf("done.\n");
     
 }
@@ -917,12 +917,12 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
     bpar->use_low_beta = 0;
     bpar->query_beta = 1.0 - cache.post_confidence;
     beb->ambiguous[0] = virtual_lower_bound(0, xmode, elem_is_less, bpar);
-    beb->ambiguous[1] = virtual_upper_bound(xmode, cache.pseudo_depth, elem_is_less, bpar);
+    beb->ambiguous[1] = virtual_upper_bound(xmode, cache.pseudo_depth, query_is_less, bpar);
 
     bpar->use_low_beta = 1;
     bpar->query_beta = cache.post_confidence;
     beb->unchanged[0] = virtual_lower_bound(beb->ambiguous[0], xmode, elem_is_less, bpar);
-    beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], elem_is_less, bpar);
+    beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], query_is_less, bpar);
     
 }
 

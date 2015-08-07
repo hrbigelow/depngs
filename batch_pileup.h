@@ -19,22 +19,28 @@
   global highest start position of any record encountered, which
   serves as an upper bound for summarizing complete statistics.
   
-  2. Call pileup_basecall_stats(), pileup_bqs_stats(), and
-  pileup_indel_stats() to get views of these summary statistics for
-  the current base or indel iterator position.
+  3. You must call pileup_prepare_bqs(s) once per chunk of work in
+  order to use pileup_current_bqs(s, ...) in your main loop.
+  Similarly, pileup_prepare_indels(s), and pileup_prepare_basecalls(s)
+  must be called to use pileup_current_indels(s) and
+  pileup_current_basecalls(s).  Since these operations are expensive,
+  only call the *prepare* functions that are needed.
+
+  4. Call pileup_next_pos() to advance the current position marker.
+  The current position marker (tls.cur_pos) affects the
+  pileup_current_* family of functions.
   
-  3. Call pileup_next_pos() to advance base and indel iterators and
-  repeat from step 2. These return 1 if end is reached.
-  
-  4. Once you reach the end of a chunk of input, call clear_stats() to
-  prepare for the next chunk.  If this is the last chunk of input,
-  call pileup_final_input() before calling summarize_pileup_stats(s).
-  Then, summarize_pileup_stats() will regard all available statistics
-  as complete and thus summarize them up until the end.
+  5. Once you reach the end of a chunk of input, call
+  pileup_clear_stats() to prepare for the next chunk.  If this is the
+  last chunk of input, call pileup_final_input() before calling
+  pileup_tally_stats(s).  Then, all statistics will be summarized up
+  until the very end of the input.  (The default case is to summarize
+  only up until just before the start position of the last record
+  parsed)
 
   Cleanup:
   
-  6. Call batch_pileup_free() and reference_seq_free();
+  6. Call batch_pileup_free()
   
  */
 #include <stdint.h>
@@ -221,6 +227,10 @@ struct pileup_data {
                                    >= min_quality_score */
     unsigned n_indel; /* # reads with CIGAR indel state */
 };
+
+
+void
+init_pileup_data(struct pileup_data *pd);
 
 
 void

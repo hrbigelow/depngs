@@ -42,7 +42,7 @@ static struct {
 static struct {
     struct bam_scanner_info *reader_buf;
     void **reader_pars;
-    unsigned n_readers;
+    unsigned n_max_reading;
     struct contig_region *ranges;
     unsigned n_ranges;
     unsigned n_threads;
@@ -58,6 +58,26 @@ static double quantiles[MAX_NUM_QUANTILES];
 static unsigned n_quantiles;
 
 
+void
+alloc_locus_data(struct locus_data *ld)
+{
+    alloc_distrib_points(&ld->distp);
+    ld->bqs_ct = NULL;
+    ld->indel_ct = NULL;
+    init_pileup_data(&ld->sample_data);
+}
+
+
+void
+free_locus_data(struct locus_data *ld)
+{
+    free_distrib_points(&ld->distp);
+    free(ld->bqs_ct);
+    free(ld->indel_ct);
+    free_pileup_data(&ld->sample_data);
+}
+
+
 /* call when we advance to a new locus */
 void
 reset_locus_data(struct locus_data *ld)
@@ -69,16 +89,7 @@ reset_locus_data(struct locus_data *ld)
     ld->init.sample_data = 0;
     ld->distp.points.size = 0;
     ld->distp.weights.size = 0;
-}
-
-
-void
-free_locus_data(struct locus_data *ld)
-{
-    free_distrib_points(&ld->distp);
-    free(ld->bqs_ct);
-    free(ld->indel_ct);
-    free_pileup_data(&ld->sample_data);
+    ld->confirmed_changed = 0;
 }
 
 
@@ -159,7 +170,12 @@ void
 dist_on_create()
 {
     tls_dw.randgen = gsl_rng_alloc(gsl_rng_taus);
+    alloc_locus_data(&tls_dw.pseudo_sample);
+
     tls_dw.ldat = malloc(bam_samples.n * sizeof(struct locus_data));
+    unsigned s;
+    for (s = 0; s != bam_samples.n; ++s)
+        alloc_locus_data(&tls_dw.ldat[s]);
 
     tls_dw.pair_stats = calloc(bam_sample_pairs.n, sizeof(struct pair_dist_stats));
     tls_dw.square_dist_buf = malloc(sizeof(double) * max_sample_points);
@@ -178,7 +194,12 @@ dist_on_exit()
 {
     gsl_rng_free(tls_dw.randgen);
 
+    free_locus_data(&tls_dw.pseudo_sample);
+    unsigned s;
+    for (s = 0; s != bam_samples.n; ++s)
+        free_locus_data(&tls_dw.ldat[s]);
     free(tls_dw.ldat);
+
     free(tls_dw.pair_stats);
     free(tls_dw.square_dist_buf);
     free(tls_dw.weights_buf);
@@ -197,7 +218,7 @@ struct thread_queue *
 locus_diff_tq_init(const char *locus_range_file,
                    const char *fasta_file,
                    unsigned n_threads,
-                   unsigned n_readers,
+                   unsigned n_max_reading,
                    unsigned long max_input_mem,
                    FILE *dist_fh,
                    FILE *comp_fh,
@@ -212,14 +233,14 @@ locus_diff_tq_init(const char *locus_range_file,
                            &thread_params.n_ranges,
                            &n_total_loci);
 
-    unsigned r, s;
     thread_params.reader_buf = 
-        malloc(n_readers * sizeof(struct bam_scanner_info));
+        malloc(n_threads * sizeof(struct bam_scanner_info));
 
-    thread_params.reader_pars = malloc(n_readers * sizeof(void *));
+    thread_params.reader_pars = malloc(n_threads * sizeof(void *));
 
-    for (r = 0; r != n_readers; ++r) {
-        thread_params.reader_buf[r] = (struct bam_scanner_info){
+    unsigned t, s;
+    for (t = 0; t != n_threads; ++t) {
+        thread_params.reader_buf[t] = (struct bam_scanner_info){
             malloc(bam_samples.n * sizeof(struct bam_stats)),
             bam_samples.n,
             
@@ -228,9 +249,9 @@ locus_diff_tq_init(const char *locus_range_file,
         };
         for (s = 0; s != bam_samples.n; ++s)
             bam_stats_init(bam_samples.m[s].bam_file, 
-                           &thread_params.reader_buf[r].m[s]);
+                           &thread_params.reader_buf[t].m[s]);
         
-        thread_params.reader_pars[r] = &thread_params.reader_buf[r];
+        thread_params.reader_pars[t] = &thread_params.reader_buf[t];
     }
     thread_params.fasta_file = fasta_file;
 
@@ -270,7 +291,7 @@ locus_diff_tq_init(const char *locus_range_file,
                           &thread_params.offload_par,
                           dist_on_create,
                           dist_on_exit,
-                          n_threads, n_extra, n_readers, bam_samples.n,
+                          n_threads, n_extra, n_max_reading, bam_samples.n,
                           n_output_files, max_input_mem);
 
     return tqueue;
@@ -280,12 +301,12 @@ locus_diff_tq_init(const char *locus_range_file,
 void
 locus_diff_tq_free()
 {
-    unsigned r, s;
-    for (r = 0; r != thread_params.n_readers; ++r) {
+    unsigned t, s;
+    for (t = 0; t != thread_params.n_threads; ++t) {
         for (s = 0; bam_samples.n; ++s)
-            bam_stats_free(&thread_params.reader_buf[r].m[s]);
+            bam_stats_free(&thread_params.reader_buf[t].m[s]);
 
-        free(thread_params.reader_buf[r].m);
+        free(thread_params.reader_buf[t].m);
     }
 
     free(thread_params.reader_buf);
@@ -409,8 +430,8 @@ print_distance_quantiles(const char *contig,
                          double *dist_quantile_values,
                          struct managed_buf *buf)
 {
-    int s[] = { bam_sample_pairs.m[pair_index].s1,
-                bam_sample_pairs.m[pair_index].s2 };
+    unsigned s[] = { bam_sample_pairs.m[pair_index].s1,
+                     bam_sample_pairs.m[pair_index].s2 };
 
     unsigned space = (2 * MAX_LABEL_LEN) + 3 + 100 + (10 * MAX_NUM_QUANTILES);
 
@@ -478,7 +499,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
     unsigned pi, i;
 
     for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
-        int sp[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
+        unsigned sp[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
 
         ld[0] = &tls_dw.ldat[sp[0]];
         ld[1] = sp[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[sp[1]];
@@ -496,12 +517,12 @@ distance_quantiles_aux(struct managed_buf *out_buf)
         }
 
         diff_state = UNCHANGED;
-        /* diff_state =  */
-        /*     cached_dirichlet_diff(ld[0]->base_ct.ct_filt,  */
-        /*                           ld[1]->base_ct.ct_filt, */
-        /*                           &tls_dw.bep, */
-        /*                           &cacheable, */
-        /*                           &cache_was_set); */
+        diff_state =
+            cached_dirichlet_diff(ld[0]->base_ct.ct_filt,
+                                  ld[1]->base_ct.ct_filt,
+                                  &tls_dw.bep,
+                                  &cacheable,
+                                  &cache_was_set);
 
         tls_dw.pair_stats[pi].dist_count[diff_state]++;
         tls_dw.pair_stats[pi].cacheable += cacheable;
@@ -887,12 +908,13 @@ locus_diff_worker(const struct managed_buf *in_bufs,
 
     struct managed_buf bam = { NULL, 0, 0 };
     unsigned s;
-    struct bam_scanner_info *si = vsi;
+    struct bam_scanner_info *bsi = vsi;
     for (s = 0; s != bam_samples.n; ++s) {
-        struct bam_stats *bs = &si->m[s];
+        struct bam_stats *bs = &bsi->m[s];
         bam_inflate(&in_bufs[s], bs->chunks, bs->n_chunks, &bam);
-        pileup_tally_stats(bam, si, s);
+        pileup_tally_stats(bam, bsi, s);
     }
+    if (bam.buf != NULL) free(bam.buf);
 
     if (! more_input)
         pileup_final_input();
@@ -904,16 +926,13 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         pileup_prepare_indels(s);
     }
 
-    if (bam.buf != NULL) free(bam.buf);
 
     /* zero out the pair_stats */
     unsigned pi;
     for (pi = 0; pi != bam_sample_pairs.n; ++pi)
         memset(&tls_dw.pair_stats[pi], 0, sizeof(tls_dw.pair_stats[0]));
 
-    
-    unsigned more_loci = 1;
-    while (more_loci) {
+    while (pileup_next_pos()) {
         /* this will strain the global mutex, but only during the hash
            loading phase. */
         if (! tls_dw.bep.points_hash_frozen)
@@ -931,10 +950,8 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         if (comp_buf)
             comp_quantiles_aux(comp_buf);
 
-        more_loci = pileup_next_pos();
         for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);
-
     }   
 
     /* frees statistics that have already been used in one of the
@@ -946,9 +963,6 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         clock_gettime(CLOCK_REALTIME, &now);
         unsigned elapsed = now.tv_sec - start_time.tv_sec;
 
-        struct pileup_locus_info ploc;
-        pileup_current_info(&ploc);
-
         time_t cal = time(NULL);
         char *ts = strdup(ctime(&cal));
         ts[strlen(ts)-1] = '\0';
@@ -958,8 +972,8 @@ locus_diff_worker(const struct managed_buf *in_bufs,
                 elapsed / 3600,
                 (elapsed % 3600) / 60,
                 elapsed % 60,
-                ploc.refname,
-                ploc.pos);
+                fasta_get_contig(bsi->loaded_span.end.tid),
+                bsi->loaded_span.end.pos + 1);
         fflush(stdout);
         free(ts);
     }

@@ -216,7 +216,6 @@ set_outnode_status(struct thread_queue *tq,
                    struct output_node *out,
                    enum buf_status status)
 {
-    pthread_mutex_lock(&tq->out_mtx);
     --tq->pool_status[out->status];
     out->status = status;
     ++tq->pool_status[out->status];
@@ -224,8 +223,6 @@ set_outnode_status(struct thread_queue *tq,
     if (status == EMPTY)
         for (b = 0; b != tq->n_outputs; ++b)
             out->buf[b].size = 0;
-
-    pthread_mutex_unlock(&tq->out_mtx);
 }
 
 
@@ -249,7 +246,7 @@ set_outnode_status(struct thread_queue *tq,
             (category),                                                 \
             TIME_MS(beg_time),                                          \
             TIME_MS(beg_time),                                          \
-            in - tq->input,                                             \
+            par - tq->input,                                            \
             0l,                                                         \
             tq->pool_status[EMPTY],                                     \
             tq->pool_status[LOADING],                                   \
@@ -267,7 +264,7 @@ set_outnode_status(struct thread_queue *tq,
                 (category),                                             \
                 TIME_MS(beg_time),                                      \
                 TIME_MS(end_time),                                      \
-                in - tq->input,                                         \
+                par - tq->input,                                        \
                 ELAPSED_MS,                                             \
                 tq->pool_status[EMPTY],                                 \
                 tq->pool_status[LOADING],                               \
@@ -281,13 +278,62 @@ set_outnode_status(struct thread_queue *tq,
 #endif
 
 
+static void
+reserve_out_buffer(struct thread_comp_input *par)
+{
+    struct thread_queue *tq = par->tq;
+    unsigned p, n_pool = tq->n_threads + tq->n_extra;
+
+    for (p = 0; p != n_pool; ++p)
+        if (tq->out_pool[p].status == EMPTY) {
+            par->out = &tq->out_pool[p];
+            --tq->pool_status[EMPTY];
+            par->out->status = LOADING;
+            ++tq->pool_status[LOADING];
+            par->out->next = NULL;
+                    
+            if (! tq->out_head)
+                tq->out_head = tq->out_tail = par->out;
+            else
+                tq->out_tail->next = par->out, tq->out_tail = par->out;
+
+            break;
+        }
+}
+
+
+static void
+offload_full_buffers(struct thread_comp_input *par)
+{
+    struct thread_queue *tq = par->tq;
+    while (tq->out_head && tq->out_head->status == FULL) {
+        pthread_mutex_unlock(&tq->out_mtx);
+        
+        /* once tq->out_head->status == FULL, program logic
+           ensures it is safe to use tq->out_head->buf */
+        tq->offload(tq->offload_par, tq->out_head->buf);
+        
+        pthread_mutex_lock(&tq->out_mtx);
+        --tq->pool_status[tq->out_head->status];
+        tq->out_head->status = EMPTY;
+        ++tq->pool_status[tq->out_head->status];
+        
+        unsigned b;
+        for (b = 0; b != tq->n_outputs; ++b)
+            tq->out_head->buf[b].size = 0;
+        
+        tq->out_head = tq->out_head->next;
+        pthread_cond_signal(&tq->out_buf_avail);
+    }
+}
+
+
 /* this function is run by the thread */
 static void *
 worker_func(void *args)
 {
-    struct thread_comp_input *in = args;
-    struct thread_queue *tq = in->tq;
-    unsigned p, n_pool = tq->n_threads + tq->n_extra;
+    struct thread_comp_input *par = args;
+    struct thread_queue *tq = par->tq;
 
     PROGRESS_DECL();
     tq->on_create();
@@ -301,8 +347,19 @@ worker_func(void *args)
 
         /* reserve next input range */
         PROGRESS_START("SCAN");
-        tq->reader.scan(in->scan_info, in->buf[0].alloc);
+        tq->reader.scan(par->scan_info, par->buf[0].alloc);
         PROGRESS_MSG("SCAN");
+
+        /* reserve the first empty out buffer.  we must do this within
+           the scan_mtx to ensure output order.  */
+        PROGRESS_START("RESERVEOUT");
+        pthread_mutex_lock(&tq->out_mtx);
+        while (! tq->pool_status[EMPTY])
+            pthread_cond_wait(&tq->out_buf_avail, &tq->out_mtx);
+
+        reserve_out_buffer(par);
+        pthread_mutex_unlock(&tq->out_mtx);
+        PROGRESS_MSG("RESERVEOUT");
         pthread_mutex_unlock(&tq->scan_mtx);
 
         /* wait and reserve reader slot */
@@ -315,7 +372,7 @@ worker_func(void *args)
         PROGRESS_MSG("READWAIT");
 
         PROGRESS_START("READ");
-        more_input = tq->reader.read(in->scan_info, in->buf);
+        more_input = tq->reader.read(par->scan_info, par->buf);
         PROGRESS_MSG("READ");
 
         pthread_mutex_lock(&tq->read_mtx);
@@ -323,57 +380,15 @@ worker_func(void *args)
         pthread_mutex_unlock(&tq->read_mtx);
         pthread_cond_signal(&tq->read_slot_avail);
 
-        /* reserve the first empty out buffer */
-        pthread_mutex_lock(&tq->out_mtx);
-        while (! tq->pool_status[EMPTY])
-            pthread_cond_wait(&tq->out_buf_avail, &tq->out_mtx);
-
-        /* search through the buffer pool for a non-empty buffer */
-        for (p = 0; p != n_pool; ++p)
-            if (tq->out_pool[p].status == EMPTY) {
-                in->out = &tq->out_pool[p];
-                --tq->pool_status[EMPTY];
-                in->out->status = LOADING;
-                ++tq->pool_status[LOADING];
-                in->out->next = NULL;
-                    
-                if (! tq->out_head)
-                    tq->out_head = tq->out_tail = in->out;
-                else
-                    tq->out_tail->next = in->out, tq->out_tail = in->out;
-
-                break;
-            }
-        pthread_mutex_unlock(&tq->out_mtx);
-
         /* load the output buffer. */
         PROGRESS_START("WORK");
-        tq->worker(in->buf, more_input, in->scan_info, in->out->buf);
+        tq->worker(par->buf, more_input, par->scan_info, par->out->buf);
         PROGRESS_MSG("WORK");
 
-        set_outnode_status(tq, in->out, FULL);
-        in->out = NULL;
-        
         pthread_mutex_lock(&tq->out_mtx);
-        while (tq->out_head && tq->out_head->status == FULL) {
-            pthread_mutex_unlock(&tq->out_mtx);
-
-            /* once tq->out_head->status == FULL, program logic
-               ensures it is safe to use tq->out_head->buf */
-            tq->offload(tq->offload_par, tq->out_head->buf);
-
-            pthread_mutex_lock(&tq->out_mtx);
-            --tq->pool_status[tq->out_head->status];
-            tq->out_head->status = EMPTY;
-            ++tq->pool_status[tq->out_head->status];
-            
-            unsigned b;
-            for (b = 0; b != tq->n_outputs; ++b)
-                tq->out_head->buf[b].size = 0;
-
-            tq->out_head = tq->out_head->next;
-            pthread_cond_signal(&tq->out_buf_avail);
-        }
+        set_outnode_status(tq, par->out, FULL);
+        par->out = NULL;
+        offload_full_buffers(par);
         pthread_mutex_unlock(&tq->out_mtx);
     }
     tq->on_exit();

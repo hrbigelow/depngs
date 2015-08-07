@@ -131,18 +131,27 @@ parse_locus_ranges(const char *locus_range_file,
 
 
 struct virt_less_range_par {
-    struct contig_region *ary;
-    struct contig_pos q;
+    struct contig_region *ary, q;
 };
+
+
+/* uses par both as a source of elements elem and a query element q.
+   return 1 if elem[pos] < q, 0 otherwise.  */
+static int
+less_virtual_elem(unsigned pos, void *par)
+{
+    struct virt_less_range_par *vl = par;
+    return cmp_contig_region(vl->ary[pos], vl->q) < 0;
+}
+
 
 /* uses par both as a source of elements elem and a query element q.
    return 1 if q < elem[pos], 0 otherwise.  */
 static int
-less_rng_end(unsigned pos, void *par)
+less_virtual_query(unsigned pos, void *par)
 {
     struct virt_less_range_par *vl = par;
-    struct contig_pos end_pos = { vl->ary[pos].tid, vl->ary[pos].end };
-    return cmp_contig_pos(vl->q, end_pos) < 0;
+    return cmp_contig_region(vl->q, vl->ary[pos]) < 0;
 }
 
 
@@ -156,13 +165,20 @@ find_intersecting_span(struct contig_region *qbeg,
                        struct contig_region **qlo,
                        struct contig_region **qhi)
 {
+    if (cmp_contig_pos(subset.beg, subset.end) == 0) {
+        *qlo = *qhi = qend;
+        return;
+    }
+
     struct virt_less_range_par vpar;
     vpar.ary = qbeg;
-    vpar.q = (struct contig_pos){ subset.beg.tid, subset.beg.pos };
-    *qlo = qbeg + virtual_upper_bound(0, qend - qbeg, less_rng_end, &vpar);
+    vpar.q = (struct contig_region)
+        { subset.beg.tid, subset.beg.pos, subset.beg.pos + 1 };
+    *qlo = qbeg + virtual_lower_bound(0, qend - qbeg, less_virtual_elem, &vpar);
     
-    vpar.q = (struct contig_pos){ subset.end.tid, subset.end.pos };
-    *qhi = qbeg + virtual_upper_bound(0, qend - qbeg, less_rng_end, &vpar);
+    vpar.q = (struct contig_region)
+        { subset.end.tid, subset.end.pos, subset.end.pos + 1 };
+    *qhi = qbeg + virtual_upper_bound(0, qend - qbeg, less_virtual_query, &vpar);
 }
 
 
