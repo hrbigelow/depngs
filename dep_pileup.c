@@ -291,6 +291,9 @@ pileup_on_exit()
     batch_pileup_thread_free();
 }
 
+/* This only matters for the 'null' locus, which is not used in this
+   application. */
+#define PSEUDO_DEPTH 1e6
 
 struct thread_queue *
 pileup_init(const char *samples_file,
@@ -304,7 +307,7 @@ pileup_init(const char *samples_file,
 {
     bam_sample_info_init(samples_file, NULL);
     unsigned skip_empty_loci = 1;
-    batch_pileup_init(min_qual, skip_empty_loci);
+    batch_pileup_init(min_qual, skip_empty_loci, PSEUDO_DEPTH);
 
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 

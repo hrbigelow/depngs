@@ -352,11 +352,13 @@ binomial_quantile_est(unsigned max_points,
         }
         
         /* measure distances, threshold, and classify successes.
-           success means non-change */
+           NOTE:  success means non-change */
         compute_square_dist((const double *)pcur1, 
                             (const double *)pcur2, 
                             batch_size, NUM_NUCS, square_dist_buf);
 
+        /* tallying number of 'successes' (pairs of points that are
+           below the distance threshold, i.e. non-changed) */
         for (p = 0; p != batch_size; ++p)
             s += (square_dist_buf[p] < min_dist_squared ? 1 : 0);
 

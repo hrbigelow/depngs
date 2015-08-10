@@ -48,7 +48,7 @@ bam_reader(void *scanner_info, struct managed_buf *bufs);
    max_bytes.  updates par with settings to help accelerate the
    bam_reader call.  */
 void
-bam_scanner(void *scanner_info, unsigned max_bytes);
+bam_scanner(void *scanner_info, size_t max_bytes);
 
 
 

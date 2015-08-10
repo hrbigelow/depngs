@@ -52,10 +52,8 @@ unsigned cs_get_bytes_wanted(unsigned n_files)
 {
     unsigned f;
     unsigned long most_bytes_left = 0;
-    if (cs_stats.do_range_estimation)
-    {
-        for (f = 0; f != n_files; ++f)
-        {
+    if (cs_stats.do_range_estimation) {
+        for (f = 0; f != n_files; ++f) {
             unsigned n_bytes_per_locus = 
                 cs_stats.n_loci_read == 0
                 ? cs_stats.default_bytes_per_locus

@@ -130,6 +130,8 @@ static __thread struct tls {
        interest. */
     struct contig_fragment *refseqs, *cur_refseq;
     unsigned n_refseqs;
+    struct base_count null_ct;
+    struct base_count refsam_ct[5];
 } tls;
 
 
@@ -147,11 +149,17 @@ static unsigned skip_empty_loci; /* if 1, pileup_next_pos() advances
 
 
 void
-batch_pileup_init(unsigned min_qual, 
-                  unsigned skip_empty)
+batch_pileup_init(unsigned min_qual, unsigned skip_empty, unsigned pseudo_depth)
 {
     min_quality_score = min_qual;
     skip_empty_loci = skip_empty;
+    tls.null_ct = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
+    unsigned pd = pseudo_depth;
+    tls.refsam_ct[0] = (struct base_count){ { pd, 0, 0, 0 }, 0, pd };
+    tls.refsam_ct[1] = (struct base_count){ { 0, pd, 0, 0 }, 0, pd };
+    tls.refsam_ct[2] = (struct base_count){ { 0, 0, pd, 0 }, 0, pd };
+    tls.refsam_ct[3] = (struct base_count){ { 0, 0, 0, pd }, 0, pd };
+    tls.refsam_ct[4] = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
 }
 
 
@@ -376,22 +384,13 @@ get_cur_refbase_code5()
 struct base_count
 pileup_current_basecalls(unsigned s)
 {
-    static struct base_count null_ct = { { 0, 0, 0, 0 }, 0, 0 };
-    static struct base_count refsam_ct[] = {
-        { { 1e6, 0, 0, 0 }, 0, 1e6 },
-        { { 0, 1e6, 0, 0 }, 0, 1e6 },
-        { { 0, 0, 1e6, 0 }, 0, 1e6 },
-        { { 0, 0, 0, 1e6 }, 0, 1e6 },
-        { { 0, 0, 0, 0 }, 0, 0 }
-    };
-
     if (s == REFERENCE_SAMPLE)
-        return refsam_ct[get_cur_refbase_code5()];
+        return tls.refsam_ct[get_cur_refbase_code5()];
 
     struct tally_stats *ts = &tls.ts[s];
     if (ts->base_cur == ts->base_end
         || less_contig_pos(tls.cur_pos, ts->base_cur->cpos))
-        return null_ct;
+        return tls.null_ct;
 
     else
         return ts->base_cur->bct;

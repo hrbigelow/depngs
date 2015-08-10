@@ -671,50 +671,12 @@ sync_points(union alpha_large_key key,
 }
 
 
-/* calculate the distance between two initialized
+
+/* estimate distance between two initialized 4D dirichlet
    distributions. Assume bpar->dist[0] and bpar->dist[1] have already
    had alpha_counts initialized, and have their size field set
    appropriately (to zero if the points buffer is invalid). Use
    caching of individual dirichlet distributions whenever possible. */
-#if 0
-struct binomial_est_state 
-get_est_state(struct binomial_est_params *bpar)
-{
-    union alpha_large_key a_key, b_key;
-    unsigned a_packable, b_packable;
-    unsigned *a_cts = ((struct points_gen_par *)bpar->dist[0]->pgen.points_gen_par)->alpha_counts;
-    unsigned *b_cts = ((struct points_gen_par *)bpar->dist[1]->pgen.points_gen_par)->alpha_counts;
-    init_alpha_packed_large(a_cts, &a_key, &a_packable);
-    init_alpha_packed_large(b_cts, &b_key, &b_packable);
-
-    if (bpar->dist[0]->points.size == 0 && a_packable)
-        sync_points(a_key, &bpar->dist[0]->points, bpar->points_hash_frozen);
-
-    if (bpar->dist[1]->points.size == 0 && b_packable)
-        sync_points(b_key, &bpar->dist[1]->points, bpar->points_hash_frozen);
-
-    struct binomial_est_state rval =
-        binomial_quantile_est(cache.max_sample_points, 
-                              cache.min_dirichlet_dist, 
-                              cache.post_confidence,
-                              cache.beta_confidence, 
-                              bpar->dist[0]->pgen,
-                              &bpar->dist[0]->points, 
-                              bpar->dist[1]->pgen,
-                              &bpar->dist[1]->points,
-                              cache.batch_size);
-
-    if (a_packable)
-        sync_points(a_key, &bpar->dist[0]->points, bpar->points_hash_frozen);
-
-    if (b_packable)
-        sync_points(b_key, &bpar->dist[1]->points, bpar->points_hash_frozen);
-    
-
-    return rval;
-}
-#endif
-
 struct binomial_est_state 
 get_est_state(struct binomial_est_params *bpar)
 {
@@ -917,12 +879,19 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
     bpar->use_low_beta = 0;
     bpar->query_beta = 1.0 - cache.post_confidence;
     beb->ambiguous[0] = virtual_lower_bound(0, xmode, elem_is_less, bpar);
-    beb->ambiguous[1] = virtual_upper_bound(xmode, cache.pseudo_depth, query_is_less, bpar);
+
+    /* find position in the virtual array of distances [xmode, cache.pseudo_depth) */
+    /* the range [xmode, cache.pseudo_depth) is monotonically
+       DECREASING. virtual_upper_bound assumes monotonically
+       increasing range, so we must use elem_is_less as the function
+       rather than query_is_less. */
+    beb->ambiguous[1] = virtual_upper_bound(xmode, cache.pseudo_depth, elem_is_less, bpar);
 
     bpar->use_low_beta = 1;
     bpar->query_beta = cache.post_confidence;
     beb->unchanged[0] = virtual_lower_bound(beb->ambiguous[0], xmode, elem_is_less, bpar);
-    beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], query_is_less, bpar);
+
+    beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], elem_is_less, bpar);
     
 }
 
@@ -1065,6 +1034,7 @@ get_fuzzy_state(struct binomial_est_params *bpar,
     unsigned prepop_key = bounds_key_prepopulated(bk);
 
     if (hash_frozen || prepop_key) {
+        /* do not need to lock mutex */
         k = kh_get(bounds_hash, cache.bounds, bk.val);
         if (k != kh_end(cache.bounds)) {
             beb = kh_val(cache.bounds, k);

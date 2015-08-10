@@ -1,6 +1,6 @@
 #include "bam_reader.h"
 #include "chunk_strategy.h"
-#include "virtual_bound.h"
+// #include "virtual_bound.h"
 
 #include "sdg/kbtree.h"
 #include "sdg/khash.h"
@@ -433,24 +433,46 @@ unpackInt16(const uint8_t *buffer)
 }
 
 
+/* return the number of loci in the span */
+size_t
+num_span_loci(struct bam_scanner_info *bsi)
+{
+    struct contig_region *qlo, *qhi;
+    find_intersecting_span(bsi->qbeg, bsi->qend, bsi->loaded_span, &qlo, &qhi);
+    struct contig_region ix;
+    size_t n_loci = 0;
+    while (qlo != qhi) {
+        ix = region_span_intersect(*qlo++, bsi->loaded_span);
+        n_loci += ix.end - ix.beg;
+    }
+    return n_loci;
+}
+
+
 /* scans the bam index to find all chunks covering a range starting at
    cs_stats.pos.  scans forward until *close to* but less than
    max_bytes are found. stores the found chunks in par's fields, and
    updates cs_stats.pos to the newest position.  */
 #define STEP_DOWN 0.975
 void
-bam_scanner(void *par, unsigned max_bytes)
+bam_scanner(void *par, size_t max_bytes)
 {
     struct bam_scanner_info *bp = par;
     float mul = STEP_DOWN;
-    size_t tmp_bytes, min_actual_bytes = SIZE_MAX, min_wanted_bytes;
+    size_t tmp_bytes, min_wanted_bytes;
+    size_t bytes_wanted = cs_get_bytes_wanted(bp->n);
+    max_bytes = MIN(bytes_wanted, max_bytes);
     struct contig_pos tmp_end;
+    size_t *min_actual_bytes = malloc(sizeof(size_t) * bp->n);
+
+    unsigned s;
+    for (s = 0; s != bp->n; ++s)
+        min_actual_bytes[s] = SIZE_MAX;
 
     /* the largest position in the region of interest */
     struct contig_pos min_end = { (bp->qend - 1)->tid, (bp->qend - 1)->end };
     do {
         min_wanted_bytes = max_bytes * mul;
-        unsigned s;
         for (s = 0; s != bp->n; ++s) {
             struct bam_stats *bs = &bp->m[s];
             struct contig_span subset = { cs_stats.pos, min_end };
@@ -462,13 +484,20 @@ bam_scanner(void *par, unsigned max_bytes)
                                   &bs->more_input);
             min_end = MIN_CONTIG_POS(min_end, tmp_end);
             tmp_bytes = tally_est_bgzf_bytes(bs->chunks, bs->n_chunks);
-            min_actual_bytes = MIN(min_actual_bytes, tmp_bytes);
+            min_actual_bytes[s] = MIN(min_actual_bytes[s], tmp_bytes);
         }
         mul *= STEP_DOWN;
-    } while (min_actual_bytes > max_bytes);
+    } while (min_actual_bytes[s] > max_bytes);
+
+    for (s = 0; s != bp->n; ++s)
+        cs_stats.n_bytes_read[s] += min_actual_bytes[s];
+
     bp->loaded_span = (struct contig_span){ cs_stats.pos, min_end };
+    cs_stats.n_loci_read = num_span_loci(bp);
+
     assert(min_end.pos != 0);
     cs_stats.pos = min_end;
+    free(min_actual_bytes);
 }
 
 

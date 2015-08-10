@@ -23,7 +23,7 @@
 #include "chunk_strategy.h"
 #include "geometry.h"
 #include "dirichlet_points_gen.h"
-
+#include "fasta.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -134,7 +134,7 @@ locus_diff_init(double _post_confidence,
     /* we do not want to skip empty loci, because we need to traverse
        these in order to get statistics for missing data */
     unsigned skip_empty_loci = 0;
-    batch_pileup_init(min_quality_score, skip_empty_loci);
+    batch_pileup_init(min_quality_score, skip_empty_loci, PSEUDO_DEPTH);
 
     dirichlet_diff_cache_init(PSEUDO_DEPTH,
                               GEN_POINTS_BATCH,
@@ -264,8 +264,9 @@ locus_diff_tq_init(const char *locus_range_file,
         /*     cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset); */
     }
 
-#define MAX_BYTES_SMALL_CHUNK 1e9
-#define SMALL_CHUNK 5e6
+
+#define MAX_BYTES_SMALL_CHUNK 1e8
+#define SMALL_CHUNK 1e5
 #define DEFAULT_BYTES_PER_LOCUS 100
 
     cs_set_defaults(MAX_BYTES_SMALL_CHUNK,
@@ -425,8 +426,7 @@ void
 print_distance_quantiles(const char *contig,
                          size_t position,
                          char ref_base,
-                         size_t pair_index,
-                         struct locus_data *ldat,
+                         unsigned pair_index,
                          double *dist_quantile_values,
                          struct managed_buf *buf)
 {
@@ -451,31 +451,35 @@ print_distance_quantiles(const char *contig,
         buf->size += sprintf(buf->buf + buf->size, "\t%7.4f",
                              dist_quantile_values[q]);
 
+    struct locus_data *ld[] = { 
+        &tls_dw.ldat[s[0]],
+        s[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[s[1]]
+    };
+
     if (worker_options.do_print_pileup) {
         unsigned i;
         for (i = 0; i != 2; ++i)
-            if (! ldat[s[i]].init.sample_data) {
-                ldat[s[i]].init.sample_data = 1;
-                pileup_current_data(s[i], &ldat[s[i]].sample_data);
+            if (! ld[i]->init.sample_data) {
+                pileup_current_data(s[i], &ld[i]->sample_data);
+                ld[i]->init.sample_data = 1;
             }
-        struct pileup_data *pd1 = &ldat[s[0]].sample_data;
-        struct pileup_data *pd2 = &ldat[s[1]].sample_data;
         
+        struct pileup_data *pd[] = { &ld[0]->sample_data, &ld[1]->sample_data };
         unsigned extra_space = 
-            pd1->calls.size + pd1->quals.size
-            + pd2->calls.size + pd2->quals.size
+            pd[0]->calls.size + pd[0]->quals.size
+            + pd[1]->calls.size + pd[1]->quals.size
             + 50;
         
         ALLOC_GROW_TYPED(buf->buf, buf->size + extra_space, buf->alloc);
         
         buf->size += sprintf(buf->buf + buf->size, 
                              "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
-                             pd1->quals.size,
-                             pd1->calls.buf,
-                             pd1->quals.buf,
-                             pd2->quals.size,
-                             pd2->calls.buf,
-                             pd2->quals.buf);
+                             pd[0]->quals.size,
+                             pd[0]->calls.buf,
+                             pd[0]->quals.buf,
+                             pd[1]->quals.size,
+                             pd[1]->calls.buf,
+                             pd[1]->quals.buf);
     }
     buf->size += sprintf(buf->buf + buf->size, "\n");
 }
@@ -618,7 +622,6 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                                              pli.pos,
                                              pli.refbase,
                                              pi,
-                                             tls_dw.ldat,
                                              tls_dw.dist_quantile_values, 
                                              out_buf);
                 }
@@ -958,7 +961,8 @@ locus_diff_worker(const struct managed_buf *in_bufs,
        distance calculations. */
     pileup_clear_stats();
 
-    if (tls_dw.do_print_progress) {
+    if (tls_dw.do_print_progress &&
+        cmp_contig_pos(bsi->loaded_span.beg, bsi->loaded_span.end) != 0) {
         struct timespec now;
         clock_gettime(CLOCK_REALTIME, &now);
         unsigned elapsed = now.tv_sec - start_time.tv_sec;
@@ -967,13 +971,13 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         char *ts = strdup(ctime(&cal));
         ts[strlen(ts)-1] = '\0';
         fprintf(stdout, 
-                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i\n", 
+                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i-%i\n", 
                 ts,
                 elapsed / 3600,
                 (elapsed % 3600) / 60,
                 elapsed % 60,
-                "1",
-                // fasta_get_contig(bsi->loaded_span.end.tid),
+                fasta_get_contig(bsi->loaded_span.end.tid),
+                bsi->loaded_span.beg.pos + 1,
                 bsi->loaded_span.end.pos + 1);
         fflush(stdout);
         free(ts);

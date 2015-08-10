@@ -194,7 +194,8 @@ main_dist(int argc, char **argv)
     thread_queue_run(tqueue);
     thread_queue_free(tqueue);
 
-    print_pair_stats(summary_stats_file);
+    if (summary_stats_file)
+        print_pair_stats(summary_stats_file);
 
     locus_diff_tq_free();
 

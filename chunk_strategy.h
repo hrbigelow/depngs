@@ -45,7 +45,12 @@ void cs_init_whole_file(unsigned n_files);
 /* call this for each file whose total bytes is known */
 void cs_set_total_bytes(unsigned i, unsigned long bytes);
 
-/* must call this */
+/* configure the chunking strategy.  if < max_bytes_small_chunk of
+   input remain, switch to small chunks of size small_chunk_size.  if
+   we are doing range estimation, use default_bytes_per_locus as an
+   initial estimate (before any input is read) in order to convert
+   from a locus count estimate to a bytes estimate.
+ */
 void cs_set_defaults(unsigned long max_bytes_small_chunk,
                      unsigned long small_chunk_size,
                      unsigned long default_bytes_per_locus);
