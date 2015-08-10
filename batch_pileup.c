@@ -1126,6 +1126,8 @@ next_pos_aux()
     if (cmp_contig_pos(tls.cur_pos, g_unset_pos) == 0) {
         if (tls.n_refseqs)
             tls.cur_pos = CONTIG_REGION_BEG(tls.cur_refseq->reg);
+        else
+            tls.cur_pos = g_end_pos;
         return;
     }
     tls.cur_pos.pos++;

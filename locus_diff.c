@@ -972,7 +972,8 @@ locus_diff_worker(const struct managed_buf *in_bufs,
                 elapsed / 3600,
                 (elapsed % 3600) / 60,
                 elapsed % 60,
-                fasta_get_contig(bsi->loaded_span.end.tid),
+                "1",
+                // fasta_get_contig(bsi->loaded_span.end.tid),
                 bsi->loaded_span.end.pos + 1);
         fflush(stdout);
         free(ts);
