@@ -171,15 +171,6 @@ dist_on_create()
 {
     tls_dw.randgen = gsl_rng_alloc(gsl_rng_taus);
     alloc_locus_data(&tls_dw.pseudo_sample);
-    tls_dw.pseudo_sample.sample_data = (struct pileup_data){
-        .calls = { malloc(3), 3, 3 },
-        .quals = { malloc(3), 3, 3 }
-    };
-    strncpy(tls_dw.pseudo_sample.sample_data.calls.buf, "REF", 3);
-    strncpy(tls_dw.pseudo_sample.sample_data.quals.buf, "REF", 3);
-
-    tls_dw.pseudo_sample.init.sample_data = 1;
-
     tls_dw.ldat = malloc(bam_samples.n * sizeof(struct locus_data));
     unsigned s;
     for (s = 0; s != bam_samples.n; ++s)
@@ -924,6 +915,8 @@ locus_diff_worker(const struct managed_buf *in_bufs,
     struct managed_buf bam = { NULL, 0, 0 };
     unsigned s;
     struct bam_scanner_info *bsi = vsi;
+
+    pileup_load_refseq_ranges(bsi);
     for (s = 0; s != bam_samples.n; ++s) {
         struct bam_stats *bs = &bsi->m[s];
         bam_inflate(&in_bufs[s], bs->chunks, bs->n_chunks, &bam);

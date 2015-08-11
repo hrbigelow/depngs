@@ -198,6 +198,9 @@ pileup_worker(const struct managed_buf *in_bufs,
     struct managed_buf bam = { NULL, 0, 0 };
     struct managed_buf *out_buf = &out_bufs[0];
     struct bam_scanner_info *bsi = vsi;
+
+    pileup_load_refseq_ranges(bsi);
+
     unsigned s;
     for (s = 0; s != bam_samples.n; ++s) {
         struct bam_stats *bs = &bsi->m[s];

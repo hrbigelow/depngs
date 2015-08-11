@@ -284,18 +284,16 @@ equal_contig_pos(struct contig_pos a, struct contig_pos b)
    defines the overlapping intersection of these ranges that will be
    loaded into tls.refseqs.  assume that each interval in [qbeg, qend)
    is on one contig, but that 'subset' may span multiple contigs. */
-static void
-load_refseq_ranges(struct contig_region *qbeg,
-                   struct contig_region *qend,
-                   struct contig_span subset)
+void
+pileup_load_refseq_ranges(struct bam_scanner_info *bsi)
 {
-    if (qbeg == qend) return;
+    if (bsi->qbeg == bsi->qend) return;
 
     struct contig_region *q, *qlo, *qhi;
-    find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
+    find_intersecting_span(bsi->qbeg, bsi->qend, bsi->loaded_span, &qlo, &qhi);
     if (qlo == qhi) return;
 
-    /* find the first region in [qbeg, qend) */
+    /* find the first region in [bsi->qbeg, bsi->qend) */
     unsigned r = 0, alloc = 0;
     for (q = qlo; q != qhi; ++q) {
         ALLOC_GROW(tls.refseqs, r + 1, alloc);
@@ -305,14 +303,17 @@ load_refseq_ranges(struct contig_region *qbeg,
 
     /* alter ranges of first and last (may be the same range) */
     struct contig_fragment *adj = &tls.refseqs[0];
-    struct contig_pos new_beg = MAX_CONTIG_POS(CONTIG_REGION_BEG(adj->reg), subset.beg);
+    struct contig_pos new_beg = 
+        MAX_CONTIG_POS(CONTIG_REGION_BEG(adj->reg), bsi->loaded_span.beg);
     assert(new_beg.tid == adj->reg.tid);
     adj->reg.beg = new_beg.pos;
 
     /* adjust last fragment */
     adj = &tls.refseqs[tls.n_refseqs - 1];
 
-    struct contig_pos new_end = MIN_CONTIG_POS(CONTIG_REGION_END(adj->reg), subset.end);
+    struct contig_pos new_end = 
+        MIN_CONTIG_POS(CONTIG_REGION_END(adj->reg), bsi->loaded_span.end);
+
     assert(new_end.tid == adj->reg.tid);
     adj->reg.end = new_end.pos;
 
@@ -356,8 +357,6 @@ pileup_tally_stats(const struct managed_buf bam,
                    struct bam_scanner_info *bsi,
                    unsigned s)
 {
-    /* initialize refseqs */
-    load_refseq_ranges(bsi->qbeg, bsi->qend, bsi->loaded_span);
     process_bam_block(bam.buf, bam.buf + bam.size,
                       bsi->qbeg, bsi->qend, bsi->loaded_span,
                       &tls.ts[s]);
@@ -1199,7 +1198,7 @@ update_data_iters()
             ++ts->bqs_cur;
 
         /* increment base iterator */
-        if (ts->base_cur != ts->base_end
+        while (ts->base_cur != ts->base_end
             && less_contig_pos(ts->base_cur->cpos, tls.cur_pos))
             ++ts->base_cur;
 

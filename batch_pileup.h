@@ -129,6 +129,18 @@ batch_pileup_init(unsigned min_qual,
 void
 batch_pileup_free();
 
+
+
+/* load specific ranges of reference sequence. [qbeg, qend) defines
+   the total set of (non-overlapping) ranges to consider.  subset
+   defines the overlapping intersection of these ranges that will be
+   loaded into tls.refseqs.  assume that each interval in [qbeg, qend)
+   is on one contig, but that 'subset' may span multiple contigs. */
+void
+pileup_load_refseq_ranges(struct bam_scanner_info *bsi);
+
+
+
 /* perform entire tally phase, for basecalls and for indels for one
    sample. update tls.tally_end to reflect furthest position seen. */
 void
