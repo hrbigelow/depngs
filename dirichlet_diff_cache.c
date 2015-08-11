@@ -454,7 +454,7 @@ struct pair_point_gen {
 
 
 /* Given a[4], b[4], and lim[4], find a permutation of {(a[p_1],
-   b[p_1]), (a[p_2], b[p_2]), (a[p_3], b[p_e]), (a[p_4], b[p_4]) }
+   b[p_1]), (a[p_2], b[p_2]), (a[p_3], b[p_3]), (a[p_4], b[p_4]) }
    such that both a[p_i] and b[p_i] are less than lim[p_i], if such
    permutation exists. 
    

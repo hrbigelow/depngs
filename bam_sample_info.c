@@ -44,10 +44,8 @@ void bam_sample_info_free()
 {
     free(bam_sample_pairs.m);
     unsigned s;
-    for (s = 0; s != bam_samples.n; ++s) {
+    for (s = 0; s != bam_samples.n; ++s)
         free(bam_samples.m[s].bam_file);
-        fclose(bam_samples.m[s].fh);
-    }
     free(bam_samples.m);
 
 }

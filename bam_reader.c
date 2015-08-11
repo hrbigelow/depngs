@@ -343,9 +343,10 @@ accumulate_chunks(kbtree_t(itree_t) *itree,
 /* finds <= max_wanted_bytes in the range of interest defined by the
    intersection of [qbeg, qend) and [beg, end), starting at beg.
    return the position found, and populate (*chunks) and (*n_chunks)
-   with the contents found.
+   with the contents found.  sets *n_tiles_added to the number of 16kb
+   tiling windows that were consumed.
 */
-static struct contig_pos
+static struct contig_span
 hts_size_to_range(struct contig_region *qbeg,
                   struct contig_region *qend,
                   struct contig_span subset,
@@ -353,37 +354,40 @@ hts_size_to_range(struct contig_region *qbeg,
                   hts_idx_t *idx,
                   hts_pair64_t **chunks,
                   unsigned *n_chunks,
-                  unsigned *more_input)
+                  unsigned *more_input,
+                  unsigned *n_tiles)
 {
     /* constants */
     int firstbin0 = hts_bin_first(idx->n_lvls);
     int firstbin1 = hts_bin_first(idx->n_lvls - 1);
     int n_small_bins = firstbin0 - firstbin1;
     int n_bins, *bins = malloc(idx->n_lvls * sizeof(int));
+    int ms = idx->min_shift; /* convert between 16kb window index and
+                                position */
 
     /* find the first item in the query range [qbeg, qend) that
        overlaps beg. */
-
     struct contig_region *qlo, *qhi;
     find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
-    int ms = idx->min_shift; /* convert between 16kb window index and
-                                position */
 
     /* [subset.beg, cpos) defines the accumulating region. if loop
        below never executes, it means there was no data in the subset
        region, and we are done with this subset. */
     struct contig_pos cpos = { subset.end.tid, subset.end.pos };
-
+    
     /* creg is the intersection of the current interval with the subset */
     struct contig_region creg;
+    struct contig_span loaded_span = { cpos, cpos };
+
     size_t bgzf_bytes;
     uint64_t min_off;
     kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
-    int ti_beg, ti_end;
-
-    for (*n_chunks = bgzf_bytes = 0; qlo != qhi; ++qlo) {
+    int ti_beg, ti_end, n_max_tiles = *n_tiles;
+    
+    for (*n_chunks = bgzf_bytes = *n_tiles = 0; qlo != qhi; ++qlo) {
         creg = region_span_intersect(*qlo, subset);
-        
+        loaded_span.beg = MIN_CONTIG_POS(loaded_span.beg, CONTIG_REGION_BEG(creg));
+
         /* creg covers positions [creg.beg, creg.end), and 16kb
            windows [ti_beg, ti_end). */
         ti_beg = creg.beg>>ms;
@@ -399,7 +403,8 @@ hts_size_to_range(struct contig_region *qbeg,
                off the end.  correct for this. */
             cpos.pos = MIN(cpos.pos, qlo->end);
 
-            if (bgzf_bytes >= min_wanted_bytes 
+            if (*n_tiles == n_max_tiles
+                || bgzf_bytes >= min_wanted_bytes 
                 || cmp_contig_pos(cpos, CONTIG_REGION_END(creg)) == 1) {
                 /* break if window touches end, or we have enough
                    content */
@@ -415,6 +420,7 @@ hts_size_to_range(struct contig_region *qbeg,
             for (b = 0; b != n_bins; ++b)
                 bgzf_bytes += 
                     add_bin_chunks_aux(bins[b], idx->bidx[creg.tid], min_off, itree);
+            ++(*n_tiles);
         }
     }
  END:
@@ -422,7 +428,8 @@ hts_size_to_range(struct contig_region *qbeg,
     accumulate_chunks(itree, chunks, n_chunks);
     kb_destroy(itree_t, itree);
     free(bins);
-    return cpos;
+    loaded_span.end = cpos;
+    return loaded_span;
 }
 
 /* taken from htslib/bgzf.c */
@@ -453,51 +460,47 @@ num_span_loci(struct bam_scanner_info *bsi)
    cs_stats.pos.  scans forward until *close to* but less than
    max_bytes are found. stores the found chunks in par's fields, and
    updates cs_stats.pos to the newest position.  */
-#define STEP_DOWN 0.975
 void
-bam_scanner(void *par, size_t max_bytes)
+bam_scanner(void *par, size_t bytes_wanted)
 {
     struct bam_scanner_info *bp = par;
-    float mul = STEP_DOWN;
-    size_t tmp_bytes, min_wanted_bytes;
-    size_t bytes_wanted = cs_get_bytes_wanted(bp->n);
-    max_bytes = MIN(bytes_wanted, max_bytes);
-    struct contig_pos tmp_end;
-    size_t *min_actual_bytes = malloc(sizeof(size_t) * bp->n);
+    size_t bytes_tmp = cs_get_bytes_wanted(bp->n);
+    size_t bytes_target = MIN(bytes_wanted * 0.95, bytes_tmp);
+    size_t *bytes = malloc(sizeof(size_t) * bp->n);
+    size_t max_bytes = bytes_wanted;
 
-    unsigned s;
-    for (s = 0; s != bp->n; ++s)
-        min_actual_bytes[s] = SIZE_MAX;
+    unsigned s, n_tiles = UINT_MAX;
 
     /* the largest position in the region of interest */
     struct contig_pos min_end = { (bp->qend - 1)->tid, (bp->qend - 1)->end };
-    do {
-        min_wanted_bytes = max_bytes * mul;
+    while (n_tiles >= 1 && max_bytes >= bytes_wanted) {
+        max_bytes = 0;
         for (s = 0; s != bp->n; ++s) {
             struct bam_stats *bs = &bp->m[s];
             struct contig_span subset = { cs_stats.pos, min_end };
-            tmp_end =
+            bp->loaded_span =
                 hts_size_to_range(bp->qbeg, bp->qend, subset,
-                                  min_wanted_bytes,
+                                  bytes_target,
                                   bs->idx, 
                                   &bs->chunks, &bs->n_chunks,
-                                  &bs->more_input);
-            min_end = MIN_CONTIG_POS(min_end, tmp_end);
-            tmp_bytes = tally_est_bgzf_bytes(bs->chunks, bs->n_chunks);
-            min_actual_bytes[s] = MIN(min_actual_bytes[s], tmp_bytes);
+                                  &bs->more_input,
+                                  &n_tiles);
+            min_end = MIN_CONTIG_POS(min_end, bp->loaded_span.end);
+            bytes[s] = tally_est_bgzf_bytes(bs->chunks, bs->n_chunks);
+            max_bytes = MAX(bytes[s], max_bytes);
         }
-        mul *= STEP_DOWN;
-    } while (min_actual_bytes[s] > max_bytes);
+        if (n_tiles > 1) --n_tiles;
+    }
 
     for (s = 0; s != bp->n; ++s)
-        cs_stats.n_bytes_read[s] += min_actual_bytes[s];
+        cs_stats.n_bytes_read[s] += bytes[s];
 
-    bp->loaded_span = (struct contig_span){ cs_stats.pos, min_end };
-    cs_stats.n_loci_read = num_span_loci(bp);
+    bp->loaded_span.end = min_end;
+    cs_stats.n_loci_read += num_span_loci(bp);
 
     assert(min_end.pos != 0);
     cs_stats.pos = min_end;
-    free(min_actual_bytes);
+    free(bytes);
 }
 
 

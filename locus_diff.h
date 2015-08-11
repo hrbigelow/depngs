@@ -126,7 +126,7 @@ locus_diff_worker(const struct managed_buf *in_bufs,
 /* conforms to thread_queue_offload_t */
 void locus_diff_offload(void *par, const struct managed_buf *bufs);
 
-#define PSEUDO_DEPTH 100000
+#define PSEUDO_DEPTH 1e6
 
 
 

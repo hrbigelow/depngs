@@ -66,7 +66,6 @@ struct bam_sample_info {
     struct {
         char *bam_file;
         char label[MAX_LABEL_LEN + 1];
-        FILE *fh;
     } *m;
     unsigned n;
 };

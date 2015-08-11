@@ -38,7 +38,7 @@ typedef struct {
        thread_queue's scan_mtx, thus there will only be one thread
        running 'scan' at a time.  this enables scan to consult global
        resources without doing any locking of its own. */
-    void (*scan)(void *scan_info, unsigned max_bytes);
+    void (*scan)(void *scan_info, size_t max_bytes);
 } thread_queue_reader_t;
 
 /* the client-provided worker consumes the input (one or more in_bufs)

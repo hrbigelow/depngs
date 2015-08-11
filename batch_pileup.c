@@ -143,23 +143,19 @@ struct contig_fragment {
 };
 
 
+static unsigned pseudo_depth;
 static unsigned min_quality_score;
 static unsigned skip_empty_loci; /* if 1, pileup_next_pos() advances
                                       past loci that have no data. */
 
 
 void
-batch_pileup_init(unsigned min_qual, unsigned skip_empty, unsigned pseudo_depth)
+batch_pileup_init(unsigned min_qual, unsigned skip_empty,
+                  unsigned _pseudo_depth)
 {
     min_quality_score = min_qual;
     skip_empty_loci = skip_empty;
-    tls.null_ct = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
-    unsigned pd = pseudo_depth;
-    tls.refsam_ct[0] = (struct base_count){ { pd, 0, 0, 0 }, 0, pd };
-    tls.refsam_ct[1] = (struct base_count){ { 0, pd, 0, 0 }, 0, pd };
-    tls.refsam_ct[2] = (struct base_count){ { 0, 0, pd, 0 }, 0, pd };
-    tls.refsam_ct[3] = (struct base_count){ { 0, 0, 0, pd }, 0, pd };
-    tls.refsam_ct[4] = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
+    pseudo_depth = _pseudo_depth;
 }
 
 
@@ -211,6 +207,15 @@ batch_pileup_thread_init(unsigned n_samples, const char *fasta_file)
             .indel_end = NULL
             
         };
+
+    tls.null_ct = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
+
+    unsigned pd = pseudo_depth;
+    tls.refsam_ct[0] = (struct base_count){ { pd, 0, 0, 0 }, 0, pd };
+    tls.refsam_ct[1] = (struct base_count){ { 0, pd, 0, 0 }, 0, pd };
+    tls.refsam_ct[2] = (struct base_count){ { 0, 0, pd, 0 }, 0, pd };
+    tls.refsam_ct[3] = (struct base_count){ { 0, 0, 0, pd }, 0, pd };
+    tls.refsam_ct[4] = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
 }
 
 
@@ -388,6 +393,9 @@ pileup_current_basecalls(unsigned s)
         return tls.refsam_ct[get_cur_refbase_code5()];
 
     struct tally_stats *ts = &tls.ts[s];
+    assert(ts->base_cur == ts->base_end ||
+           cmp_contig_pos(tls.cur_pos, ts->base_cur->cpos) < 1);
+
     if (ts->base_cur == ts->base_end
         || less_contig_pos(tls.cur_pos, ts->base_cur->cpos))
         return tls.null_ct;
@@ -601,6 +609,21 @@ pileup_current_indel_seq(struct indel *idl)
 void
 pileup_current_data(unsigned s, struct pileup_data *pd)
 {
+    if (s == REFERENCE_SAMPLE) {
+        pd->calls.size = 3;
+        ALLOC_GROW(pd->calls.buf, pd->calls.size, pd->calls.alloc);
+        strncpy(pd->calls.buf, "REF", 3);
+
+        pd->quals.size = 3;
+        ALLOC_GROW(pd->quals.buf, pd->quals.size, pd->quals.alloc);
+        strncpy(pd->quals.buf, "REF", 3);
+
+        pd->n_match_lo_q = 0;
+        pd->n_match_hi_q = pseudo_depth;
+        pd->n_indel = 0;
+        return;
+    }        
+
     unsigned n_base_ct;
     struct bqs_count *base_ct = NULL;
     pileup_current_bqs(s, &base_ct, &n_base_ct);

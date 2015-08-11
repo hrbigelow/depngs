@@ -25,7 +25,7 @@ void rl_reader(void *par, struct managed_buf *bufs);
 
 /* update global statistics and position markers to prepare for next
    read. this function only called by a single thread at a time */
-void rl_scanner(void *par, unsigned max_bytes);
+void rl_scanner(void *par, size_t max_bytes);
 
 /* defaults for the chunking strategy */
 /* If we have less than 1GB of input to go, switch to using small

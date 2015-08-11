@@ -208,10 +208,10 @@ void rl_reader(void *par, struct managed_buf *bufs)
    ranges, and file handles.  this function should attempt to find
    these without actually loading bulk data, thus saving
    bandwidth. thread safe.  does not require any mutex locking. */
-void rl_scanner(void *par, unsigned max_bytes)
+void rl_scanner(void *par, size_t max_bytes)
 {
     struct range_line_reader_par *rr = par;
-    unsigned bytes_wanted = cs_get_bytes_wanted(rr->n_ix);
-    unsigned bytes = MIN(bytes_wanted, max_bytes);
+    size_t bytes_wanted = cs_get_bytes_wanted(rr->n_ix);
+    size_t bytes = MIN(bytes_wanted, max_bytes);
     range_line_aux(par, bytes, &rr->offset_pairs, &rr->n_offsets, 0);
 }

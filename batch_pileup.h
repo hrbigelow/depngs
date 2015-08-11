@@ -123,7 +123,7 @@ batch_pileup_thread_free();
 void
 batch_pileup_init(unsigned min_qual, 
                   unsigned skip_empty_loci,
-                  unsigned pseudo_depth);
+                  unsigned _pseudo_depth);
 
 
 void

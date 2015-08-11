@@ -35,6 +35,7 @@ static struct {
     unsigned n_ranges;
     FILE *pileup_fh;
     const char *fasta_file;
+    unsigned pseudo_depth;
 } thread_params;
 
 
@@ -281,7 +282,8 @@ pileup_offload(void *par, const struct managed_buf *bufs)
 void
 pileup_on_create()
 {
-    batch_pileup_thread_init(bam_samples.n, thread_params.fasta_file);
+    batch_pileup_thread_init(bam_samples.n, 
+                             thread_params.fasta_file);
 }
 
 

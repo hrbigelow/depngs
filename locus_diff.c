@@ -171,6 +171,14 @@ dist_on_create()
 {
     tls_dw.randgen = gsl_rng_alloc(gsl_rng_taus);
     alloc_locus_data(&tls_dw.pseudo_sample);
+    tls_dw.pseudo_sample.sample_data = (struct pileup_data){
+        .calls = { malloc(3), 3, 3 },
+        .quals = { malloc(3), 3, 3 }
+    };
+    strncpy(tls_dw.pseudo_sample.sample_data.calls.buf, "REF", 3);
+    strncpy(tls_dw.pseudo_sample.sample_data.quals.buf, "REF", 3);
+
+    tls_dw.pseudo_sample.init.sample_data = 1;
 
     tls_dw.ldat = malloc(bam_samples.n * sizeof(struct locus_data));
     unsigned s;
@@ -183,7 +191,8 @@ dist_on_create()
     tls_dw.do_print_progress = 1; /* !!! how to choose which thread prints progress? */
     tls_dw.bep.points_hash_frozen = 0;
 
-    batch_pileup_thread_init(bam_samples.n, thread_params.fasta_file);
+    batch_pileup_thread_init(bam_samples.n, 
+                             thread_params.fasta_file);
 }
 
 
@@ -304,9 +313,8 @@ locus_diff_tq_free()
 {
     unsigned t, s;
     for (t = 0; t != thread_params.n_threads; ++t) {
-        for (s = 0; bam_samples.n; ++s)
+        for (s = 0; s != bam_samples.n; ++s)
             bam_stats_free(&thread_params.reader_buf[t].m[s]);
-
         free(thread_params.reader_buf[t].m);
     }
 
@@ -451,12 +459,12 @@ print_distance_quantiles(const char *contig,
         buf->size += sprintf(buf->buf + buf->size, "\t%7.4f",
                              dist_quantile_values[q]);
 
-    struct locus_data *ld[] = { 
-        &tls_dw.ldat[s[0]],
-        s[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[s[1]]
-    };
-
     if (worker_options.do_print_pileup) {
+        struct locus_data *ld[] = { 
+            &tls_dw.ldat[s[0]],
+            s[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[s[1]]
+        };
+
         unsigned i;
         for (i = 0; i != 2; ++i)
             if (! ld[i]->init.sample_data) {
@@ -472,16 +480,20 @@ print_distance_quantiles(const char *contig,
         
         ALLOC_GROW_TYPED(buf->buf, buf->size + extra_space, buf->alloc);
         
-        buf->size += sprintf(buf->buf + buf->size, 
-                             "\t%Zu\t%s\t%s\t%Zu\t%s\t%s",
-                             pd[0]->quals.size,
-                             pd[0]->calls.buf,
-                             pd[0]->quals.buf,
-                             pd[1]->quals.size,
-                             pd[1]->calls.buf,
-                             pd[1]->quals.buf);
+        char *out = buf->buf + buf->size;
+        for (i = 0; i != 2; ++i) {
+            *out++ = '\t';
+            out += sprintf(out, "%u", pd[i]->n_match_hi_q);
+            *out++ = '\t';
+            strncpy(out, pd[i]->calls.buf, pd[i]->calls.size);
+            out += pd[i]->calls.size;
+            *out++ = '\t';
+            strncpy(out, pd[i]->quals.buf, pd[i]->quals.size);
+            out += pd[i]->quals.size;
+        }
+        *out++ = '\n';
+        buf->size = out - buf->buf;
     }
-    buf->size += sprintf(buf->buf + buf->size, "\n");
 }
 
 
@@ -955,6 +967,8 @@ locus_diff_worker(const struct managed_buf *in_bufs,
 
         for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);
+
+        reset_locus_data(&tls_dw.pseudo_sample);
     }   
 
     /* frees statistics that have already been used in one of the
