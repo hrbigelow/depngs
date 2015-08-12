@@ -336,7 +336,7 @@ void alloc_distrib_points(struct distrib_points *dpts)
     dpts->pgen = (struct points_gen){ 
         malloc(sizeof(struct points_gen_par)),
         gen_dirichlet_points_wrapper, 
-        calc_post_to_dir_ratio
+        calc_post_to_dir_logratio
     };
     ((struct points_gen_par *)dpts->pgen.points_gen_par)->randgen = 
         gsl_rng_alloc(gsl_rng_taus);

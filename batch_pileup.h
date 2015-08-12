@@ -95,7 +95,7 @@ struct indel_seq {
 /* value for the hash */
 struct indel_count_ary {
     struct indel_count *i;
-    unsigned m, n;
+    unsigned n, m;
 };
 
 
@@ -275,5 +275,10 @@ pileup_clear_stats();
    remaining residual statistics. */
 void
 pileup_final_input();
+
+
+/* retrieve the min_quality_score field that was set */
+unsigned
+pileup_get_min_qual();
 
 #endif /* _BATCH_PILEUP_H */

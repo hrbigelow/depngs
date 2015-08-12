@@ -17,7 +17,7 @@ struct points_gen_par
     gsl_rng *randgen;
     struct bqs_count *observed;
     unsigned n_observed;
-    /* struct packed_counts *post_counts; */
+    unsigned min_quality_score;
 };
 
 
@@ -40,11 +40,19 @@ void gen_reference_points_wrapper(const void *par, POINT *points);
 
 
 /* Generate GEN_POINTS_BATCH weights (ratio of posterior to dirichlet) */
-void calc_post_to_dir_ratio(POINT *points, const void *par, double *weights);
+void
+calc_post_to_dir_logratio(POINT *points, const void *par, double *weights);
+
 
 /* Generate GEN_POINTS_BATCH dummy weights of value 1 */
-void calc_dummy_ratio(POINT * /* unused */, const void * /* unused */,
-                      double *weights);
+void
+calc_dummy_logratio(POINT * /* unused */, const void * /* unused */,
+                    double *weights);
+
+/* exponentiate vals, scaling to avoid underflow or overflow */
+void
+batch_scaled_exponentiate(double *val, unsigned n_val);
+
 
 
 #endif /* _DIRICHLET_POINTS_GEN_H */

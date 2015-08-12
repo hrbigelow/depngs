@@ -3,6 +3,8 @@
 #include <string.h>
 #include <algorithm>
 #include <math.h>
+#include <assert.h>
+
 // #include <map>
 // #include <cmath>
 
@@ -144,11 +146,12 @@ compute_marginal_wquantiles(double *sample_points,
 }
 
 
-double compute_marginal_mean(double *points,
-                             double *weights,
-                             size_t n_points,
-                             size_t n_dims,
-                             size_t dim)
+double
+compute_marginal_mean(double *points,
+                      double *weights,
+                      size_t n_points,
+                      size_t n_dims,
+                      size_t dim)
 {
     double 
         *pb,
@@ -161,6 +164,8 @@ double compute_marginal_mean(double *points,
         marg += *pb * *wb;
 
     marg /= sum_wgts;
+    assert(! isnan(marg));
+
     return marg;
 }
                              

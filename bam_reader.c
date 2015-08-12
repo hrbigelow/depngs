@@ -473,7 +473,7 @@ bam_scanner(void *par, size_t bytes_wanted)
 
     /* the largest position in the region of interest */
     struct contig_pos min_end = { (bp->qend - 1)->tid, (bp->qend - 1)->end };
-    while (n_tiles >= 1 && max_bytes >= bytes_wanted) {
+    while (n_tiles > 1 && max_bytes >= bytes_wanted) {
         max_bytes = 0;
         for (s = 0; s != bp->n; ++s) {
             struct bam_stats *bs = &bp->m[s];

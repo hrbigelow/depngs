@@ -164,8 +164,11 @@ main_dist(int argc, char **argv)
         / (max_sample_points * BYTES_PER_POINT);
     unsigned long max_bounds_cache_items = 5000;
 
+    double indel_prior_alpha = prior_alpha;
+
     locus_diff_init(post_confidence, beta_confidence, 
                     min_dirichlet_dist, max_sample_points,
+                    indel_prior_alpha,
                     max_dir_cache_items, max_bounds_cache_items,
                     n_threads, prior_alpha,
                     samples_file, sample_pairs_file, fasta_file,

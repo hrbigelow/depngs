@@ -31,7 +31,7 @@ static struct timespec start_time;
 static double posterior_confidence;
 static double min_dirichlet_dist;
 static unsigned max_sample_points;
-static double indel_alpha_prior;
+static double indel_prior_alpha;
 
 static struct {
     unsigned do_print_pileup;
@@ -98,6 +98,7 @@ locus_diff_init(double _post_confidence,
                 double _beta_confidence,
                 double _min_dirichlet_dist,
                 unsigned _max_sample_points,
+                double _indel_prior_alpha,
                 unsigned _max_dir_cache_items,
                 unsigned _max_bounds_cache_items,
                 unsigned n_threads,
@@ -128,6 +129,7 @@ locus_diff_init(double _post_confidence,
     }
     min_dirichlet_dist = _min_dirichlet_dist;
     max_sample_points = _max_sample_points;
+    indel_prior_alpha = _indel_prior_alpha;
 
     bam_sample_info_init(samples_file, sample_pairs_file);
 
@@ -212,7 +214,7 @@ dist_on_exit()
 }
 
 
-#define NUM_EXTRA_BUFS_PER_THREAD 500
+#define NUM_EXTRA_BUFS_PER_THREAD 50
 
 struct thread_queue *
 locus_diff_tq_init(const char *locus_range_file,
@@ -344,7 +346,7 @@ print_basecomp_quantiles(COMP_QV quantile_values,
             "%s\t%s\t%i\t%c\t%u\t%u\t%u",
             label_string, 
             pli->refname,
-            pli->pos,
+            pli->pos + 1,
             pli->refbase,
             pdat->n_match_hi_q,
             pdat->n_match_lo_q,
@@ -354,7 +356,7 @@ print_basecomp_quantiles(COMP_QV quantile_values,
 
     unsigned d;
     for (d = 0; d != NUM_NUCS; ++d)
-        dim_to_mean[d] = (struct dim_mean){ means[d], d };
+        dim_to_mean[d] = (struct dim_mean){ d, means[d] };
 
     qsort(dim_to_mean, NUM_NUCS, sizeof(dim_to_mean[0]), less_mean);
 
@@ -364,7 +366,7 @@ print_basecomp_quantiles(COMP_QV quantile_values,
         mean_rank_order[dim_to_mean[d].dim] = d;
 
     unsigned grow = NUM_NUCS * (sizeof(line_label) + 30 + (11 * MAX_NUM_QUANTILES));
-    ALLOC_GROW_TYPED(mb->buf, mb->size + grow, mb->alloc);
+    ALLOC_GROW(mb->buf, mb->size + grow, mb->alloc);
 
     static const char dimension_labels[] = "ACGT";
     for (d = 0; d != NUM_NUCS; ++d) {
@@ -434,7 +436,7 @@ print_distance_quantiles(const char *contig,
 
     unsigned space = (2 * MAX_LABEL_LEN) + 3 + 100 + (10 * MAX_NUM_QUANTILES);
 
-    ALLOC_GROW_TYPED(buf->buf, buf->size + space, buf->alloc);
+    ALLOC_GROW(buf->buf, buf->size + space, buf->alloc);
 
     buf->size +=
         sprintf(buf->buf + buf->size, 
@@ -469,7 +471,7 @@ print_distance_quantiles(const char *contig,
             + pd[1]->calls.size + pd[1]->quals.size
             + 50;
         
-        ALLOC_GROW_TYPED(buf->buf, buf->size + extra_space, buf->alloc);
+        ALLOC_GROW(buf->buf, buf->size + extra_space, buf->alloc);
         
         char *out = buf->buf + buf->size;
         for (i = 0; i != 2; ++i) {
@@ -504,6 +506,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
     unsigned cacheable, cache_was_set;
     struct locus_data *ld[2];
     unsigned pi, i;
+    unsigned minq = pileup_get_min_qual();
 
     for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
         unsigned sp[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
@@ -539,18 +542,23 @@ distance_quantiles_aux(struct managed_buf *out_buf)
         tls_dw.metrics.cache_was_set += cache_was_set;
 
         if (diff_state == CHANGED) {
+
+            struct pileup_locus_info pli;
+            pileup_current_info(&pli);
+
             /* Finish sampling and do full distance marginal estimation */
             for (i = 0; i != 2; ++i) {
                 if (! ld[i]->init.bqs_ct) {
-                    ld[i]->init.bqs_ct = 1;
                     pileup_current_bqs(sp[i], &ld[i]->bqs_ct, &ld[i]->n_bqs_ct);
+                    ld[i]->init.bqs_ct = 1;
                 }
 
                 struct distrib_points *dst = tls_dw.bep.dist[i];
                 struct points_gen_par *pgp = dst->pgen.points_gen_par;
                 pgp->observed = ld[i]->bqs_ct;
                 pgp->n_observed = ld[i]->n_bqs_ct;
-                
+                pgp->min_quality_score = minq;
+
                 /* Generate all points */
                 unsigned perm[] = { 0, 1, 2, 3 };
                 update_points_gen_params(dst, ld[i]->base_ct.ct_filt, perm);
@@ -571,6 +579,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                     dst->pgen.weight(p, pgp, w);
 
                 dst->weights.size = max_sample_points;
+                batch_scaled_exponentiate(dst->weights.buf, dst->weights.size);
             }
             /* Compute weighted square distances (max value of 2).
                e.g.
@@ -622,7 +631,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                     struct pileup_locus_info pli;
                     pileup_current_info(&pli);
                     print_distance_quantiles(pli.refname,
-                                             pli.pos,
+                                             pli.pos + 1,
                                              pli.refbase,
                                              pi,
                                              tls_dw.dist_quantile_values, 
@@ -642,9 +651,10 @@ print_indel_distance_quantiles(size_t pair_index,
                                size_t n_events,
                                struct managed_buf *mb)
 {
-    int s1 = bam_sample_pairs.m[pair_index].s1,
+    unsigned 
+        s1 = bam_sample_pairs.m[pair_index].s1,
         s2 = bam_sample_pairs.m[pair_index].s2;
-
+    
     struct locus_data *ld[] = {
         &tls_dw.ldat[s1],
         s2 == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[s2]
@@ -652,7 +662,7 @@ print_indel_distance_quantiles(size_t pair_index,
 
 
     unsigned space = (2 * MAX_LABEL_LEN) + 3 + 100 + (10 * MAX_NUM_QUANTILES);
-    ALLOC_GROW_TYPED(mb->buf, mb->size + space, mb->alloc);
+    ALLOC_GROW(mb->buf, mb->size + space, mb->alloc);
 
     struct pileup_locus_info pli;
     pileup_current_info(&pli);
@@ -661,66 +671,84 @@ print_indel_distance_quantiles(size_t pair_index,
                         "%s\t%s\t%s\t%c\t%u", 
                         bam_samples.m[s1].label,
                         s2 == REFERENCE_SAMPLE ? "REF" : bam_samples.m[s2].label,
-                        pli.refname, pli.refbase, pli.pos);
+                        pli.refname, 
+                        pli.refbase, 
+                        pli.pos + 1);
     
+    /* indel distance quantiles */
     for (size_t q = 0; q != n_quantiles; ++q)
         mb->size += sprintf(mb->buf + mb->size, "\t%.4f", dist_quantile_values[q]);
 
     unsigned indel_space = n_events * (10 + 10);
-    ALLOC_GROW_TYPED(mb->buf, mb->size + indel_space, mb->alloc);
-
-    /* print indel event counts for each sample */
-    struct indel_pair_count *eb = events, *ee = eb + n_events;
+    ALLOC_GROW(mb->buf, mb->size + indel_space, mb->alloc);
+    
+    /* indel event counts for each sample.  The first event is the
+       match event.  All remaining ones are counts of each type of
+       indel. */
+    struct indel_pair_count *eb, *ee = events + n_events;
     unsigned s;
-    for (s = 0, eb = events; s != 2; ++s) {
-        mb->size += sprintf(mb->buf + mb->size, "%u",
+    for (s = 0; s != 2; ++s) {
+        mb->size += sprintf(mb->buf + mb->size, "\t%u",
                             ld[s]->base_ct.n_match_lo_q +
                             ld[s]->base_ct.n_match_hi_q);
-        while (eb != ee) {
-            mb->size += sprintf(mb->buf + mb->size, ",%i", eb->count[s]);
-            eb++;
-        }
+        for (eb = events; eb != ee; ++eb)
+            mb->size += sprintf(mb->buf + mb->size, ",%u", eb->count[s]);
     }
-    eb = events;
 
-    /* retrieve each indel one by one */
-    mb->size += sprintf(mb->buf + mb->size, "@");
+    /* retrieve each indel one by one. represent the union of indels
+       in both samples as a comma-separated list.  insertions start
+       with a '+', deletions with a '-'.  The match state is
+       represented by '@'.  For example: @,+TCC,+TC,-G */
+    mb->size += sprintf(mb->buf + mb->size, "\t@");
     static char ins[] = "-+";
-    while (eb != ee) {
+    for (eb = events; eb != ee; ++eb) {
         struct indel_seq *isq = pileup_current_indel_seq(&eb->indel);
         unsigned grow = 2 + strlen(isq->seq);
-        ALLOC_GROW_TYPED(mb->buf, mb->size + grow, mb->alloc);
+        ALLOC_GROW(mb->buf, mb->size + grow, mb->alloc);
         mb->size += sprintf(mb->buf + mb->size, ",%c%s", 
                             ins[(unsigned)isq->is_ins], isq->seq);
-        eb++;
         free(isq);
     }
-
+    
+    /* optional pileup fields.  */
     if (worker_options.do_print_pileup) {
         struct pileup_data
             *lp0 = &ld[0]->sample_data,
             *lp1 = &ld[1]->sample_data;
-
+        
         unsigned extra_space = 
             lp0->calls.size + lp0->quals.size
             + lp1->calls.size + lp1->quals.size
             + 50;
+        
+        ALLOC_GROW(mb->buf, mb->size + extra_space, mb->alloc);
+        char *out = mb->buf + mb->size;
+        out += sprintf(out, "\t%u\t%u\t%u\t", 
+                       lp0->n_match_hi_q, 
+                       lp0->n_match_lo_q,
+                       lp0->n_indel);
 
-        ALLOC_GROW_TYPED(mb->buf, mb->size + extra_space, mb->alloc);
-        mb->size += sprintf(mb->buf + mb->size,
-                            "\t%u\t%u\t%u\t%s\t%s\t%u\t%u\t%u\t%s\t%s",
-                            lp0->n_match_hi_q,
-                            lp0->n_match_lo_q,
-                            lp0->n_indel,
-                            lp0->calls.buf,
-                            lp0->quals.buf,
-                            lp1->n_match_hi_q,
-                            lp1->n_match_lo_q,
-                            lp1->n_indel,
-                            lp1->calls.buf,
-                            lp1->quals.buf);
+        strncpy(out, lp0->calls.buf, lp0->calls.size);
+        out += lp0->calls.size;
+        *out++ = '\t';
+
+        strncpy(out, lp0->quals.buf, lp0->quals.size);
+        out += lp0->quals.size;
+
+        out += sprintf(out, "\t%u\t%u\t%u\t",
+                       lp1->n_match_hi_q,
+                       lp1->n_match_lo_q,
+                       lp1->n_indel);
+
+        strncpy(out, lp1->calls.buf, lp1->calls.size);
+        out += lp1->calls.size;
+        *out++ = '\t';
+
+        strncpy(out, lp1->quals.buf, lp1->quals.size);
+        out += lp1->quals.size;
+        mb->size = out - mb->buf;
     }
-    mb->size += sprintf(mb->buf + mb->size, "\n");
+    mb->buf[mb->size++] = '\n';
 }
 
 
@@ -739,18 +767,26 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
         };
         
         unsigned i;
-        for (i = 0; i != 2; ++i) {
+        for (i = 0; i != 2; ++i)
             if (! ld[i]->init.indel_ct) {
-                ld[i]->init.indel_ct = 1;
                 pileup_current_indels(s[i], &ld[i]->indel_ct, &ld[i]->n_indel_ct);
+                ld[i]->init.indel_ct = 1;
             }
+
+        if (ld[0]->n_indel_ct == 0
+            && ld[1]->n_indel_ct == 0
+            && min_dirichlet_dist > 0) continue;
+        
+        for (i = 0; i != 2; ++i) {
             if (! ld[i]->init.base_ct) {
-                ld[i]->init.base_ct = 1;
                 ld[i]->base_ct = pileup_current_basecalls(s[i]);
+                ld[i]->init.base_ct = 1;
+            }
+            if (! ld[i]->init.sample_data) {
+                pileup_current_data(s[i], &ld[i]->sample_data);
+                ld[i]->init.sample_data = 1;
             }
         }
-        if (ld[0]->n_indel_ct == 0 && ld[1]->n_indel_ct == 0
-            && min_dirichlet_dist > 0) continue;
         
         /* traverse the sorted indel counts in tandem */
         unsigned n_indel_pairs;
@@ -785,14 +821,18 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
         };
 
         unsigned c;
+        double *p, *pe;
         for (i = 0; i != 2; ++i) {
             for (c = 0; c != n_indel_pairs; ++c)
-                alpha[i][c] = indel_pairs[c].count[i] + indel_alpha_prior;
+                alpha[i][c] = indel_pairs[c].count[i] + indel_prior_alpha;
             if (has_match_reads)
-                alpha[i][n_indel_pairs] = n_match[i] + indel_alpha_prior;
+                alpha[i][n_indel_pairs] = n_match[i] + indel_prior_alpha;
+
+            pe = points[i] + buf_sz;
+            for (p = points[i]; p != pe; p += n_events)
+                gsl_ran_dirichlet(tls_dw.randgen, n_events, alpha[i], p);
         }
 
-        gsl_ran_dirichlet(tls_dw.randgen, n_events, alpha[i], points[i]);
         
         compute_square_dist(points[0], points[1], 
                             max_sample_points, n_events,
@@ -837,20 +877,24 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
 }
 
 
+/* compute and print base composition marginal quantiles.  the
+   distrib_points (distp) field must be populated with points and
+   weights. */
 void
 comp_quantiles_aux(struct managed_buf *comp_buf)
 {
-    unsigned s;
-    struct pileup_locus_info ploc;
-    pileup_current_info(&ploc);
-
     COMP_QV comp_quantile_values;
     double comp_means[NUM_NUCS];
 
+    struct pileup_locus_info ploc;
+    ploc.pos = UINT_MAX; /* signal that this isn't initialized yet */
+
+    unsigned s;
     for (s = 0; s != bam_samples.n; ++s) {
         struct locus_data *ld = &tls_dw.ldat[s];
         
         if (ld->confirmed_changed) {
+                
             unsigned d;
             for (d = 0; d != NUM_NUCS; ++d) {
                 compute_marginal_wquantiles((double *)ld->distp.points.buf,
@@ -869,17 +913,21 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
                                           d);
             }
             if (! ld->init.sample_data) {
-                ld->init.sample_data = 1;
                 pileup_current_data(s, &ld->sample_data);
-
-                print_basecomp_quantiles(comp_quantile_values,
-                                         comp_means,
-                                         n_quantiles,
-                                         bam_samples.m[s].label,
-                                         &ploc,
-                                         &ld->sample_data,
-                                         comp_buf);
+                ld->init.sample_data = 1;
             }
+
+            /* just-in-time initialization of ploc */
+            if (ploc.pos == UINT_MAX)
+                pileup_current_info(&ploc);
+
+            print_basecomp_quantiles(comp_quantile_values,
+                                     comp_means,
+                                     n_quantiles,
+                                     bam_samples.m[s].label,
+                                     &ploc,
+                                     &ld->sample_data,
+                                     comp_buf);
         }
     }
 }

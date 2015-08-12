@@ -70,12 +70,15 @@ struct pos_indel_count {
 };
 
 
+/* */
 static int
 less_indel(struct indel a, struct indel b)
 {
     return a.is_ins < b.is_ins
         || (a.is_ins == b.is_ins
-            && a.length < b.length);
+            && (a.length < b.length
+                || (a.length == b.length
+                    && (a.ins_itr < b.ins_itr))));
 }
 
 
@@ -132,6 +135,7 @@ static __thread struct tls {
     unsigned n_refseqs;
     struct base_count null_ct;
     struct base_count refsam_ct[5];
+    struct bqs_count refsam_bqs_ct[5];
 } tls;
 
 
@@ -216,6 +220,13 @@ batch_pileup_thread_init(unsigned n_samples, const char *fasta_file)
     tls.refsam_ct[2] = (struct base_count){ { 0, 0, pd, 0 }, 0, pd };
     tls.refsam_ct[3] = (struct base_count){ { 0, 0, 0, pd }, 0, pd };
     tls.refsam_ct[4] = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
+
+    tls.refsam_bqs_ct[0] = (struct bqs_count){ 1<<0, 50, 0, pd };
+    tls.refsam_bqs_ct[1] = (struct bqs_count){ 1<<1, 50, 0, pd };
+    tls.refsam_bqs_ct[2] = (struct bqs_count){ 1<<2, 50, 0, pd };
+    tls.refsam_bqs_ct[3] = (struct bqs_count){ 1<<3, 50, 0, pd };
+    tls.refsam_bqs_ct[4] = (struct bqs_count){ 15, 0, 0, 0 }; /* zero counts of base 'N' */
+
 }
 
 
@@ -265,19 +276,6 @@ process_bam_block(char *rec, char *end,
                   struct contig_span loaded_span,
                   struct tally_stats *ts);
 
-
-static inline int
-less_contig_pos(struct contig_pos a, struct contig_pos b)
-{
-    return a.tid < b.tid 
-        || (a.tid == b.tid && a.pos < b.pos);
-}
-
-static inline int
-equal_contig_pos(struct contig_pos a, struct contig_pos b)
-{
-    return a.tid == b.tid && a.pos == b.pos;
-}
 
 /* load specific ranges of reference sequence. [qbeg, qend) defines
    the total set of (non-overlapping) ranges to consider.  subset
@@ -396,7 +394,7 @@ pileup_current_basecalls(unsigned s)
            cmp_contig_pos(tls.cur_pos, ts->base_cur->cpos) < 1);
 
     if (ts->base_cur == ts->base_end
-        || less_contig_pos(tls.cur_pos, ts->base_cur->cpos))
+        || cmp_contig_pos(tls.cur_pos, ts->base_cur->cpos) == -1)
         return tls.null_ct;
 
     else
@@ -407,7 +405,7 @@ pileup_current_basecalls(unsigned s)
 static int
 pos_bqs_count_less(struct pos_bqs_count a, struct pos_bqs_count b)
 {
-    return less_contig_pos(a.cpos, b.cpos);
+    return cmp_contig_pos(a.cpos, b.cpos) == -1;
 }
 
 KSORT_INIT(pbqt_sort, struct pos_bqs_count, pos_bqs_count_less);
@@ -432,7 +430,7 @@ pileup_prepare_bqs(unsigned s)
         if (! kh_exist(ph, it)) continue;
         pk.k = kh_key(ph, it);
         pos = (struct contig_pos){ pk.v.tid, pk.v.pos };
-        if (less_contig_pos(pos, tls.tally_end)) {
+        if (cmp_contig_pos(pos, tls.tally_end) == -1) {
             ct = kh_val(ph, it);
             ts->bqs_ct[i++] = (struct pos_bqs_count){
                 .cpos = { pk.v.tid, pk.v.pos },
@@ -456,25 +454,18 @@ pileup_prepare_bqs(unsigned s)
 void
 pileup_current_bqs(unsigned s, struct bqs_count **cts, unsigned *n_cts)
 {
-    static struct bqs_count ref_bqs[] = {
-        { 0, 50, 0, 1e6 },
-        { 1, 50, 0, 1e6 },
-        { 2, 50, 0, 1e6 },
-        { 3, 50, 0, 1e6 },
-        { 15, 0, 0, 0 } /* zero counts of base 'N' */
-    };
 
     if (s == REFERENCE_SAMPLE) {
         *n_cts = 1;
         *cts = realloc(*cts, 1 * sizeof(struct bqs_count));
-        (*cts)[0] = ref_bqs[get_cur_refbase_code5()];
+        (*cts)[0] = tls.refsam_bqs_ct[get_cur_refbase_code5()];
         return;
     }
 
     struct tally_stats *ts = &tls.ts[s];
     struct pos_bqs_count *pc = ts->bqs_cur;
     while (pc != ts->bqs_end && 
-           equal_contig_pos(pc->cpos, tls.cur_pos))
+           cmp_contig_pos(pc->cpos, tls.cur_pos) == 0)
         ++pc;
     unsigned n = pc - ts->bqs_cur;
         
@@ -500,16 +491,17 @@ pileup_current_indels(unsigned s, struct indel_count **cts, unsigned *n_cts)
     
     /* pre-scan to find total number of distinct indels (use linear
        scan since this will be very small) */
-    struct pos_indel_count *pc = tls.ts[s].indel_cur;
-    while (pc != tls.ts[s].indel_end &&
-           equal_contig_pos(pc->cpos, tls.cur_pos))
+    struct tally_stats *ts = &tls.ts[s];
+    struct pos_indel_count *pc = ts->indel_cur;
+    while (pc != ts->indel_end &&
+           cmp_contig_pos(pc->cpos, tls.cur_pos) == 0)
         ++pc;
-    unsigned n = pc - tls.ts[s].indel_cur;
+    unsigned n = pc - ts->indel_cur;
 
     *cts = realloc(*cts, n * sizeof(struct indel_count));
     *n_cts = n;
     unsigned i = 0;
-    pc = tls.ts[s].indel_cur;
+    pc = ts->indel_cur;
     while (i != n)
         (*cts)[i++] = pc++->ict;
 }
@@ -536,23 +528,27 @@ pileup_make_indel_pairs(struct indel_count *cts1, unsigned n_cts1,
        on comparison order.  */
     int cmp;
     while (ic0 != ie0 || ic1 != ie1) {
-        cmp = (ic0 == ie0 ? -1 
-               : (ic1 == ie1 ? 1 : less_indel(ic0->idl, ic1->idl)));
+        /* -1: first-in-pair only
+           0 : both pairs
+           1 : second-in-pair only */
+        cmp = (ic1 == ie1 ? -1
+               : (ic0 == ie0 ? 1 
+                  : (less_indel(ic0->idl, ic1->idl) ? -1 : 1)));
         switch (cmp) {
         case -1: 
             ip->count[0] = ic0->ct;
             ip->count[1] = 0; 
             ip->indel = ic0++->idl;
             break;
-        case 1 : 
-            ip->count[1] = ic1->ct;
-            ip->count[0] = 0;
-            ip->indel = ic1++->idl;
-            break;
         case 0 :
             ip->count[0] = ic0->ct;
             ip->count[1] = ic1->ct; 
             ip->indel = ic0->idl; ++ic0; ++ic1;
+            break;
+        case 1 : 
+            ip->count[1] = ic1->ct;
+            ip->count[0] = 0;
+            ip->indel = ic1++->idl;
             break;
         }
         ++ip;
@@ -623,22 +619,22 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         return;
     }        
 
-    unsigned n_base_ct;
-    struct bqs_count *base_ct = NULL;
-    pileup_current_bqs(s, &base_ct, &n_base_ct);
+    unsigned n_bqs_ct;
+    struct bqs_count *bqs_ct = NULL;
+    pileup_current_bqs(s, &bqs_ct, &n_bqs_ct);
     unsigned b, n_calls = 0;
     pd->n_match_lo_q = 0;
     pd->n_match_hi_q = 0;
 
-    for (b = 0; b != n_base_ct; ++b)
-        if (base_ct[b].qual < min_quality_score)
-            pd->n_match_lo_q += base_ct[b].ct;
+    for (b = 0; b != n_bqs_ct; ++b)
+        if (bqs_ct[b].qual < min_quality_score)
+            pd->n_match_lo_q += bqs_ct[b].ct;
         else
-            pd->n_match_hi_q += base_ct[b].ct;
+            pd->n_match_hi_q += bqs_ct[b].ct;
 
     n_calls = pd->n_match_lo_q + pd->n_match_hi_q;
-    pd->quals.size = n_calls;
-    ALLOC_GROW(pd->quals.buf, pd->quals.size, pd->quals.alloc);
+    pd->quals.size = 0;
+    ALLOC_GROW(pd->quals.buf, n_calls, pd->quals.alloc);
 
     struct indel_count *indel_ct = NULL;
     unsigned n_indel_ct, indel_len_total = 0;
@@ -649,33 +645,37 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         indel_len_total += indel_ct[b].ct * (indel_ct[b].idl.length + 10);
         pd->n_indel += indel_ct[b].ct;
     }
-    pd->calls.size = n_calls + indel_len_total;
-    ALLOC_GROW(pd->calls.buf, pd->calls.size, pd->calls.alloc);
+    pd->calls.size = 0;
+    ALLOC_GROW(pd->calls.buf, n_calls + indel_len_total, pd->calls.alloc);
     
     /* print out the calls */
     struct pileup_locus_info pli;
     pileup_current_info(&pli);
     unsigned refbase_i = get_cur_refbase_code16();
     unsigned p = 0, p_cur, p_end;
-    for (b = 0; b != n_base_ct; ++b) {
-        p_end = p + base_ct[b].ct;
-        char bc = bqs_count_to_call(base_ct[b], refbase_i);
-        char qs = qual_to_char(base_ct[b].qual);
+    for (b = 0; b != n_bqs_ct; ++b) {
+        p_end = p + bqs_ct[b].ct;
+        char bc = bqs_count_to_call(bqs_ct[b], refbase_i);
+        char qs = qual_to_char(bqs_ct[b].qual);
         p_cur = p;
         for (; p != p_end; ++p) pd->calls.buf[p] = bc;
         for (p = p_cur; p != p_end; ++p) pd->quals.buf[p] = qs;
     }
     pd->quals.size = p;
-    free(base_ct);
+    pd->calls.size = p;
+    free(bqs_ct);
 
     /* print out all indel representations */
     struct indel_seq *isq;
     static char sign[] = "-+";
+    unsigned c;
+    p = pd->calls.size;
     for (b = 0; b != n_indel_ct; ++b) {
         isq = pileup_current_indel_seq(&indel_ct[b].idl);
-        pd->calls.buf[p++] = sign[(int)isq->is_ins];
-        p += sprintf(pd->calls.buf + p, "%Zu", strlen(isq->seq));
-        p += strlen(isq->seq);
+        for (c = 0; c != indel_ct[b].ct; ++c)
+            p += sprintf(pd->calls.buf + p, "%c%Zu%s", 
+                         sign[(int)isq->is_ins],
+                         strlen(isq->seq), isq->seq);
         free(isq);
     }
     pd->calls.size = p;
@@ -911,7 +911,7 @@ summarize_base_counts(unsigned s, struct contig_pos tally_end)
         if (! kh_exist(src_h, src_itr)) continue;
         src_k.k = kh_key(src_h, src_itr);
         trg_k.v = (struct contig_pos){ src_k.v.tid, src_k.v.pos };
-        if (! less_contig_pos(trg_k.v, tally_end)) continue;
+        if (cmp_contig_pos(trg_k.v, tally_end) != -1) continue;
 
         ct = kh_val(src_h, src_itr);
         trg_itr = kh_get(pb_h, trg_h, trg_k.k);
@@ -943,7 +943,7 @@ summarize_base_counts(unsigned s, struct contig_pos tally_end)
 static int
 pos_base_count_less(struct pos_base_count a, struct pos_base_count b)
 {
-    return less_contig_pos(a.cpos, b.cpos);
+    return cmp_contig_pos(a.cpos, b.cpos) == -1;
 }
 
 KSORT_INIT(pbc_sort, struct pos_base_count, pos_base_count_less);
@@ -979,8 +979,9 @@ pileup_prepare_basecalls(unsigned s)
 static int
 pos_iter_indel_count_less(struct pos_indel_count a, struct pos_indel_count b)
 {
-    return less_contig_pos(a.cpos, b.cpos)
-        || (equal_contig_pos(a.cpos, b.cpos)
+    int cmp;
+    return (cmp = cmp_contig_pos(a.cpos, b.cpos)) == -1
+        || (cmp == 0
             && less_indel(a.ict.idl, b.ict.idl));
 }
 
@@ -998,20 +999,20 @@ pileup_prepare_indels(unsigned s)
     unsigned alloc = kh_size(ih); /* lower limit estimate */
     ts->indel_ct = realloc(ts->indel_ct, alloc * sizeof(struct pos_indel_count));
     
-    khiter_t it;
+    khiter_t itr;
     unsigned i, a;
     union pos_key k;
     struct indel_count_ary ica;
-    for (it = kh_begin(ih), i = 0; it != kh_end(ih); ++it)
-        if (kh_exist(ih, it)) {
-            k.k = kh_key(ih, it);
-            if (less_contig_pos(k.v, tls.tally_end)) {
-                ica = kh_val(ih, it);
-                ALLOC_GROW(ts->indel_ct, i + ica.n, alloc);
-                for (a = 0; a != ica.n; ++a)
-                    ts->indel_ct[i++] = (struct pos_indel_count){ k.v, ica.i[a] };
-            }
+    for (itr = kh_begin(ih), i = 0; itr != kh_end(ih); ++itr) {
+        if (! kh_exist(ih, itr)) continue;
+        k.k = kh_key(ih, itr);
+        if (cmp_contig_pos(k.v, tls.tally_end) == -1) {
+            ica = kh_val(ih, itr);
+            ALLOC_GROW(ts->indel_ct, i + ica.n, alloc);
+            for (a = 0; a != ica.n; ++a)
+                ts->indel_ct[i++] = (struct pos_indel_count){ k.v, ica.i[a] };
         }
+    }
 
     ks_introsort(pi_sort, i, ts->indel_ct);
     ts->indel_cur = ts->indel_ct;
@@ -1038,7 +1039,8 @@ incr_indel_count_aux(struct tally_stats *ts,
     int ret;
     if ((itr = kh_get(indel_ct_h, ih, k.k)) == kh_end(ih)) {
         itr = kh_put(indel_ct_h, ih, k.k, &ret);
-        kh_val(ih, itr) = (struct indel_count_ary){ NULL, 0, 0 };
+        kh_val(ih, itr) = (struct indel_count_ary)
+            { .i = malloc(sizeof(struct indel_count)), .n = 0, .m = 1 };
     }
     struct indel_count_ary ica = kh_val(ih, itr);
 
@@ -1064,26 +1066,28 @@ incr_indel_count_aux(struct tally_stats *ts,
     struct indel_count *ic = ica.i, *ice = ic + ica.n;
     unsigned ulen = abs(len);
     while (ic != ice) {
-        if (ic->idl.is_ins != is_ins) continue;
-        if (is_ins) {
-            if (ic->idl.ins_itr == seq_itr) {
-                ic->ct++;
-                break;
-            }
-        } else {
-            if (ic->idl.length == ulen) {
-                ic->ct++;
-                break;
+        if (ic->idl.is_ins == is_ins) {
+            if (is_ins) {
+                if (ic->idl.ins_itr == seq_itr) {
+                    ic->ct++;
+                    break;
+                }
+            } else {
+                if (ic->idl.length == ulen) {
+                    ic->ct++;
+                    break;
+                }
             }
         }
-    }            
+        ++ic;
+    }        
 
     if (ic == ice) {
         /* didn't find one */
         ALLOC_GROW(ica.i, ica.n + 1, ica.m);
         if (is_ins)
             ica.i[ica.n] = (struct indel_count){ 
-                { .is_ins = 1, .ins_itr = seq_itr },
+                { .is_ins = 1, .length = ulen, .ins_itr = seq_itr },
                 .ct = 1
             };
         else
@@ -1093,6 +1097,8 @@ incr_indel_count_aux(struct tally_stats *ts,
             };
         ica.n++;
     }
+    /* update the value (ica was a copy of the hash value) */
+    kh_val(ih, itr) = ica;
 }
 
 
@@ -1194,18 +1200,18 @@ update_data_iters()
         /* increment bqs iterator ('while' is used here, because bqs
            have multiple entries per position) */
         while (ts->bqs_cur != ts->bqs_end
-               && less_contig_pos(ts->bqs_cur->cpos, tls.cur_pos))
+               && cmp_contig_pos(ts->bqs_cur->cpos, tls.cur_pos) == -1)
             ++ts->bqs_cur;
 
         /* increment base iterator */
         while (ts->base_cur != ts->base_end
-            && less_contig_pos(ts->base_cur->cpos, tls.cur_pos))
+            && cmp_contig_pos(ts->base_cur->cpos, tls.cur_pos) == -1)
             ++ts->base_cur;
 
         /* increment indel iterator ('while' used here, because may be
            multiple entries per position) */
         while (ts->indel_cur != ts->indel_end
-               && less_contig_pos(ts->indel_cur->cpos, tls.cur_pos))
+               && cmp_contig_pos(ts->indel_cur->cpos, tls.cur_pos) == -1)
             ++ts->indel_cur;
     }
 }
@@ -1280,7 +1286,7 @@ pileup_next_pos()
     } else
         update_data_iters();
 
-    return less_contig_pos(tls.cur_pos, g_end_pos);
+    return cmp_contig_pos(tls.cur_pos, g_end_pos) == -1;
 }
 
 
@@ -1299,4 +1305,11 @@ void
 pileup_final_input()
 {
     tls.tally_end = g_end_pos;
+}
+
+
+unsigned
+pileup_get_min_qual()
+{
+    return min_quality_score;
 }
