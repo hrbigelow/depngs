@@ -52,7 +52,7 @@ struct counted_points {
     unsigned n_hit; /* */
 };
 
-KHASH_MAP_INIT_INT64(fuzzy_hash, enum fuzzy_state)
+KHASH_MAP_INIT_INT64(fuzzy_hash, enum fuzzy_state);
 KHASH_MAP_INIT_INT64(points_hash, struct counted_points);
 KHASH_MAP_INIT_INT64(bounds_hash, struct binomial_est_bounds);
 
@@ -96,10 +96,10 @@ void set_points_hash_flag(unsigned disable)
 }
 
 struct alpha_packed_large {
-    unsigned a0 :24;
-    unsigned a1 :20;
-    unsigned a2 :12;
-    unsigned a3 :8;
+    unsigned a0 :24; /* 16,777,216 */
+    unsigned a1 :20; /*  1,048,576 */
+    unsigned a2 :12; /*      4,096 */
+    unsigned a3 :8;  /*        256 */
 };
 
 union alpha_large_key {
@@ -108,8 +108,10 @@ union alpha_large_key {
 };
 
 /* initializes the key from the counts, sets *packable to 1 on failure */
-void init_alpha_packed_large(unsigned *cts, union alpha_large_key *key,
-                             unsigned *packable)
+void 
+init_alpha_packed_large(unsigned *cts, 
+                        union alpha_large_key *key,
+                        unsigned *packable)
 {
     *packable = cts[0] <= (1<<24) 
         && cts[1] <= (1<<20) 
@@ -121,10 +123,10 @@ void init_alpha_packed_large(unsigned *cts, union alpha_large_key *key,
 }
 
 struct alpha_packed {
-    unsigned a0 :12; /* 4096 */
-    unsigned a1 :10; /* 1024 */
-    unsigned a2 :6;  /* 64 */
-    unsigned a3 :4;  /* 16 */
+    unsigned a0 :12; /* 4,096 */
+    unsigned a1 :10; /* 1,024 */
+    unsigned a2 :6;  /*    64 */
+    unsigned a3 :4;  /*    16 */
 };
 
 
@@ -282,8 +284,7 @@ unsigned freeze_points_hash()
     unsigned do_freeze = 
         cache.c.n_permanent_items > 0.95 * cache.c.max_items
         || cache.c.n_times_cleared > MAX_TIMES_CLEARED;
-    if (do_freeze) 
-    {
+    if (do_freeze) {
         cache.c.n_threads_points_active--;
         if (cache.c.n_threads_points_active)
             pthread_cond_wait(&cache.c.cond, &cache.c.mtx);
@@ -898,9 +899,9 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
 
 union bounds_key {
     struct {
-        unsigned a2:20;
-        unsigned b1:32;
-        unsigned b2:20;
+        unsigned a2:20; /*     1,048,576 */
+        unsigned b1:32; /* 4,294,967,296 */
+        unsigned b2:20; /*     1,048,576 */
     } f;
     int64_t val;
 };

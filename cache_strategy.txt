@@ -1,0 +1,54 @@
+Here is the points and bounds cacheing strategy used.  It avoids
+locking and mutexes altogether.  The various steps use the so-called
+'private-public-merge' strategy: Each thread works on a disjoint piece
+of work, using only readonly global resources and writing results to
+thread-local storage.  At the end, all threads merge their private
+results into a similar global resource, then clear their private
+resources.
+
+Survey:
+
+Survey 10% of the input data
+
+1. Tally counts of each (a2, b1, b2) instance into the bounds-tuple
+hash using private-public-merge.
+
+2. Tally counts of each (b1, b2, b3, b4) instance in the points-tuple
+hash using private-public-merge.
+
+3. Clear all entries in the bounds-tuple hash with count < 3.  (It is
+not worth pre-computing binomial bounds if we don't expect to see this
+3tuple more than ~25 times in the full input, or 2 times in 10% of
+input)
+
+5. Clear the lowest count keys in the points-tuple hash until hash
+size is < P.  P is number of point sets that we can store with
+available memory.
+
+
+Prepopulation (done without reading any input data)
+
+1. Generate point sets fo each entry in the points-tuple hash using
+private-public-merge.
+
+2. Generate the bounds for each entry in the bounds-tuple hash using
+private-public-merge.  Use the global points hash where possible,
+generate throw-away point sets otherwise.
+
+
+Operation:
+
+NOTE: We assume that we use as much memory as we can when
+pre-populating the points hash.  So, there should be no caching
+of additional points
+
+1. Query global bounds hash.  If found, use the entry.
+
+2. If not found, query global points hash for both point sets,
+generating throw-away points when not found.
+
+3. Compute distance distribution directly from the pair of point sets.
+Do not cache anything.
+
+
+

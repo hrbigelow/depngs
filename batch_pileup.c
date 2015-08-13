@@ -319,15 +319,21 @@ pileup_load_refseq_ranges(struct bam_scanner_info *bsi)
     /* now load all sequences */
     for (r = 0; r != tls.n_refseqs; ++r) {
         struct contig_fragment *frag = &tls.refseqs[r];
-        char *seq = fasta_fetch_iseq(frag->reg.tid,
-                                     frag->reg.beg, 
-                                     frag->reg.end);
-        if ((frag->reg.end - frag->reg.beg) <= FRAGMENT_MAX_INLINE_SEQLEN) {
-            strcpy(frag->buf, seq);
+        if (frag->reg.beg == frag->reg.end) {
             frag->seq = frag->buf;
-            free(seq);
+            *frag->buf = '\0';
         } else {
-            frag->seq = seq;
+            char *seq = 
+                fasta_fetch_iseq(frag->reg.tid,
+                                 frag->reg.beg, 
+                                 frag->reg.end);
+            if ((frag->reg.end - frag->reg.beg) <= FRAGMENT_MAX_INLINE_SEQLEN) {
+                strcpy(frag->buf, seq);
+                frag->seq = frag->buf;
+                free(seq);
+            } else {
+                frag->seq = seq;
+            }
         }
     }
     tls.cur_refseq = tls.refseqs;
