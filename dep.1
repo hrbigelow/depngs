@@ -8,8 +8,6 @@ dep dist [options] samples.rdb sample_pairings.rdb ref.fasta
 .br
 dep pileup [options] samples.rdb ref.fasta out.pileup
 .br
-dep pug sample.pileup loci_to_retrieve.rdb ref.fasta
-.br
 
 
 
@@ -103,32 +101,6 @@ of those points on either side of some chosen position in the simplex.
 The distribution function itself can be thought of as a 4D Dirichlet
 whose alpha parameters are the actual basecalls, with the "correction"
 owing to the imperfect quality scores of those basecalls.
-
-.TP
-.B simp
-dep simp FTYPE input.jpd sim_comp.rdb > output.pileup
-
-Simulates a pileup file using FTYPE fastq quality scale (one of
-.BR Sanger ,
-.BR Solexa ,
-.BR Illumina13 , 
-or 
-.BR Illumina15 ).
-For each line in \fBsim_comp.rdb\fP, generates one line of pileup
-output.  For each input line, the simulation first generates
-a 'founder base' randomly from the composition provided in that line,
-then generates basecalls and qualities according to the bayesian
-causal model parameterized by the joint probability distribution in
-\fBinput.jpd\fP, to the sequencing depth specified in
-\fBsim_comp.rdb\fP.
-
-.TP
-.B simc
-dep simc [options] basecomp_priors.rdb nsim > sim_comp.rdb
-
-Simulates a set of \fBnsim\fP base compositions by sampling from the
-distribution provided by \fBbasecomp_priors.rdb\fP.  (See format
-descriptions below)
 
 .SH OPTIONS
 
@@ -517,62 +489,6 @@ etc
 
 .RE
 
-
-
-
-
-
-.TP
-.B basecomp_priors.rdb
-A file that describes a distribution of locus compositions to choose
-from in order to simulate loci of each of those compositions.  The
-tab-delimited fields are:
-
-<fraction_A>  <fraction_C>  <fraction_G>  <fraction_T>  <fraction_this_comp>
-
-For example:
-
-.br
-0.5    0.5    0    0   10
-.br
-1      0      0    0   10
-.br
-0      1      0    0   20
-
-would specify a grab-bag of 25% A/C het loci, 25% A/A homozygous loci,
-and 50% C homozygous loci.  The values in the last column need not be
-normalized.
-
-
-.TP
-.B sim_comp.rdb
-Simulated locus composition output.  Describes a the base composition
-of a set of loci simulated according to the frequencies in
-\fBbasecomp_priors.rdb\fP.  Each locus is one line with fields:
-
-<position>  <A_comp>  <C_comp>  <G_comp>  <T_comp> <depth>
-
-For example, here is a simulation of 7 loci using
-\fBbasecomp_priors.rdb\fP as sampling source:
-
-0    0.000000     0.000000     0.000000     1.000000    1000
-.br
-1    0.000000     1.000000     0.000000     0.000000    1000
-.br
-2    0.000000     0.000000     1.000000     0.000000    1000
-.br
-3    1.000000     0.000000     0.000000     0.000000    1000
-.br
-4    0.000000     1.000000     0.000000     0.000000    1000
-.br
-5    1.000000     0.000000     0.000000     0.000000    1000
-.br
-6    0.000000     0.000000     0.000000     1.000000    1000
-.br
-7    0.000000     0.000000     1.000000     0.000000    1000
-.br
-
-.RE
 
 .B Command Option Definitions
 
