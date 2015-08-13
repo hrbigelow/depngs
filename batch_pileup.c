@@ -148,16 +148,17 @@ struct contig_fragment {
 
 
 static unsigned pseudo_depth;
-static unsigned min_quality_score;
 static unsigned skip_empty_loci; /* if 1, pileup_next_pos() advances
                                       past loci that have no data. */
+static struct bam_filter_params bam_filter;
 
 
 void
-batch_pileup_init(unsigned min_qual, unsigned skip_empty,
+batch_pileup_init(struct bam_filter_params _bam_filter,
+                  unsigned skip_empty,
                   unsigned _pseudo_depth)
 {
-    min_quality_score = min_qual;
+    bam_filter = _bam_filter;
     skip_empty_loci = skip_empty;
     pseudo_depth = _pseudo_depth;
 }
@@ -627,7 +628,7 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
     pd->n_match_hi_q = 0;
 
     for (b = 0; b != n_bqs_ct; ++b)
-        if (bqs_ct[b].qual < min_quality_score)
+        if (bqs_ct[b].qual < bam_filter.min_base_quality)
             pd->n_match_lo_q += bqs_ct[b].ct;
         else
             pd->n_match_hi_q += bqs_ct[b].ct;
@@ -836,6 +837,11 @@ process_bam_block(char *rec, char *end,
             }
         }
 
+        if (bam_rec_exclude(&b, bam_filter)) {
+            rec = rec_next;
+            continue;
+        }
+
         rec_beg = (struct contig_pos){ b.core.tid, b.core.pos };
         if (cmp_contig_pos(loaded_span.end, rec_beg) == -1)
             break; /* no more records overlapping the region of interest. done. */
@@ -893,7 +899,7 @@ process_bam_block(char *rec, char *end,
 
 
 /* marginalize out q and t from pbqt_hash, storing results in pb_hash.
-   counts are only tallied if q >= min_quality_score (global var).   */
+   counts are only tallied if q >= bam_filter.min_base_quality (global var).   */
 static khash_t(pb_h) *
 summarize_base_counts(unsigned s, struct contig_pos tally_end)
 {
@@ -928,7 +934,7 @@ summarize_base_counts(unsigned s, struct contig_pos tally_end)
         if (pure_base == 4) 
             kh_val(trg_h, trg_itr).n_match_fuzzy += ct;
         else {
-            if (src_k.v.qual >= min_quality_score) {
+            if (src_k.v.qual >= bam_filter.min_base_quality) {
                 kh_val(trg_h, trg_itr).ct_filt[pure_base] += ct;
                 kh_val(trg_h, trg_itr).n_match_hi_q += ct;
             }
@@ -1308,8 +1314,8 @@ pileup_final_input()
 }
 
 
-unsigned
-pileup_get_min_qual()
+struct bam_filter_params
+pileup_get_filter_params()
 {
-    return min_quality_score;
+    return bam_filter;
 }

@@ -13,15 +13,12 @@
 #include "fasta.h"
 
 static struct {
-    unsigned min_base_quality; /* minimum base quality to be included in pileup */
-    unsigned min_map_quality;
+    struct bam_filter_params bam_filter;
     unsigned long max_mem;
-    int rflag_require;
-    int rflag_filter;
     unsigned n_threads;
-    unsigned n_readers;
+    unsigned n_max_reading;
     unsigned phred_offset;
-} opts = { 5, 10, 1e9, 0, 0, 1, 1, 33 };
+} opts = { { NULL, 5, 10, 0, 0 }, 1e9, 1, 1, 33 };
 
 
 /* a place to hold allocated input for thread_queue that thread_queue
@@ -30,7 +27,7 @@ static struct {
     struct bam_scanner_info *scanner_info_buf;
     void **reader_pars;
     unsigned n_threads;
-    unsigned n_readers;
+    unsigned n_max_reading;
     struct contig_region *ranges;
     unsigned n_ranges;
     FILE *pileup_fh;
@@ -43,8 +40,8 @@ static struct {
 int
 pileup_usage()
 {
-    char *tmp_require = bam_flag2str(opts.rflag_require);
-    char *tmp_filter  = bam_flag2str(opts.rflag_filter);
+    char *tmp_require = bam_flag2str(opts.bam_filter.rflag_require);
+    char *tmp_filter  = bam_flag2str(opts.bam_filter.rflag_filter);
 
     fprintf(stderr,
             "\nUsage: dep pileup [options] samples.rdb in.fasta out.pileup\n\n"
@@ -67,11 +64,11 @@ pileup_usage()
             "samples.rdb has lines of <sample_label>\t</path/to/sample.bam>\n\n"
             "There must also exist an <in.fasta>.fai file produced by samtools faidx\n\n",
             opts.n_threads,
-            opts.n_readers,
+            opts.n_max_reading,
             opts.max_mem,
             opts.phred_offset,
-            opts.min_map_quality,
-            opts.min_base_quality,
+            opts.bam_filter.min_map_quality,
+            opts.bam_filter.min_base_quality,
             tmp_require,
             tmp_filter);
     
@@ -87,9 +84,9 @@ pileup_init(const char *samples_file,
             const char *pileup_file,
             const char *query_range_file,
             unsigned n_threads,
-            unsigned n_readers,
+            unsigned n_max_reading,
             unsigned long max_input_mem,
-            unsigned min_qual);
+            struct bam_filter_params bam_filter);
 
 extern char *optarg;
 extern int optind;
@@ -98,7 +95,7 @@ int main_pileup(int argc, char **argv)
 {
     int c;
     char *query_range_file = NULL;
-    int n_readers_set = 0;
+    int n_max_reading_set = 0;
 
     /* adapted from samtools/bam_plcmd.c.*/
     while ((c = getopt(argc, argv, "t:R:m:F:ABC:EG:l:q:Q:x:X:")) >= 0) {
@@ -106,8 +103,8 @@ int main_pileup(int argc, char **argv)
         case 't': opts.n_threads = strtol_errmsg(optarg, "-t (n_threads)"); break;
         case 'm': opts.max_mem = (size_t)strtod_errmsg(optarg, "-m (max_mem)"); break; 
         case 'R': 
-            opts.n_readers = strtol_errmsg(optarg, "-R (n_readers)"); 
-            n_readers_set = 1;
+            opts.n_max_reading = strtol_errmsg(optarg, "-R (n_max_reading)"); 
+            n_max_reading_set = 1;
             break;
         case 'F': opts.phred_offset = strtol_errmsg(optarg, "-F (phred_offset)"); break;
         /* case 'A': opts.use_orphan = 1; break; */
@@ -126,16 +123,16 @@ int main_pileup(int argc, char **argv)
         /*     } */
         /*     break; */
         case 'l': query_range_file = optarg; break;
-        case 'q': opts.min_map_quality = strtol_errmsg(optarg, "-q (min_map_quality)"); break;
-        case 'Q': opts.min_base_quality = strtol_errmsg(optarg, "-Q (min_base_quality)"); break;
+        case 'q': opts.bam_filter.min_map_quality = strtol_errmsg(optarg, "-q (min_map_quality)"); break;
+        case 'Q': opts.bam_filter.min_base_quality = strtol_errmsg(optarg, "-Q (min_base_quality)"); break;
 
         case 'x' :
-            opts.rflag_require = bam_str2flag(optarg);
-            if ( opts.rflag_require<0 ) { fprintf(stderr,"Could not parse -x %s\n", optarg); return 1; }
+            opts.bam_filter.rflag_require = bam_str2flag(optarg);
+            if ( opts.bam_filter.rflag_require<0 ) { fprintf(stderr,"Could not parse -x %s\n", optarg); return 1; }
             break;
         case 'X' :
-            opts.rflag_filter = bam_str2flag(optarg);
-            if ( opts.rflag_filter<0 ) { fprintf(stderr,"Could not parse --X %s\n", optarg); return 1; }
+            opts.bam_filter.rflag_filter = bam_str2flag(optarg);
+            if ( opts.bam_filter.rflag_filter<0 ) { fprintf(stderr,"Could not parse --X %s\n", optarg); return 1; }
             break;
 
         /* case  4 : mplp.openQ = atoi(optarg); break; */
@@ -148,8 +145,8 @@ int main_pileup(int argc, char **argv)
     }
 
     /* by default, allow each thread to read unrestricted */
-    if (! n_readers_set)
-        opts.n_readers = opts.n_threads;
+    if (! n_max_reading_set)
+        opts.n_max_reading = opts.n_threads;
 
     if (argc - optind != 3) return pileup_usage();
         
@@ -168,9 +165,9 @@ int main_pileup(int argc, char **argv)
                     pileup_file,
                     query_range_file,
                     opts.n_threads,
-                    opts.n_readers,
+                    opts.n_max_reading,
                     max_input_mem,
-                    opts.min_base_quality);
+                    opts.bam_filter);
 
     printf("Starting input processing.\n");
     fflush(stdout);
@@ -308,11 +305,11 @@ pileup_init(const char *samples_file,
             unsigned n_threads,
             unsigned n_max_reading,
             unsigned long max_input_mem,
-            unsigned min_qual)
+            struct bam_filter_params bam_filter)
 {
     bam_sample_info_init(samples_file, NULL);
     unsigned skip_empty_loci = 1;
-    batch_pileup_init(min_qual, skip_empty_loci, PSEUDO_DEPTH);
+    batch_pileup_init(bam_filter, skip_empty_loci, PSEUDO_DEPTH);
 
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 

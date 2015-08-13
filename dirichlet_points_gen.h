@@ -17,7 +17,7 @@ struct points_gen_par
     gsl_rng *randgen;
     struct bqs_count *observed;
     unsigned n_observed;
-    unsigned min_quality_score;
+    unsigned min_base_quality;
 };
 
 

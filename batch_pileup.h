@@ -50,6 +50,7 @@
 #include "compat_util.h"
 #include "bam_reader.h"
 
+
 /* n_match_lo_q + n_match_hi_q + n_match_fuzzy equal the total number
    of CIGAR match bases at this locus. ct_filt contain the
    n_match_hi_q calls broken down by basecall. (A 'fuzzy' call is a
@@ -121,7 +122,7 @@ batch_pileup_thread_free();
    allows the client to account for these no-data loci in the main
    loop. */
 void
-batch_pileup_init(unsigned min_qual, 
+batch_pileup_init(struct bam_filter_params _bam_filter,
                   unsigned skip_empty_loci,
                   unsigned _pseudo_depth);
 
@@ -277,8 +278,8 @@ void
 pileup_final_input();
 
 
-/* retrieve the min_quality_score field that was set */
-unsigned
-pileup_get_min_qual();
+/* retrieve the bam record filtering parameters in effect */
+struct bam_filter_params
+pileup_get_filter_params();
 
 #endif /* _BATCH_PILEUP_H */

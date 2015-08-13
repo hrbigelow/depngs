@@ -141,7 +141,7 @@ calc_post_to_dir_logratio(POINT *points, const void *par, double *weights)
     struct phred ph;
     unsigned base_code;
     while (trm != trm_end) {
-        if (trm->qual < pd->min_quality_score) {
+        if (trm->qual < pd->min_base_quality) {
             ++trm;
             continue;
         }

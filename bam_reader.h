@@ -4,6 +4,7 @@
 #include "htslib/hts.h"
 #include "htslib/bgzf.h"
 #include "htslib/sam.h"
+#include "khash.h"
 
 #include "cache.h"
 #include "locus_range.h"
@@ -94,5 +95,33 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs);
 void
 bam_stats_free(struct bam_stats *bs);
 
+#define MAX_READGROUP_NAME_LEN 1000
+
+KHASH_SET_INIT_STR(readgroup_h)
+
+khash_t(readgroup_h) *
+init_readgroup_file(FILE *readgroup_fh);
+
+
+void
+free_readgroup_hash(khash_t(readgroup_h) *rh);
+
+
+struct bam_filter_params {
+    /* if NULL, do not do any readgroup filtering.  (Equivalent to
+       naming all readgroups).  If non-null and non-empty, include only
+       these readgroups */
+    khash_t(readgroup_h) *readgroup_include_hash;
+    unsigned min_base_quality; /* minimum base quality to be included in pileup */
+    unsigned min_map_quality;
+    uint32_t rflag_require;
+    uint32_t rflag_filter;
+};
+
+
+/* return 1 if this record should be excluded due to filtering
+   parameters, 0 otherwise */
+int
+bam_rec_exclude(bam1_t *b, struct bam_filter_params par);
 
 #endif /* _BAM_READER_H */

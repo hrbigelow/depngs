@@ -777,3 +777,66 @@ bam_stats_free(struct bam_stats *bs)
     bgzf_close(bs->bgzf);
     free(bs->chunks);
 }
+
+
+khash_t(readgroup_h) *
+init_readgroup_file(FILE *readgroup_fh)
+{
+    khash_t(readgroup_h) *rh = kh_init(readgroup_h);
+    khiter_t itr;
+    char rg[MAX_READGROUP_NAME_LEN], *newline;
+    int ret;
+    while (fgets(rg, MAX_READGROUP_NAME_LEN, readgroup_fh)) {
+        if ((newline = strchr(rg, '\n')) == NULL) {
+            fprintf(stderr, 
+                    "Error parsing readgroup file: %s:%u: "
+                    "readgroup exceeds maximum readgroup size of %u\n"
+                    "Offending entry is: %s\n",
+                    __FILE__, __LINE__, MAX_READGROUP_NAME_LEN, rg);
+            exit(1);
+        } else {
+            *newline = '\0';
+            char *rgdup = strdup(rg);
+            itr = kh_put(readgroup_h, rh, rgdup, &ret);
+            if (ret == 0) free(rgdup);
+        }
+    }
+    return rh;
+}
+
+
+void
+free_readgroup_hash(khash_t(readgroup_h) *rh)
+{
+    khiter_t itr;
+    for (itr = kh_begin(rh); itr != kh_end(rh); ++itr)
+        if (kh_exist(rh, itr)) {
+            free((char *)kh_key(rh, itr));
+            kh_del(readgroup_h, rh, itr);
+        }
+    kh_destroy(readgroup_h, rh);
+}
+
+
+/* return 1 if this record should be excluded due to filtering
+   parameters, 0 otherwise. */
+inline int
+bam_rec_exclude(bam1_t *b, struct bam_filter_params par)
+{
+    uint8_t *rg;
+    return
+        /* exclude below-threshold mapping quality reads */
+        b->core.qual < par.min_map_quality
+
+        /* exclude if any rflag_require bits absent */
+        || ((b->core.flag & par.rflag_require) != par.rflag_require)
+
+        /* exclude if any rflag_filter bits present */
+        || (b->core.flag & par.rflag_filter)
+
+        /* exclude any readgroups not found in the hash */
+        || (par.readgroup_include_hash 
+            && (rg = bam_aux_get(b, "RG"))
+            && (kh_get(readgroup_h, par.readgroup_include_hash, (const char *)(rg + 1))
+                == kh_end(par.readgroup_include_hash)));
+}

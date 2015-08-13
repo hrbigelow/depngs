@@ -106,7 +106,7 @@ locus_diff_init(double _post_confidence,
                 const char *samples_file,
                 const char *sample_pairs_file,
                 const char *fasta_file,
-                unsigned min_quality_score,
+                struct bam_filter_params bam_filter,
                 const char *quantiles_string,
                 unsigned do_dist,
                 unsigned do_comp,
@@ -136,7 +136,7 @@ locus_diff_init(double _post_confidence,
     /* we do not want to skip empty loci, because we need to traverse
        these in order to get statistics for missing data */
     unsigned skip_empty_loci = 0;
-    batch_pileup_init(min_quality_score, skip_empty_loci, PSEUDO_DEPTH);
+    batch_pileup_init(bam_filter, skip_empty_loci, PSEUDO_DEPTH);
 
     dirichlet_diff_cache_init(PSEUDO_DEPTH,
                               GEN_POINTS_BATCH,
@@ -506,7 +506,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
     unsigned cacheable, cache_was_set;
     struct locus_data *ld[2];
     unsigned pi, i;
-    unsigned minq = pileup_get_min_qual();
+    struct bam_filter_params bam_filter = pileup_get_filter_params();
 
     for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
         unsigned sp[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
@@ -557,7 +557,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                 struct points_gen_par *pgp = dst->pgen.points_gen_par;
                 pgp->observed = ld[i]->bqs_ct;
                 pgp->n_observed = ld[i]->n_bqs_ct;
-                pgp->min_quality_score = minq;
+                pgp->min_base_quality = bam_filter.min_base_quality;
 
                 /* Generate all points */
                 unsigned perm[] = { 0, 1, 2, 3 };
