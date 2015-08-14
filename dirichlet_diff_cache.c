@@ -95,28 +95,17 @@ void set_points_hash_flag(unsigned disable)
     cache.disable_points_hash = disable;
 }
 
-struct alpha_packed_large {
-    unsigned a0 :24; /* 16,777,216 */
-    unsigned a1 :20; /*  1,048,576 */
-    unsigned a2 :12; /*      4,096 */
-    unsigned a3 :8;  /*        256 */
-};
-
-union alpha_large_key {
-    struct alpha_packed_large c;
-    uint64_t raw;
-};
-
 /* initializes the key from the counts, sets *packable to 1 on failure */
 void 
 init_alpha_packed_large(unsigned *cts, 
                         union alpha_large_key *key,
                         unsigned *packable)
 {
-    *packable = cts[0] <= (1<<24) 
-        && cts[1] <= (1<<20) 
-        && cts[2] <= (1<<12) 
-        && cts[3] <= (1<<8);
+    *packable = 
+        cts[0] <= alpha_packed_limits[0]
+        && cts[1] <= alpha_packed_limits[1]
+        && cts[2] <= alpha_packed_limits[2]
+        && cts[3] <= alpha_packed_limits[3];
 
     if (*packable)
         key->c = (struct alpha_packed_large){ cts[0], cts[1], cts[2], cts[3] };
@@ -468,11 +457,12 @@ struct pair_point_gen {
 
    Assumes that lim is descending.  lim[i] >= lim[i+1]
 */
-void find_cacheable_permutation(const unsigned *a, 
-                                const unsigned *b, 
-                                const unsigned *lim,
-                                unsigned *permutation, 
-                                unsigned *perm_found)
+void
+find_cacheable_permutation(const unsigned *a, 
+                           const unsigned *b, 
+                           const unsigned *lim,
+                           unsigned *permutation, 
+                           unsigned *perm_found)
 {
     *perm_found = 1;
     /* mpi[i] (max permutation index) is the maximum position in the
@@ -895,16 +885,6 @@ void initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
     beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], elem_is_less, bpar);
     
 }
-
-
-union bounds_key {
-    struct {
-        unsigned a2:20; /*     1,048,576 */
-        unsigned b1:32; /* 4,294,967,296 */
-        unsigned b2:20; /*     1,048,576 */
-    } f;
-    int64_t val;
-};
 
 
 #define BOUNDS_INDEX(a2, b1, b2) \

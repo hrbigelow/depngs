@@ -33,6 +33,34 @@ struct binomial_est_params {
 };
 
 
+static unsigned alpha_packed_limits[] = {
+    1<<24, 1<<20, 1<<12, 1<<8
+};
+
+struct alpha_packed_large {
+    unsigned a0 :24; /* 16,777,216 */
+    unsigned a1 :20; /*  1,048,576 */
+    unsigned a2 :12; /*      4,096 */
+    unsigned a3 :8;  /*        256 */
+};
+
+union alpha_large_key {
+    struct alpha_packed_large c;
+    uint64_t raw;
+};
+
+
+union bounds_key {
+    struct {
+        unsigned a2:20; /*     1,048,576 */
+        unsigned b1:32; /* 4,294,967,296 */
+        unsigned b2:20; /*     1,048,576 */
+    } f;
+    int64_t val;
+};
+
+
+
 struct alpha_pair {
     unsigned b1, b2;
 };
