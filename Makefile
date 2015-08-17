@@ -53,7 +53,7 @@ all : $(EXE)
 # temporarily rename to dep_dev so as not to interfere with running binary.
 dep : $(addprefix $(OBJDIR)/, dep.o file_binary_search.o				\
 	common_tools.o dist.o locus_diff.o fasta.o locus_range.o			\
-	sampling.o bam_sample_info.o binomial_est.o							\
+	sampling.o bam_sample_info.o binomial_est.o dir_cache.o				\
 	dirichlet_points_gen.o dirichlet_diff_cache.o pug.o file_utils.o	\
 	ordering.o locus.o bam_reader.o batch_pileup.o thread_queue.o		\
 	virtual_bound.o gen_pair_comp.o geometry.o simplex.o				\

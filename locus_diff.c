@@ -59,43 +59,7 @@ static unsigned n_quantiles;
 
 
 void
-alloc_locus_data(struct locus_data *ld)
-{
-    alloc_distrib_points(&ld->distp);
-    ld->bqs_ct = NULL;
-    ld->indel_ct = NULL;
-    init_pileup_data(&ld->sample_data);
-}
-
-
-void
-free_locus_data(struct locus_data *ld)
-{
-    free_distrib_points(&ld->distp);
-    free(ld->bqs_ct);
-    free(ld->indel_ct);
-    free_pileup_data(&ld->sample_data);
-}
-
-
-/* call when we advance to a new locus */
-void
-reset_locus_data(struct locus_data *ld)
-{
-    ld->init.distp = 0;
-    ld->init.base_ct = 0;
-    ld->init.bqs_ct = 0;
-    ld->init.indel_ct = 0;
-    ld->init.sample_data = 0;
-    ld->distp.points.size = 0;
-    ld->distp.weights.size = 0;
-    ld->confirmed_changed = 0;
-}
-
-
-void
 locus_diff_init(double _post_confidence, 
-                double _beta_confidence,
                 double _min_dirichlet_dist,
                 unsigned _max_sample_points,
                 double _indel_prior_alpha,
@@ -138,17 +102,6 @@ locus_diff_init(double _post_confidence,
     unsigned skip_empty_loci = 0;
     batch_pileup_init(bam_filter, skip_empty_loci, PSEUDO_DEPTH);
 
-    dirichlet_diff_cache_init(PSEUDO_DEPTH,
-                              GEN_POINTS_BATCH,
-                              _post_confidence, 
-                              _beta_confidence,
-                              prior_alpha,
-                              _min_dirichlet_dist,
-                              _max_sample_points,
-                              _max_dir_cache_items, 
-                              _max_bounds_cache_items,
-                              n_threads);
-
     parse_csv_line(quantiles_string, quantiles, &n_quantiles, MAX_NUM_QUANTILES);
 
     worker_options.do_print_pileup = do_print_pileup;
@@ -182,7 +135,7 @@ dist_on_create()
     tls_dw.square_dist_buf = malloc(sizeof(double) * max_sample_points);
     tls_dw.weights_buf = malloc(sizeof(double) * max_sample_points);
     tls_dw.do_print_progress = 1; /* !!! how to choose which thread prints progress? */
-    tls_dw.bep.points_hash_frozen = 0;
+    /* tls_dw.bep.points_hash_frozen = 0; */
 
     batch_pileup_thread_init(bam_samples.n, 
                              thread_params.fasta_file);
@@ -208,8 +161,8 @@ dist_on_exit()
 
     batch_pileup_thread_free();
 
-    inactivate_shared_data(! tls_dw.bep.points_hash_frozen,
-                           ! tls_dw.bep.bounds_hash_frozen);
+    /* inactivate_shared_data(! tls_dw.bep.points_hash_frozen, */
+    /*                        ! tls_dw.bep.bounds_hash_frozen); */
 
 }
 
@@ -222,6 +175,7 @@ locus_diff_tq_init(const char *locus_range_file,
                    unsigned n_threads,
                    unsigned n_max_reading,
                    unsigned long max_input_mem,
+                   double _beta_confidence,
                    FILE *dist_fh,
                    FILE *comp_fh,
                    FILE *indel_fh)
@@ -266,6 +220,22 @@ locus_diff_tq_init(const char *locus_range_file,
         /*     cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset); */
     }
 
+    dirichlet_diff_cache_init(PSEUDO_DEPTH,
+                              GEN_POINTS_BATCH,
+                              posterior_confidence, 
+                              _beta_confidence,
+                              prior_alpha,
+                              _min_dirichlet_dist,
+                              _max_sample_points,
+                              thread_params.reader_pars,
+                              thread_params.ranges,
+                              thread_params.ranges + thread_params.n_ranges,
+                              thread_params.n_max_reading,
+                              max_input_mem,
+                              n_bounds,
+                              min_ct_keep_bound,
+                              n_point_sets,
+                              n_threads);
 
 #define MAX_BYTES_SMALL_CHUNK 1e8
 #define SMALL_CHUNK 1e5
@@ -991,11 +961,11 @@ locus_diff_worker(const struct managed_buf *in_bufs,
     while (pileup_next_pos()) {
         /* this will strain the global mutex, but only during the hash
            loading phase. */
-        if (! tls_dw.bep.points_hash_frozen)
-            tls_dw.bep.points_hash_frozen = freeze_points_hash();
+        /* if (! tls_dw.bep.points_hash_frozen) */
+        /*     tls_dw.bep.points_hash_frozen = freeze_points_hash(); */
 
-        if (! tls_dw.bep.bounds_hash_frozen)
-            tls_dw.bep.bounds_hash_frozen = freeze_bounds_hash();
+        /* if (! tls_dw.bep.bounds_hash_frozen) */
+        /*     tls_dw.bep.bounds_hash_frozen = freeze_bounds_hash(); */
 
         if (dist_buf || comp_buf)
             distance_quantiles_aux(dist_buf);

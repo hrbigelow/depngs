@@ -4,7 +4,7 @@
 #include "defs.h"
 #include "locus_diff.h"
 #include "bam_sample_info.h"
-
+#include "dir_cache.h"
 #include "locus.h"
 #include "dirichlet_points_gen.h"
 
@@ -238,16 +238,6 @@ main_dist(int argc, char **argv)
                     (dist_fh != NULL), (comp_fh != NULL), (indel_fh != NULL),
                     opts.print_pileup_fields);
 
-
-    /* initialize beta quantile estimation procedure */
-
-    set_points_hash_flag(1);
-
-    printf("Precomputing difference hash...");
-    prepopulate_bounds_keys(opts.n_threads);
-    printf("done.\n");
-
-    set_points_hash_flag(0);
 
     struct thread_queue *tqueue =
         locus_diff_tq_init(query_range_file, 

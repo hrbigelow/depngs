@@ -4,7 +4,6 @@
 #include "defs.h"
 #include <gsl/gsl_rng.h>
 
-#include "binomial_est.h"
 #include "batch_pileup.h"
 
 /* number of points or weights generated at a time */
@@ -19,6 +18,70 @@ struct points_gen_par
     unsigned n_observed;
     unsigned min_base_quality;
 };
+
+struct points_buf {
+    POINT *buf, *p; /* p will point to either buf or a hash entry */
+    size_t size;
+};
+
+struct weights_buf {
+    double *buf;
+    size_t size, alloc;
+};
+
+
+struct points_gen
+{
+    void *points_gen_par;
+    void (*gen_point)(const void *par, POINT *points);
+    void (*weight)(POINT *points, const void *par,
+                   double *weights);
+};
+
+
+/* (one instance per (thread x sample))*/
+struct distrib_points {
+    struct points_gen pgen;
+    struct points_buf points;
+    struct weights_buf weights;
+};
+
+
+void alloc_distrib_points(struct distrib_points *dpts);
+
+void free_distrib_points(struct distrib_points *dpts);
+
+
+/* caches locus-specific summary data for an individual sample, so
+   that it can be re-used in multiple pairings */
+struct locus_data {
+    unsigned char confirmed_changed;
+    struct {
+        unsigned char distp: 1;
+        unsigned char base_ct: 1;
+        unsigned char bqs_ct: 1;
+        unsigned char indel_ct: 1;
+        unsigned char sample_data: 1;
+    } init; /* if these flags are set, means the following fields are
+               initialized */
+
+    struct distrib_points distp;
+    struct base_count base_ct;
+    struct bqs_count *bqs_ct;
+    unsigned n_bqs_ct;
+    struct indel_count *indel_ct;
+    unsigned n_indel_ct;
+    struct pileup_data sample_data;
+};
+
+void
+alloc_locus_data(struct locus_data *ld);
+
+void
+free_locus_data(struct locus_data *ld);
+
+void
+reset_locus_data(struct locus_data *ld);
 
 
 /* initializes error_probability and alpha_prior.  (no allocation

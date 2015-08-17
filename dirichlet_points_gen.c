@@ -21,8 +21,70 @@ static struct phred {
                          three non-basecall bases. */
 } error_probability[255];
 
+
 /* used for */
 static double g_log_dbl_max, g_log_dbl_min, g_log_dbl_range;
+
+unsigned g_max_sample_points;
+
+void alloc_distrib_points(struct distrib_points *dpts)
+{
+    unsigned msp = g_max_sample_points;
+    dpts->pgen = (struct points_gen){ 
+        malloc(sizeof(struct points_gen_par)),
+        gen_dirichlet_points_wrapper, 
+        calc_post_to_dir_logratio
+    };
+    ((struct points_gen_par *)dpts->pgen.points_gen_par)->randgen = 
+        gsl_rng_alloc(gsl_rng_taus);
+    dpts->points = (struct points_buf){ (POINT *)malloc(sizeof(POINT) * msp), NULL, 0 };
+    dpts->weights = (struct weights_buf){ (double *)malloc(sizeof(double) * msp), 0, msp };
+}
+
+
+void free_distrib_points(struct distrib_points *dpts)
+{
+    gsl_rng_free(((struct points_gen_par *)dpts->pgen.points_gen_par)->randgen);
+    free((struct points_gen_par *)dpts->pgen.points_gen_par);
+    free(dpts->points.buf);
+    free(dpts->weights.buf);
+}
+
+
+void
+alloc_locus_data(struct locus_data *ld)
+{
+    alloc_distrib_points(&ld->distp);
+    ld->bqs_ct = NULL;
+    ld->indel_ct = NULL;
+    init_pileup_data(&ld->sample_data);
+}
+
+
+void
+free_locus_data(struct locus_data *ld)
+{
+    free_distrib_points(&ld->distp);
+    free(ld->bqs_ct);
+    free(ld->indel_ct);
+    free_pileup_data(&ld->sample_data);
+}
+
+
+/* call when we advance to a new locus */
+void
+reset_locus_data(struct locus_data *ld)
+{
+    ld->init.distp = 0;
+    ld->init.base_ct = 0;
+    ld->init.bqs_ct = 0;
+    ld->init.indel_ct = 0;
+    ld->init.sample_data = 0;
+    ld->distp.points.size = 0;
+    ld->distp.weights.size = 0;
+    ld->confirmed_changed = 0;
+}
+
 
 void
 dirichlet_points_gen_init(double _alpha_prior)
@@ -78,7 +140,7 @@ void ran_dirichlet_lnpdf_unnormalized(double *alpha, double *points, double *lnd
 void gen_dirichlet_points_wrapper(const void *par, POINT *points)
 {
     int i;
-    struct points_gen_par *gd = par;
+    const struct points_gen_par *gd = par;
     double alpha[] = { 
         gd->alpha_counts[0] + alpha_prior,
         gd->alpha_counts[1] + alpha_prior,

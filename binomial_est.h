@@ -2,6 +2,7 @@
 #define _BINOMIAL_EST_H
 
 #include "defs.h"
+#include "dirichlet_points_gen.h"
 #include <stdlib.h>
 
 enum fuzzy_state {
@@ -20,24 +21,6 @@ struct binomial_est_state {
     double beta_qval_lo, beta_qval_hi;
 };
 
-
-struct points_buf {
-    POINT *buf;
-    size_t size, alloc;
-};
-
-struct weights_buf {
-    double *buf;
-    size_t size, alloc;
-};
-
-struct points_gen
-{
-    void *points_gen_par;
-    void (*gen_point)(const void *par, POINT *points);
-    void (*weight)(POINT *points, const void *par,
-                   double *weights);
-};
 
 /* initializes a private global beta_cache */
 void binomial_est_init(double beta_conf, 

@@ -305,8 +305,6 @@ binomial_quantile_est(unsigned max_points,
     double *square_dist_buf = malloc(batch_size * sizeof(double));
 
     assert(max_points % batch_size == 0);
-    assert(points1->alloc >= max_points);
-    assert(points2->alloc >= max_points);
 
     /* cur: next point to be used for distance calculation.
        end: next point to be drawn from distribution */

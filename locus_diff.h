@@ -7,6 +7,7 @@
 #include "cache.h"
 #include "thread_queue.h"
 #include "dirichlet_diff_cache.h"
+#include "dirichlet_points_gen.h"
 #include "batch_pileup.h"
 #include "bam_reader.h"
 
@@ -49,41 +50,6 @@ locus_diff_tq_init(const char *query_range_file,
 void locus_diff_tq_free();
 
 
-/* caches locus-specific summary data for an individual sample, so
-   that it can be re-used in multiple pairings */
-struct locus_data {
-    unsigned char confirmed_changed;
-    struct {
-        unsigned char distp: 1;
-        unsigned char base_ct: 1;
-        unsigned char bqs_ct: 1;
-        unsigned char indel_ct: 1;
-        unsigned char sample_data: 1;
-    } init; /* if these flags are set, means the following fields are
-               initialized */
-
-    struct distrib_points distp;
-    struct base_count base_ct;
-    struct bqs_count *bqs_ct;
-    unsigned n_bqs_ct;
-    struct indel_count *indel_ct;
-    unsigned n_indel_ct;
-    struct pileup_data sample_data;
-};
-
-void
-alloc_locus_data(struct locus_data *ld);
-
-void
-free_locus_data(struct locus_data *ld);
-
-
-void
-reset_locus_data(struct locus_data *ld);
-
-
-
-
 /* there will be one of these instantiated for each thread.  Each of
    these holds the parameters needed by the thread that can be shared
    across different samples.  Since each thread computes a chunk of
@@ -108,7 +74,7 @@ struct locus_diff_input
     double *weights_buf; /* holds weights from those square distances
                             (product of weights on individual
                             points) */
-
+    
     unsigned do_print_progress;
 };
 
