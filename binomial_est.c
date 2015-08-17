@@ -338,14 +338,12 @@ binomial_quantile_est(unsigned max_points,
         /* process another batch of samples, generating sample
            points as needed. */
         n += batch_size;
-        while (points1->size < n) 
-        {
+        while (points1->size < n) {
             pgen1.gen_point(pgen1.points_gen_par, pend1);
             points1->size += batch_size;
             pend1 += batch_size;
         }
-        while (points2->size < n) 
-        {
+        while (points2->size < n) {
             pgen2.gen_point(pgen2.points_gen_par, pend2);
             points2->size += batch_size;
             pend2 += batch_size;
@@ -369,8 +367,7 @@ binomial_quantile_est(unsigned max_points,
         else if (post_qmin < est.beta_qval_lo) lo_tag = BOUND_AMBIGUOUS;
         else lo_tag = BOUND_CHANGED;
 
-        if (lo_tag != BOUND_UNCHANGED)
-        {
+        if (lo_tag != BOUND_UNCHANGED) {
             /* Now, calculate est.beta_qval_hi only if necessary */
             est.beta_qval_hi = jeffreys_beta_hi(n, s);
             assert(!isnan(est.beta_qval_hi));
@@ -385,8 +382,7 @@ binomial_quantile_est(unsigned max_points,
     est.state = AMBIGUOUS;
 
     if (lo_tag == hi_tag)
-        switch(lo_tag)
-        {
+        switch(lo_tag) {
         case BOUND_CHANGED: est.state = CHANGED; break;
         case BOUND_AMBIGUOUS: est.state = AMBIGUOUS; break;
         case BOUND_UNCHANGED: est.state = UNCHANGED; break;
@@ -395,8 +391,7 @@ binomial_quantile_est(unsigned max_points,
         est.state = (lo_tag == BOUND_CHANGED)
             ? AMBIGUOUS_OR_CHANGED
             : AMBIGUOUS_OR_UNCHANGED;
-    else
-    {
+    else {
         fprintf(stderr, "%s:%i: low and hi bounds cross each other\n", __FILE__, __LINE__);
         exit(1);
     }

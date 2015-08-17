@@ -78,7 +78,7 @@ void ran_dirichlet_lnpdf_unnormalized(double *alpha, double *points, double *lnd
 void gen_dirichlet_points_wrapper(const void *par, POINT *points)
 {
     int i;
-    struct points_gen_par *gd = (struct points_gen_par *)par;
+    struct points_gen_par *gd = par;
     double alpha[] = { 
         gd->alpha_counts[0] + alpha_prior,
         gd->alpha_counts[1] + alpha_prior,
@@ -86,8 +86,7 @@ void gen_dirichlet_points_wrapper(const void *par, POINT *points)
         gd->alpha_counts[3] + alpha_prior 
     };
 
-    for (i = 0; i != GEN_POINTS_BATCH; ++i)
-    {
+    for (i = 0; i != GEN_POINTS_BATCH; ++i) {
         gsl_ran_dirichlet(gd->randgen, NUM_NUCS, alpha, *points);
         ++points;
     }

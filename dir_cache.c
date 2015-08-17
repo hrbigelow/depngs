@@ -23,9 +23,6 @@ static pthread_mutex_t merge_mtx = PTHREAD_MUTEX_INITIALIZER;
 static khash_t(points_tuple_h) *g_pt_hash;
 static khash_t(bounds_tuple_h) *g_bt_hash;
 
-static __thread khash_t(points_tuple_h) *t_pt_hash;
-static __thread khash_t(bounds_tuple_h) *t_bt_hash;
-
 /* Prepopulation */
 static khash_t(points_h) *g_points_hash;
 static khash_t(bounds_h) *g_bounds_hash;
@@ -33,8 +30,6 @@ static khash_t(bounds_h) *g_bounds_hash;
 /* Will hold all cached points */
 static double *g_point_sets_buf;
                                                                                           
-static __thread khash_t(bounds_h) *t_bounds_hash;
-
 {};
 
 
@@ -137,8 +132,12 @@ run_survey(void **reader_pars,
 static void
 survey_on_create()
 {
-    t_pt_hash = kh_init(points_tuple_h);
-    t_bt_hash = kh_init(bounds_tuple_h);
+}
+
+
+static void
+survey_on_exit()
+{
 }
 
 
@@ -152,16 +151,16 @@ survey_offload(void *par,
 
 /* merge */
 static void
-survey_on_exit()
+survey_merge(khash_t(points_tuple_h) *pt_hash,
+             khash_t(bounds_tuple_h) *bt_hash)
 {
-    pthread_mutex_lock(&merge_mtx);
     khiter_t itr1, itr2;
     union alpha_large_key ak;
     unsigned ct;
-    for (itr1 = kh_begin(t_pt_hash); itr1 != kh_end(t_pt_hash); ++itr1) {
-        if (! kh_exist(t_pt_hash, itr1)) continue;
-        ak.raw = kh_key(t_pt_hash, itr1);
-        ct = kh_val(t_pt_hash, itr1);
+    for (itr1 = kh_begin(pt_hash); itr1 != kh_end(pt_hash); ++itr1) {
+        if (! kh_exist(pt_hash, itr1)) continue;
+        ak.raw = kh_key(pt_hash, itr1);
+        ct = kh_val(pt_hash, itr1);
         itr2 = kh_put(points_tuple_h, g_pt_hash, ak.raw, &ret);
         if (ret == 0)
             kh_val(g_pt_hash, itr2) += ct;
@@ -169,20 +168,16 @@ survey_on_exit()
             kh_val(g_pt_hash, itr2) = ct;
     }
     union bounds_key bk;
-    for (itr1 = kh_begin(t_bt_hash); itr1 != kh_end(t_bt_hash); ++itr1) {
-        if (! kh_exist(t_bt_hash, itr1) continue;
-            bk.val = kh_key(t_bt_hash, itr1);
-            ct = kh_val(t_bt_hash, itr1);
-            itr2 = kh_put(bounds_tuple_h, g_bt_hash, bk.val, &ret);
-            if (ret == 0)
-                kh_val(g_bt_hash, itr2) += ct;
-            else
-                kh_val(g_bt_hash, itr2) = ct;
-            }
-        kh_destroy(points_tuple_h, t_pt_hash);
-        kh_destroy(bounds_tuple_h, t_bt_hash);
+    for (itr1 = kh_begin(bt_hash); itr1 != kh_end(bt_hash); ++itr1) {
+        if (! kh_exist(bt_hash, itr1)) continue;
+        bk.val = kh_key(bt_hash, itr1);
+        ct = kh_val(bt_hash, itr1);
+        itr2 = kh_put(bounds_tuple_h, g_bt_hash, bk.val, &ret);
+        if (ret == 0)
+            kh_val(g_bt_hash, itr2) += ct;
+        else
+            kh_val(g_bt_hash, itr2) = ct;
     }
-    pthread_mutex_unlock(&merge_mtx);
 }
 
 
@@ -219,6 +214,9 @@ survey_worker(const struct managed_buf *in_bufs,
     unsigned perm[4], perm_found, *cts;
     int ret;
     unsigned i, pi;
+    khash_t(points_tuple_h) *pt_hash = kh_init(points_tuple_h);
+    khash_t(bounds_tuple_h) *bt_hash = kh_init(bounds_tuple_h);
+
     while (pileup_next_pos()) {
         for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
             unsigned sp[] = { bam_sample_pairs.m[pi].s1, 
@@ -246,11 +244,11 @@ survey_worker(const struct managed_buf *in_bufs,
                     cts[perm[2]],
                     cts[perm[3]]
                 }
-                itr = kh_put(points_tuple_h, t_pt_hash, ak.raw, &ret);
+                itr = kh_put(points_tuple_h, pt_hash, ak.raw, &ret);
                 if (ret == 0)
-                    kh_val(t_pt_hash, itr)++;
+                    kh_val(pt_hash, itr)++;
                 else
-                    kh_val(t_pt_hash, itr) = 1;
+                    kh_val(pt_hash, itr) = 1;
             }
 
             /* tally the bounds tuple */
@@ -258,16 +256,23 @@ survey_worker(const struct managed_buf *in_bufs,
             bk.f.b1 = ld[1]->base_ct.ct_filt[perm[0]];
             bk.f.b2 = ld[1]->base_ct.ct_filt[perm[1]];
 
-            itr = kh_put(bounds_tuple_h, t_bt_hash, bk.val, &ret);
+            itr = kh_put(bounds_tuple_h, bt_hash, bk.val, &ret);
             if (ret == 0)
-                kh_val(t_bt_hash, itr)++;
+                kh_val(bt_hash, itr)++;
             else
-                kh_val(t_bt_hash, itr) = 1;
+                kh_val(bt_hash, itr) = 1;
         }
 
         free_locus_data(&ld[0]);
         free_locus_data(&ld[1]);
     }
+
+    pthread_mutex_lock(&merge_mtx);
+    survey_merge(pt_hash, bt_hash);
+    pthread_mutex_unlock(&merge_mtx);
+
+    kh_destroy(pt_hash);
+    kh_destroy(bt_hash);
 }
 
 
@@ -339,7 +344,7 @@ generate_points_worker(void *par)
 
 
 /* Populate g_points_hash with the total set of point sets from the
-   dirichlets */
+   dirichlets of g_pt_hash */
 void
 generate_point_sets(unsigned n_threads,
                     unsigned max_sample_points)
@@ -372,20 +377,25 @@ generate_est_bounds_worker(void *par)
 
     unsigned i;
     struct binomial_est_bounds beb;
+    struct binomial_est_params bpar;
+
     for (i = 0, itr = kh_begin(g_bt_hash); itr != kh_end(g_bt_hash); ++itr) {
         if (! kh_exist(g_bt_hash, itr)) continue;
         if (i % geb.n_threads == geb.nth) {
             /* create key */
             bk.val = kh_key(g_bt_hash, itr);
-
+            itr2 = kh_put(bounds_h, bh, bk.key, &ret);
+            assert(ret != 0);
+            
             initialize_est_bounds(bk.f.a2, bk.f.b1, bk.f.b2,
-                                  NULL, &beb);
+                                  &bpar, &beb);
+
+            kh_val(bh, itr2) = beb;
         }
         ++i;
     }
 
     /* add to global hash */
-    struct binomial_est_bounds beb;
     pthread_mutex_lock(&merge_mtx);
     for (itr = kh_begin(bh); itr != kh_end(bh); ++itr) {
         if (! kh_exist(bh, itr)) continue;
@@ -401,7 +411,8 @@ generate_est_bounds_worker(void *par)
 }
 
 
-
+/* populate g_bounds_hash with computed est bounds for all of the
+   bounds tuples surveyed. */
 void
 generate_est_bounds(unsigned n_threads)
 {
@@ -418,5 +429,3 @@ generate_est_bounds(unsigned n_threads)
 
     free(threads);
 }
-
-

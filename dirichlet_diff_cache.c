@@ -680,9 +680,15 @@ get_est_state(struct binomial_est_params *bpar)
         pgp = bpar->dist[i]->pgen.points_gen_par;
         cts[i] = pgp->alpha_counts;
         init_alpha_packed_large(cts[i], &key[i], &packable[i]);
-        if (bpar->dist[i]->points.size == 0 && packable[i])
-            sync_points(key[i], &bpar->dist[i]->points, 
-                        bpar->points_hash_frozen);
+        if (bpar->dist[i]->points.size == 0 && packable[i]) {
+            /* attempt to retrieve points from the global point sets hash */
+            if ((itr = kh_get(points_h, g_points_hash, key[i].raw)) 
+                != kh_end(g_points_hash)) {
+                double *
+            }
+            
+            /* sync_points(key[i], &bpar->dist[i]->points,  */
+            /*             bpar->points_hash_frozen); */
     }
 
     struct binomial_est_state rval =
@@ -696,11 +702,11 @@ get_est_state(struct binomial_est_params *bpar)
                               &bpar->dist[1]->points,
                               cache.batch_size);
 
-    for (i = 0; i != 2; ++i) {
-        if (packable[i])
-        sync_points(key[i], &bpar->dist[i]->points, 
-                    bpar->points_hash_frozen);
-    }
+    /* for (i = 0; i != 2; ++i) { */
+    /*     if (packable[i]) */
+    /*     sync_points(key[i], &bpar->dist[i]->points,  */
+    /*                 bpar->points_hash_frozen); */
+    /* } */
 
     return rval;
 }
