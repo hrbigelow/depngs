@@ -5,6 +5,14 @@
 #include "dirichlet_points_gen.h"
 #include <stdlib.h>
 
+struct binomial_est_params {
+    unsigned max_sample_points;
+    double post_confidence;
+    double beta_confidence;
+    double min_dirichlet_dist;
+    unsigned batch_size;
+};
+
 enum fuzzy_state {
     CHANGED,                /* the two loci differ */
     AMBIGUOUS_OR_CHANGED,   /* max_points taken; UNCHANGED category eliminated  */
@@ -22,9 +30,18 @@ struct binomial_est_state {
 };
 
 
+struct binomial_est_bounds {
+    /* enum init_phase state; */
+    int32_t ambiguous[2];
+    int32_t unchanged[2];
+};
+
+
+
+
+
 /* initializes a private global beta_cache */
-void binomial_est_init(double beta_conf, 
-                       unsigned batch_size, 
+void binomial_est_init(struct binomial_est_params be_par,
                        unsigned num_beta_precalc,
                        size_t n_threads);
 
@@ -39,13 +56,9 @@ void binomial_est_free();
    distribution to estimate the true binomial probability.  Use dist1
    and dist2 to generate more points as needed. */
 struct binomial_est_state
-binomial_quantile_est(unsigned max_points,
-                      float min_dist,
-                      float post_conf, float beta_conf,
-                      struct points_gen pgen1,
+binomial_quantile_est(struct points_gen pgen1,
                       struct points_buf *points1,
                       struct points_gen pgen2,
-                      struct points_buf *points2,
-                      size_t batch_size);
+                      struct points_buf *points2);
 
 #endif /* _BINOMIAL_EST_H */

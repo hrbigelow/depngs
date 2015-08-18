@@ -4,33 +4,34 @@
 #include <gsl/gsl_rng.h>
 
 #include "defs.h"
-#include "cache.h"
-#include "thread_queue.h"
-#include "dirichlet_diff_cache.h"
-#include "dirichlet_points_gen.h"
-#include "batch_pileup.h"
 #include "bam_reader.h"
+#include "dir_cache.h"
+#include "dirichlet_diff_cache.h"
+#include "thread_queue.h"
+
+struct locus_diff_params {
+    unsigned do_print_pileup;
+    unsigned do_dist, do_comp, do_indel;
+    unsigned max_sample_points;
+    double post_confidence;
+    double min_dirichlet_dist;
+    double prior_alpha;
+    double indel_prior_alpha;
+    double quantiles[MAX_NUM_QUANTILES];
+    unsigned n_quantiles;
+};
+
+
+
 
 /* program-wide initialization of static variables */
 void
-locus_diff_init(double _post_confidence, 
-                double _beta_confidence,
-                double _min_dirichlet_dist,
-                unsigned _max_sample_points,
-                double _indel_prior_alpha,
-                unsigned _max_dir_cache_items,
-                unsigned _max_bounds_cache_items,
+locus_diff_init(struct locus_diff_params ldpar,
                 unsigned n_threads,
-                double prior_alpha,
                 const char *samples_file,
                 const char *sample_pairs_file,
                 const char *fasta_file,
-                struct bam_filter_params bam_filter,
-                const char *quantiles_string,
-                unsigned do_dist,
-                unsigned do_comp,
-                unsigned do_indel,
-                unsigned do_print_pileup);
+                struct bam_filter_params bam_filter);
 
 void locus_diff_free();
 
@@ -38,11 +39,14 @@ void locus_diff_free();
 /* program-wide initialization of static variables, specific to the
    thread-queue. (also calls thread_queue_init) */
 struct thread_queue *
-locus_diff_tq_init(const char *query_range_file,
+locus_diff_tq_init(const char *locus_range_file,
                    const char *fasta_file,
                    unsigned n_threads,
-                   unsigned n_readers,
+                   unsigned n_max_reading,
                    unsigned long max_input_mem,
+                   struct dirichlet_diff_params dd_par,
+                   struct binomial_est_params be_par,
+                   struct dir_cache_params dc_par,
                    FILE *dist_fh,
                    FILE *comp_fh,
                    FILE *indel_fh);
@@ -57,7 +61,7 @@ void locus_diff_tq_free();
    well, held in sample_attributes. */
 struct locus_diff_input
 {
-    struct binomial_est_params bep;
+    struct bound_search_params bep;
     size_t thread_num;
 
     double dist_quantile_values[MAX_NUM_QUANTILES];

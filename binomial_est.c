@@ -13,6 +13,8 @@
 
 #include "cache.h"
 
+static struct binomial_est_params g_be_par;
+
 const char *fuzzy_state_strings[] = {
     "changed",
     "ambiguous_or_changed",
@@ -171,17 +173,17 @@ void *init_beta_func(void *args)
     }                                                                   \
     
 void
-binomial_est_init(double beta_conf, 
-                  unsigned batch_size, 
+binomial_est_init(struct binomial_est_params be_par,
                   unsigned num_beta_precalc,
                   size_t n_threads)
 {
+    g_be_par = be_par;
     pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
     struct beta_input *inputs = malloc(n_threads * sizeof(struct beta_input));
 
     beta_cache.max_n = num_beta_precalc;
-    beta_cache.batch_sz = batch_size;
-    beta_cache.conf = beta_conf;
+    beta_cache.batch_sz = g_be_par.batch_size;
+    beta_cache.conf = g_be_par.beta_confidence;
 
     unsigned n_batch = beta_cache.max_n / beta_cache.batch_sz;
 
@@ -279,14 +281,10 @@ enum bound_class {
    (tight_spread). It makes some sense for loose_spread to be the same
    as post_qmin on a vague intuitive level.  */
 struct binomial_est_state
-binomial_quantile_est(unsigned max_points, 
-                      float min_dist,
-                      float post_conf, float beta_conf,
-                      struct points_gen pgen1,
+binomial_quantile_est(struct points_gen pgen1,
                       struct points_buf *points1,
                       struct points_gen pgen2,
-                      struct points_buf *points2,
-                      size_t batch_size)
+                      struct points_buf *points2)
 {
     
     int n = 0, s = 0; /* # samples taken, # successes */
@@ -294,17 +292,19 @@ binomial_quantile_est(unsigned max_points,
     enum bound_class lo_tag = BOUND_CHANGED, hi_tag = BOUND_UNCHANGED;
 
     /* min and max quantiles for posterior */
-    float post_qmin = 1.0 - post_conf, post_qmax = post_conf;
+    float
+        post_qmin = 1.0 - g_be_par.post_confidence, 
+        post_qmax = g_be_par.post_confidence;
 
     /* possibly weight-adjusted quantile values corresponding to
        beta_qmin and beta_qmax */
     struct binomial_est_state est;
     est.beta_qval_lo = 0;
     est.beta_qval_hi = 1;
-    double min_dist_squared = gsl_pow_2(min_dist);
-    double *square_dist_buf = malloc(batch_size * sizeof(double));
+    double min_dist_squared = gsl_pow_2(g_be_par.min_dirichlet_dist);
+    double *square_dist_buf = malloc(g_be_par.batch_size * sizeof(double));
 
-    assert(max_points % batch_size == 0);
+    assert(g_be_par.max_sample_points % g_be_par.batch_size == 0);
 
     /* cur: next point to be used for distance calculation.
        end: next point to be drawn from distribution */
@@ -329,33 +329,33 @@ binomial_quantile_est(unsigned max_points,
         beta_spread = est.beta_qval_hi - est.beta_qval_lo, 
         spread_loose_max = post_qmin,
         spread_tight_max = post_qmin * 0.2;
-    while (n != max_points 
+    while (n != g_be_par.max_sample_points 
            && ((lo_tag != BOUND_CHANGED && beta_spread > spread_loose_max)
                || (lo_tag == BOUND_CHANGED && beta_spread > spread_tight_max)))
     {
         /* process another batch of samples, generating sample
            points as needed. */
-        n += batch_size;
+        n += g_be_par.batch_size;
         while (points1->size < n) {
             pgen1.gen_point(pgen1.points_gen_par, pend1);
-            points1->size += batch_size;
-            pend1 += batch_size;
+            points1->size += g_be_par.batch_size;
+            pend1 += g_be_par.batch_size;
         }
         while (points2->size < n) {
             pgen2.gen_point(pgen2.points_gen_par, pend2);
-            points2->size += batch_size;
-            pend2 += batch_size;
+            points2->size += g_be_par.batch_size;
+            pend2 += g_be_par.batch_size;
         }
         
         /* measure distances, threshold, and classify successes.
            NOTE:  success means non-change */
         compute_square_dist((const double *)pcur1, 
                             (const double *)pcur2, 
-                            batch_size, NUM_NUCS, square_dist_buf);
+                            g_be_par.batch_size, NUM_NUCS, square_dist_buf);
 
         /* tallying number of 'successes' (pairs of points that are
            below the distance threshold, i.e. non-changed) */
-        for (p = 0; p != batch_size; ++p)
+        for (p = 0; p != g_be_par.batch_size; ++p)
             s += (square_dist_buf[p] < min_dist_squared ? 1 : 0);
 
         /* regardless of est, we need to calculate est.beta_qval_lo */
@@ -424,14 +424,14 @@ void weighted_binomial_est(struct points_gen pgen1,
     while (weights1->size < n)
     {
         pgen1.weight(points1->buf + weights1->size, pgen1.weight_par, wend1);
-        weights1->size += batch_size;
-        wend1 += batch_size;
+        weights1->size += g_be_par.batch_size;
+        wend1 += g_be_par.batch_size;
     }
     while (weights2->size < n)
     {
         pgen2.weight(points2->buf + weights2->size, pgen2.weight_par, wend2);
-        weights2->size += batch_size;
-        wend2 += batch_size;
+        weights2->size += g_be_par.batch_size;
+        wend2 += g_be_par.batch_size;
     }
 
     w = wcur1 - weights1->buf;

@@ -66,15 +66,13 @@ survey_offload(void *par,
    accumulating at least n_bounds and n_point_sets.  At each
    iteration,  */
 void
-run_survey(void **reader_pars,
+run_survey(struct dir_cache_params dcpar,
+           void **reader_pars,
            struct contig_region *qbeg,
            struct contig_region *qend,
            unsigned n_threads,
            unsigned n_max_reading,
-           unsigned long max_input_mem,
-           unsigned n_bounds,
-           unsigned min_ct_keep_bound,
-           unsigned n_point_sets)
+           unsigned long max_input_mem)
 {
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
     unsigned nb = 0, np = 0;
@@ -89,7 +87,7 @@ run_survey(void **reader_pars,
         *regs = malloc(n_ranges * sizeof(struct contig_region)),
         *breg = regs,
         *ereg = regs + n_ranges;
-    memcpy(regs, qbeg, n_ranges);
+    memcpy(regs, qbeg, n_ranges * sizeof(struct contig_region));
     unsigned save_end = breg->end;
 
     /* parse one million data points per chunk. A data point is one
@@ -99,7 +97,7 @@ run_survey(void **reader_pars,
     unsigned max_n_loci = N_DATA_PER_CHUNK / bam_samples.n;
     struct bam_scanner_info *bsi;
 
-    while (nb < n_bounds || np < n_point_sets) {
+    while (nb < dcpar.n_bounds || np < dcpar.n_point_sets) {
 
         /* scan forward until we have n_loci */
         unsigned n_loci = 0;
@@ -140,7 +138,7 @@ run_survey(void **reader_pars,
         nb = 0;
         for (itr = kh_begin(g_bt_hash); itr != kh_end(g_bt_hash); ++itr) {
             if (! kh_exist(g_bt_hash, itr)) continue;
-            if (kh_val(g_bt_hash, itr) >= min_ct_keep_bound) ++nb;
+            if (kh_val(g_bt_hash, itr) >= dcpar.min_ct_keep_bound) ++nb;
         }
         np = kh_size(g_points_hash);
     }
@@ -387,7 +385,7 @@ generate_est_bounds_worker(void *par)
     unsigned i;
     int ret;
     struct binomial_est_bounds beb;
-    struct binomial_est_params bpar;
+    struct bound_search_params bpar;
 
     for (i = 0, itr = kh_begin(g_bt_hash); itr != kh_end(g_bt_hash); ++itr) {
         if (! kh_exist(g_bt_hash, itr)) continue;

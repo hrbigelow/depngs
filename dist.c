@@ -7,30 +7,47 @@
 #include "dir_cache.h"
 #include "locus.h"
 #include "dirichlet_points_gen.h"
+#include "dirichlet_diff_cache.h"
 
 static struct {
     struct bam_filter_params bam_filter;
+    struct binomial_est_params be_par;
+    struct dir_cache_params dc_par;
+    struct dirichlet_diff_params dd_par;
+    struct locus_diff_params ld_par;
     unsigned long max_mem;
     unsigned n_threads;
     unsigned n_max_reading;
-    double post_confidence;
-    double beta_confidence;
-    double min_dirichlet_dist;
-    double prior_alpha;
-    unsigned max_sample_points;
-    int print_pileup_fields;
 } opts = { 
-    { NULL, 5, 10, 0, 0 }, 
-    
+    .bam_filter = { 
+        .min_base_quality = 5,
+        .min_map_quality = 10,
+        .rflag_require = 0,
+        .rflag_filter = 0
+    }, 
+    .be_par = {
+        .max_sample_points = 10000,
+        .post_confidence = 0.99,
+        .beta_confidence = 0.9999,
+        .min_dirichlet_dist = 0.2,
+        .batch_size = GEN_POINTS_BATCH
+    },
+    .dc_par = {
+        .n_bounds = 1e8,
+        .min_ct_keep_bound = 3,
+        .n_point_sets = 1e6
+    },
+    .dd_par = {
+        .pseudo_depth = 1e6,
+        .prior_alpha = 0.1,
+    },
+    .ld_par = {
+        .do_print_pileup = 0,
+        .indel_prior_alpha = 0.1
+    },
     .max_mem = 10e9, 
     .n_threads = 1,
-    .n_max_reading = 1,
-    .post_confidence = 0.99,
-    .beta_confidence = 0.9999,
-    .min_dirichlet_dist = 0.2,
-    .prior_alpha = 0.1,
-    .max_sample_points = 10000,
-    .print_pileup_fields = 0
+    .n_max_reading = 1
 };
 
 
@@ -60,11 +77,11 @@ int dist_usage()
             "-p FLOAT    PRIOR_ALPHA, alpha value for dirichlet prior [%0.5g]\n"
             "-C STRING   dist/comp/indel quantiles to report [\"0.005,0.05,0.5,0.95,0.995\"]\n"
             "\n",
-            opts.min_dirichlet_dist,
-            opts.post_confidence,
-            opts.beta_confidence,
-            opts.max_sample_points,
-            opts.prior_alpha
+            opts.be_par.min_dirichlet_dist,
+            opts.be_par.post_confidence,
+            opts.be_par.beta_confidence,
+            opts.be_par.max_sample_points,
+            opts.ld_par.prior_alpha
             );
 
     fprintf(stderr,
@@ -144,13 +161,14 @@ main_dist(int argc, char **argv)
         case 'x': summary_stats_file = optarg; break;
 
             /* statistical parameters */
-        case 'y': opts.min_dirichlet_dist = 
+        case 'y': opts.be_par.min_dirichlet_dist = 
                 SQRT2 * strtod_errmsg(optarg, "-y (min_dirichlet_dist)"); break;
-        case 'X': opts.post_confidence = strtod_errmsg(optarg, "-X (post_confidence)"); break;
-        case 'Z': opts.beta_confidence = strtod_errmsg(optarg, "-Z (beta_confidence)"); break;
-        case 'P': opts.max_sample_points = 
-                (unsigned)strtod_errmsg(optarg, "-f (max_sample_points)"); break;
-        case 'p': opts.prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
+        case 'X': opts.be_par.post_confidence = strtod_errmsg(optarg, "-X (post_confidence)"); break;
+        case 'Z': opts.be_par.beta_confidence = strtod_errmsg(optarg, "-Z (beta_confidence)"); break;
+        case 'P': opts.be_par.max_sample_points = 
+                (unsigned)strtod_errmsg(optarg, "-f (max_sample_points)"); 
+            break;
+        case 'p': opts.ld_par.prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
         case 'C': quantiles_string = optarg; break;
 
             /* read-level filtering */
@@ -167,7 +185,7 @@ main_dist(int argc, char **argv)
             n_max_reading_set = 1;
             break;
         case 'm': opts.max_mem = (size_t)strtod_errmsg(optarg, "-m (max_mem)"); break;
-        case 'g': opts.print_pileup_fields = 1; break;
+        case 'g': opts.ld_par.do_print_pileup = 1; break;
 
         default: return dist_usage(); break;
         }
@@ -178,7 +196,8 @@ main_dist(int argc, char **argv)
         opts.n_max_reading = opts.n_threads;
 
     /* This adjustment makes max_sample_points a multiple of GEN_POINTS_BATCH */
-    opts.max_sample_points += GEN_POINTS_BATCH - (opts.max_sample_points % GEN_POINTS_BATCH);
+    opts.be_par.max_sample_points += 
+        GEN_POINTS_BATCH - (opts.be_par.max_sample_points % GEN_POINTS_BATCH);
 
     const char *samples_file = argv[optind];
     const char *sample_pairs_file = argv[optind + 1];
@@ -207,6 +226,16 @@ main_dist(int argc, char **argv)
     FILE *comp_fh = open_if_present(comp_file, "w");
     FILE *indel_fh = open_if_present(indel_dist_file, "w");
 
+    opts.ld_par.do_dist = (dist_fh != NULL);
+    opts.ld_par.do_comp = (comp_fh != NULL);
+    opts.ld_par.do_indel = (indel_fh != NULL);
+
+    /* resolve overlap between parameter sets */
+    opts.ld_par.max_sample_points = opts.be_par.max_sample_points;
+    opts.ld_par.post_confidence = opts.be_par.post_confidence;
+    opts.ld_par.min_dirichlet_dist = opts.be_par.min_dirichlet_dist;
+    opts.ld_par.prior_alpha = opts.dd_par.prior_alpha;
+
 #define BYTES_PER_POINT sizeof(double) * NUM_NUCS
 
     /* this is just an empirically based estimate */
@@ -217,33 +246,28 @@ main_dist(int argc, char **argv)
 
     /* allot a fraction of total memory to input buffers. */
     unsigned long max_input_mem = opts.max_mem * INPUT_MEM_FRACTION;
-    unsigned long max_dir_cache_items = 
-        FRAGMENTATION_FACTOR * (opts.max_mem - max_input_mem) 
-        / (opts.max_sample_points * BYTES_PER_POINT);
-    unsigned long max_bounds_cache_items = 5000;
 
-    double indel_prior_alpha = opts.prior_alpha;
+    parse_csv_line(quantiles_string, 
+                   opts.ld_par.quantiles, 
+                   &opts.ld_par.n_quantiles, 
+                   MAX_NUM_QUANTILES);
 
-    locus_diff_init(opts.post_confidence, 
-                    opts.beta_confidence, 
-                    opts.min_dirichlet_dist, 
-                    opts.max_sample_points,
-                    indel_prior_alpha,
-                    max_dir_cache_items, max_bounds_cache_items,
+    locus_diff_init(opts.ld_par,
                     opts.n_threads, 
-                    opts.prior_alpha,
-                    samples_file, sample_pairs_file, fasta_file,
-                    opts.bam_filter, 
-                    quantiles_string,
-                    (dist_fh != NULL), (comp_fh != NULL), (indel_fh != NULL),
-                    opts.print_pileup_fields);
-
+                    samples_file, 
+                    sample_pairs_file, 
+                    fasta_file,
+                    opts.bam_filter);
 
     struct thread_queue *tqueue =
         locus_diff_tq_init(query_range_file, 
                            fasta_file,
-                           opts.n_threads, opts.n_max_reading, 
+                           opts.n_threads,
+                           opts.n_max_reading, 
                            max_input_mem,
+                           opts.dd_par,
+                           opts.be_par,
+                           opts.dc_par,
                            dist_fh, comp_fh, indel_fh);
 
     printf("Starting input processing.\n");
