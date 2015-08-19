@@ -54,10 +54,10 @@ unpack_bounds(khint64_t k, unsigned *b);
    c[0]: a0:24, a3:8. 
    c[1]: a1:20, a2:12 
 */
-union alpha_large_key {
-    uint32_t c[2];
-    uint64_t key;
-};
+/* union alpha_large_key { */
+/*     uint32_t c[2]; */
+/*     uint64_t key; */
+/* }; */
 
 
 /* union bounds_key { */
@@ -84,6 +84,7 @@ void
 dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
                           struct binomial_est_params be_par,
                           struct dir_cache_params dc_par,
+                          struct bam_filter_params bf_par,
                           void **reader_pars,
                           struct contig_region *qbeg,
                           struct contig_region *qend,

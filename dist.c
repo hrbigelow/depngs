@@ -10,7 +10,7 @@
 #include "dirichlet_diff_cache.h"
 
 static struct {
-    struct bam_filter_params bam_filter;
+    struct bam_filter_params bf_par;
     struct binomial_est_params be_par;
     struct dir_cache_params dc_par;
     struct dirichlet_diff_params dd_par;
@@ -19,7 +19,7 @@ static struct {
     unsigned n_threads;
     unsigned n_max_reading;
 } opts = { 
-    .bam_filter = { 
+    .bf_par = { 
         .min_base_quality = 5,
         .min_map_quality = 10,
         .rflag_require = 0,
@@ -92,10 +92,10 @@ int dist_usage()
             "-F INT      bits required to be unset in BAM flag for inclusion [%d]\n"
             "-R STRING   file listing read groups to require. (absent: do not filter by readgroup) [absent]\n"
             "\n",
-            opts.bam_filter.min_base_quality,
-            opts.bam_filter.min_map_quality,
-            opts.bam_filter.rflag_require,
-            opts.bam_filter.rflag_filter
+            opts.bf_par.min_base_quality,
+            opts.bf_par.min_map_quality,
+            opts.bf_par.rflag_require,
+            opts.bf_par.rflag_filter
             );
 
     fprintf(stderr,
@@ -172,10 +172,10 @@ main_dist(int argc, char **argv)
         case 'C': quantiles_string = optarg; break;
 
             /* read-level filtering */
-        case 'Q': opts.bam_filter.min_base_quality = strtol_errmsg(optarg, "-Q (min_base_quality)"); break;
-        case 'q': opts.bam_filter.min_map_quality = strtol_errmsg(optarg, "-q (min_map_quality)"); break;
-        case 'f': opts.bam_filter.rflag_require = strtol_errmsg(optarg, "-f (rflag_require)"); break;
-        case 'F': opts.bam_filter.rflag_filter = strtol_errmsg(optarg, "-F (rflag_filter)"); break;
+        case 'Q': opts.bf_par.min_base_quality = strtol_errmsg(optarg, "-Q (min_base_quality)"); break;
+        case 'q': opts.bf_par.min_map_quality = strtol_errmsg(optarg, "-q (min_map_quality)"); break;
+        case 'f': opts.bf_par.rflag_require = strtol_errmsg(optarg, "-f (rflag_require)"); break;
+        case 'F': opts.bf_par.rflag_filter = strtol_errmsg(optarg, "-F (rflag_filter)"); break;
         case 'R': readgroup_file = optarg; break;
 
             /* general */
@@ -215,7 +215,7 @@ main_dist(int argc, char **argv)
     /* parse readgroups file */
     FILE *readgroup_fh = open_if_present(readgroup_file, "r");
     if (readgroup_fh) {
-        opts.bam_filter.readgroup_include_hash = 
+        opts.bf_par.readgroup_include_hash = 
             init_readgroup_file(readgroup_fh);
         fclose(readgroup_fh);
     }
@@ -260,7 +260,7 @@ main_dist(int argc, char **argv)
                     samples_file, 
                     sample_pairs_file, 
                     fasta_file,
-                    opts.bam_filter);
+                    opts.bf_par);
 
     struct thread_queue *tqueue =
         locus_diff_tq_init(query_range_file, 
@@ -271,6 +271,7 @@ main_dist(int argc, char **argv)
                            opts.dd_par,
                            opts.be_par,
                            opts.dc_par,
+                           opts.bf_par,
                            dist_fh, comp_fh, indel_fh);
 
     printf("Starting input processing.\n");
@@ -288,8 +289,8 @@ main_dist(int argc, char **argv)
 
     locus_diff_free();
 
-    if (opts.bam_filter.readgroup_include_hash)
-        free_readgroup_hash(opts.bam_filter.readgroup_include_hash);
+    if (opts.bf_par.readgroup_include_hash)
+        free_readgroup_hash(opts.bf_par.readgroup_include_hash);
     
     printf("Finished.\n");
 

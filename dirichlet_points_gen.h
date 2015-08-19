@@ -9,6 +9,12 @@
 /* number of points or weights generated at a time */
 #define GEN_POINTS_BATCH 32
 
+struct dirichlet_points_gen_params {
+    unsigned min_base_quality;
+    unsigned max_sample_points;
+    double alpha_prior;
+};
+
 struct points_gen_par
 {
     unsigned alpha_counts[NUM_NUCS];
@@ -16,7 +22,6 @@ struct points_gen_par
     gsl_rng *randgen;
     struct bqs_count *observed;
     unsigned n_observed;
-    unsigned min_base_quality;
 };
 
 struct points_buf {
@@ -50,6 +55,17 @@ struct distrib_points {
 void alloc_distrib_points(struct distrib_points *dpts);
 
 void free_distrib_points(struct distrib_points *dpts);
+
+/* populate points buffer, either by cache retrieval or
+   computation. */
+void
+dirichlet_refresh_points(struct distrib_points *dpts);
+
+
+/* populate weights buffer by computation.  requires a populated
+   points buffer. */
+void
+dirichlet_refresh_weights(struct distrib_points *dpts);
 
 
 /* caches locus-specific summary data for an individual sample, so
@@ -87,7 +103,7 @@ reset_locus_data(struct locus_data *ld);
 /* initializes error_probability and alpha_prior.  (no allocation
    needed) */
 void
-dirichlet_points_gen_init(double _alpha_prior, unsigned max_sample_points);
+dirichlet_points_gen_init(struct dirichlet_points_gen_params pg_par);
 
 double get_alpha_prior();
 

@@ -33,20 +33,55 @@ indel_hash_equal(struct indel_seq *a, struct indel_seq *b)
         && kh_str_hash_equal(a->seq, b->seq);
 }
 
+
+
 struct pbqt {
     uint32_t pos;
-    uint32_t tid: 20; /* 1,048,576 */
-    uint32_t base: 4; /* BAM encoding. use hts.h: seq_nt16_str[base]
-                         to get the base */
-    uint32_t qual: 7; /* numeric quality score */
-    uint32_t strand: 1; /* 1 for positive, 0 for negative */
+    uint32_t tid; /* 1,048,576 */
+    unsigned char base; /* BAM encoding. use hts.h: seq_nt16_str[base]
+                           to get the base */
+    unsigned char qual; /* numeric quality score */
+    unsigned char strand; /* 1 for positive, 0 for negative */
 };
 
 
-union pbqt_key {
-    khint64_t k;
-    struct pbqt v;
+union pair {
+    uint32_t c[2];
+    uint64_t v;
 };
+
+
+/* packs pbqt information into 64 bits as follows: pos: 32, tid: 20,
+   base: 4, qual: 7, strand: 1.  does not check for overflow. */
+static inline khint64_t
+pack_pbqt(struct pbqt t)
+{
+    union pair pr;
+    pr.c[0] = t.pos;
+    pr.c[1] = t.tid<<12 | (uint32_t)t.base<<8 | t.qual<<1 | t.strand;
+    return pr.v;
+}
+
+/* unpacks the 64-bit key information into the pbqt structure. */
+static inline void
+unpack_pbqt(khint64_t k, struct pbqt *t)
+{
+    union pair pr;
+    pr.v = k;
+    t->pos = pr.c[0];
+    t->tid = pr.c[1]>>12;
+    t->base = pr.c[1]>>8 & 0x0f;
+    t->qual = pr.c[1]>>1 & 0x7f;
+    t->strand = pr.c[1] & 0x01;
+}
+
+
+/* union pbqt_key { */
+/*     khint64_t k; */
+/*     struct pbqt v; */
+/* }; */
+
+
 
 union pos_key {
     khint64_t k;
@@ -84,7 +119,7 @@ less_indel(struct indel a, struct indel b)
 
 
 /* hash type for storing bqt (basecall, quality, strand) counts at
-   position.  uses 'union pbqt_key' as the key  */
+   position.  encodes p,b,q,t tuples in the khint64_t key,   */
 KHASH_MAP_INIT_INT64(pbqt_h, unsigned);
 
 /* hash type for storing basecall counts at position. uses 'union
@@ -430,20 +465,22 @@ pileup_prepare_bqs(unsigned s)
 
     khiter_t it;
     unsigned i;
-    union pbqt_key pk;
+    struct pbqt tup;
+    khint64_t key;
     unsigned ct;
     struct contig_pos pos;
     for (it = kh_begin(ph), i = 0; it != kh_end(ph); ++it) {
         if (! kh_exist(ph, it)) continue;
-        pk.k = kh_key(ph, it);
-        pos = (struct contig_pos){ pk.v.tid, pk.v.pos };
+        key = kh_key(ph, it);
+        unpack_pbqt(key, &tup);
+        pos = (struct contig_pos){ tup.tid, tup.pos };
         if (cmp_contig_pos(pos, tls.tally_end) == -1) {
             ct = kh_val(ph, it);
             ts->bqs_ct[i++] = (struct pos_bqs_count){
-                .cpos = { pk.v.tid, pk.v.pos },
-                .bqs_ct = { .base = pk.v.base,
-                            .qual = pk.v.qual,
-                            .strand = pk.v.strand,
+                .cpos = { tup.tid, tup.pos },
+                .bqs_ct = { .base = tup.base,
+                            .qual = tup.qual,
+                            .strand = tup.strand,
                             .ct = ct }
             };
         }
@@ -759,7 +796,8 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
     
     /* initialize the constant parts of 'stat' here, then reuse
        this key in the loop */
-    union pbqt_key stat = { .v = { .tid = tid, .strand = strand } };
+    khint64_t key;
+    struct pbqt stat = { .tid = tid, .strand = strand };
     for (c = 0; c != b->core.n_cigar; ++c) {
         op = bam_cigar_op(cigar[c]);
         ln = bam_cigar_oplen(cigar[c]);
@@ -769,11 +807,12 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
         if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
             qe = qpos + ln;
             for (q = qpos, r = rpos; q != qe; ++q, ++r) {
-                stat.v.pos = r;
-                stat.v.base = bam_seqi(bam_seq, q);
-                stat.v.qual = bam_qual[q];
-                if ((it = kh_get(pbqt_h, ph, stat.k)) == kh_end(ph)) {
-                    it = kh_put(pbqt_h, ph, stat.k, &ret);
+                stat.pos = r;
+                stat.base = bam_seqi(bam_seq, q);
+                stat.qual = bam_qual[q];
+                key = pack_pbqt(stat);
+                if ((it = kh_get(pbqt_h, ph, key)) == kh_end(ph)) {
+                    it = kh_put(pbqt_h, ph, key, &ret);
                     kh_val(ph, it) = 0;
                 }
                 kh_val(ph, it)++;
@@ -909,7 +948,8 @@ process_bam_block(char *rec, char *end,
 static khash_t(pb_h) *
 summarize_base_counts(unsigned s, struct contig_pos tally_end)
 {
-    union pbqt_key src_k;
+    khint64_t src_k;
+    struct pbqt stat;
     khash_t(pbqt_h) *src_h = tls.ts[s].pbqt_hash;
 
     union pos_key trg_k;
@@ -921,8 +961,9 @@ summarize_base_counts(unsigned s, struct contig_pos tally_end)
     int ret;
     for (src_itr = kh_begin(src_h); src_itr != kh_end(src_h); ++src_itr) {
         if (! kh_exist(src_h, src_itr)) continue;
-        src_k.k = kh_key(src_h, src_itr);
-        trg_k.v = (struct contig_pos){ src_k.v.tid, src_k.v.pos };
+        src_k = kh_key(src_h, src_itr);
+        unpack_pbqt(src_k, &stat);
+        trg_k.v = (struct contig_pos){ stat.tid, stat.pos };
         if (cmp_contig_pos(trg_k.v, tally_end) != -1) continue;
 
         ct = kh_val(src_h, src_itr);
@@ -936,11 +977,11 @@ summarize_base_counts(unsigned s, struct contig_pos tally_end)
                                      .n_match_hi_q = 0,
                                      .n_match_fuzzy = 0 };
         }
-        int pure_base = seq_nt16_int[src_k.v.base];
+        int pure_base = seq_nt16_int[stat.base];
         if (pure_base == 4) 
             kh_val(trg_h, trg_itr).n_match_fuzzy += ct;
         else {
-            if (src_k.v.qual >= bam_filter.min_base_quality) {
+            if (stat.qual >= bam_filter.min_base_quality) {
                 kh_val(trg_h, trg_itr).ct_filt[pure_base] += ct;
                 kh_val(trg_h, trg_itr).n_match_hi_q += ct;
             }
@@ -1317,6 +1358,14 @@ void
 pileup_final_input()
 {
     tls.tally_end = g_end_pos;
+}
+
+
+void
+pileup_reset_pos()
+{
+    tls.cur_pos = g_unset_pos;
+    tls.tally_end = (struct contig_pos){ 0, 0 };
 }
 
 

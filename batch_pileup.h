@@ -26,6 +26,9 @@
      a. At each thread end: batch_pileup_thread_free()
      b. At program end: batch_pileup_free()
 
+  7. (optional) call pileup_reset_pos() to reset the position marker.
+  This enables re-running the main loop (step 4) on the same input.
+
   Notes:
 
   The optional pileup_prepare_* functions must be called for each
@@ -65,6 +68,9 @@ struct bqs_count {
     uint32_t strand: 1;
     uint32_t ct: 20; /* 1,048,576 */
 };
+
+
+
 
 struct indel {
     char is_ins;
@@ -271,6 +277,12 @@ pileup_clear_stats();
 void
 pileup_final_input();
 
+
+/* call to reset the position marker to its beginning state.  This
+   allows you to reprocess the same input in a main loop using
+   pileup_next_pos() */
+void
+pileup_reset_pos();
 
 /* retrieve the bam record filtering parameters in effect */
 struct bam_filter_params

@@ -5,6 +5,7 @@
 #include "dirichlet_diff_cache.h"
 #include "virtual_bound.h"
 #include "yepLibrary.h"
+#include "chunk_strategy.h"
 
 #include <float.h>
 #include <assert.h>
@@ -80,7 +81,6 @@ init_alpha_packed_large(unsigned *cts,
 
 
 /* component sizes (24, 20, 12, 8) in bits */
-
 union pair {
     uint32_t c[2];
     uint64_t v;
@@ -164,6 +164,7 @@ void
 dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
                           struct binomial_est_params be_par,
                           struct dir_cache_params dc_par,
+                          struct bam_filter_params bf_par,
                           void **reader_pars,
                           struct contig_region *qbeg,
                           struct contig_region *qend,
@@ -220,7 +221,13 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     enum YepStatus status = yepLibrary_Init();
     assert(status == YepStatusOk);
 
-    dirichlet_points_gen_init(g_dd_par.prior_alpha, g_be_par.max_sample_points);
+    struct dirichlet_points_gen_params pg_par = {
+        .min_base_quality = bf_par.min_base_quality,
+        .max_sample_points = g_be_par.max_sample_points,
+        .alpha_prior = g_dd_par.prior_alpha
+    };
+
+    dirichlet_points_gen_init(pg_par);
 
     printf("Precomputing confidence interval statistics...");
     binomial_est_init(be_par, be_par.max_sample_points, n_threads);
@@ -231,6 +238,11 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     printf("Collecting input statistics...");
     run_survey(reader_pars, qbeg, qend, n_threads, n_max_reading, max_input_mem);
     printf("done.\n");
+
+    /* This is needed to return batch_pileup back to the beginning
+       state. */
+    pileup_reset_pos();
+    cs_stats_reset_pos();
 
     printf("Generating dirichlet point sets...");
     generate_point_sets(n_threads);

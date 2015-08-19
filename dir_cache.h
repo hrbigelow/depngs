@@ -1,14 +1,17 @@
 #ifndef _DIR_CACHE_H
 #define _DIR_CACHE_H
 
+/* Functions for compiling a cache of both dirichlet point sets and
+   binomial estimation bounds that are abundant in the data. */
+
 #include "defs.h"
 #include "khash.h"
 #include "binomial_est.h"
 
-/* use union alpha_large_key as key */
+/* use {pack,unpack}_alpha64 to convert khint64_t key */
 KHASH_MAP_INIT_INT64(points_h, POINT *);
 
-/* use union bounds_key as key */
+/* use {pack,unpack}_bounds to convert khint64_t key */
 KHASH_MAP_INIT_INT64(bounds_h, struct binomial_est_bounds);
 
 khash_t(points_h) *g_points_hash;
@@ -32,6 +35,12 @@ dir_cache_init(struct dir_cache_params dc_par);
 /* call once at end of program */
 void
 dir_cache_free();
+
+
+/* attempt to return the stored points from alpha counts, NULL if not
+   found. */
+POINT *
+dir_cache_try_get_points(unsigned *alpha);
 
 
 /* main routine for running the survey.  read chunks of input until

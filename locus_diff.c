@@ -140,6 +140,7 @@ locus_diff_tq_init(const char *locus_range_file,
                    struct dirichlet_diff_params dd_par,
                    struct binomial_est_params be_par,
                    struct dir_cache_params dc_par,
+                   struct bam_filter_params bf_par,
                    FILE *dist_fh,
                    FILE *comp_fh,
                    FILE *indel_fh)
@@ -175,14 +176,8 @@ locus_diff_tq_init(const char *locus_range_file,
     }
     thread_params.fasta_file = fasta_file;
 
-    if (locus_range_file)
-        cs_init_by_range(n_total_loci, bam_samples.n);
-
-    else {
-        cs_init_whole_file(bam_samples.n);
-        /* for (s = 0; s != bam_samples.n; ++s) */
-        /*     cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset); */
-    }
+    chunk_strategy_init(bam_samples.n);
+    chunk_strategy_reset(n_total_loci);
 
 #define MAX_BYTES_SMALL_CHUNK 1e8
 #define SMALL_CHUNK 1e5
@@ -196,6 +191,7 @@ locus_diff_tq_init(const char *locus_range_file,
     dirichlet_diff_cache_init(dd_par,
                               be_par,
                               dc_par,
+                              bf_par,
                               thread_params.reader_pars,
                               thread_params.ranges,
                               thread_params.ranges + thread_params.n_ranges,
@@ -225,6 +221,10 @@ locus_diff_tq_init(const char *locus_range_file,
                           n_threads, n_extra, n_max_reading, bam_samples.n,
                           n_output_files, max_input_mem);
 
+    /* this is needed after dirichlet_diff_cache_init.  we are
+       starting over reading the input. */
+    chunk_strategy_reset(n_total_loci);
+
     return tqueue;
 }
 
@@ -242,7 +242,7 @@ locus_diff_tq_free()
     free(thread_params.reader_buf);
     free(thread_params.reader_pars);
     free(thread_params.ranges);
-
+    chunk_strategy_free();
 }
 
 typedef double COMP_QV[NUM_NUCS][MAX_NUM_QUANTILES];
@@ -434,7 +434,6 @@ distance_quantiles_aux(struct managed_buf *out_buf)
     unsigned cacheable, cache_was_set;
     struct locus_data *ld[2];
     unsigned pi, i;
-    struct bam_filter_params bam_filter = pileup_get_filter_params();
 
     for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
         unsigned sp[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
@@ -454,7 +453,6 @@ distance_quantiles_aux(struct managed_buf *out_buf)
             }
         }
 
-        diff_state = UNCHANGED;
         diff_state =
             cached_dirichlet_diff(ld[0]->base_ct.ct_filt,
                                   ld[1]->base_ct.ct_filt,
@@ -485,29 +483,15 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                 struct points_gen_par *pgp = dst->pgen.points_gen_par;
                 pgp->observed = ld[i]->bqs_ct;
                 pgp->n_observed = ld[i]->n_bqs_ct;
-                pgp->min_base_quality = bam_filter.min_base_quality;
 
                 /* Generate all points */
                 unsigned perm[] = { 0, 1, 2, 3 };
                 update_points_gen_params(dst, ld[i]->base_ct.ct_filt, perm);
-                POINT *p,
-                    *pb = dst->points.buf,
-                    *pe = dst->points.buf + g_ld_par.max_sample_points;
-                for (p = pb; p != pe; p += GEN_POINTS_BATCH)
-                    dst->pgen.gen_point(pgp, p);
+                if (! dst->points.size)
+                    dirichlet_refresh_points(dst);
 
-                dst->points.size = g_ld_par.max_sample_points;
-                
-                /* Generate all weights */
-                double *w,
-                    *wb = dst->weights.buf,
-                    *we = dst->weights.buf + g_ld_par.max_sample_points;
-                for (w = wb, p = pb; w != we; 
-                     w += GEN_POINTS_BATCH, p += GEN_POINTS_BATCH)
-                    dst->pgen.weight(p, pgp, w);
-
-                dst->weights.size = g_ld_par.max_sample_points;
-                batch_scaled_exponentiate(dst->weights.buf, dst->weights.size);
+                if (! dst->weights.size)
+                    dirichlet_refresh_weights(dst);
             }
             /* Compute weighted square distances (max value of 2).
                e.g.
@@ -516,9 +500,9 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                minimum sq_real distance on [0,2.00] scale is 0.12499
             */
 
-            compute_wsq_dist((const double *)tls_dw.bep.dist[0]->points.buf, 
+            compute_wsq_dist((const double *)tls_dw.bep.dist[0]->points.p, 
                              tls_dw.bep.dist[0]->weights.buf,
-                             (const double *)tls_dw.bep.dist[1]->points.buf, 
+                             (const double *)tls_dw.bep.dist[1]->points.p, 
                              tls_dw.bep.dist[1]->weights.buf,
                              g_ld_par.max_sample_points,
                              tls_dw.square_dist_buf,
@@ -685,14 +669,12 @@ void
 indel_distance_quantiles_aux(struct managed_buf *buf)
 {
     struct indel_pair_count *indel_pairs = NULL;
-
+    struct locus_data *ld[2];
     for (size_t pi = 0; pi != bam_sample_pairs.n; ++pi) {
         int s[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
         
-        struct locus_data *ld[] = {
-            &tls_dw.ldat[s[0]], 
-            s[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[s[1]]
-        };
+        ld[0] = &tls_dw.ldat[s[0]];
+        ld[1] = s[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[s[1]];
         
         unsigned i;
         for (i = 0; i != 2; ++i)
@@ -825,7 +807,7 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
                 
             unsigned d;
             for (d = 0; d != NUM_NUCS; ++d) {
-                compute_marginal_wquantiles((double *)ld->distp.points.buf,
+                compute_marginal_wquantiles((double *)ld->distp.points.p,
                                             ld->distp.weights.buf,
                                             g_ld_par.max_sample_points,
                                             NUM_NUCS,
@@ -834,7 +816,7 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
                                             g_ld_par.n_quantiles,
                                             comp_quantile_values[d]);
                 comp_means[d] = 
-                    compute_marginal_mean((double *)ld->distp.points.buf,
+                    compute_marginal_mean((double *)ld->distp.points.p,
                                           ld->distp.weights.buf,
                                           g_ld_par.max_sample_points,
                                           NUM_NUCS,

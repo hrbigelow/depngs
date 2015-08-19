@@ -8,6 +8,7 @@
 #include "dirichlet_diff_cache.h"
 #include "batch_pileup.h"
 #include "dirichlet_points_gen.h"
+#include "chunk_strategy.h"
 
 #include <pthread.h>
 #include <assert.h>
@@ -65,6 +66,17 @@ dir_cache_free()
     free(g_point_sets_buf);
 }
 
+
+POINT *
+dir_cache_try_get_points(unsigned *alpha)
+{
+    khint64_t key = pack_alpha64(alpha[0], alpha[1], alpha[2], alpha[3]);
+    khiter_t itr = kh_get(points_h, g_points_hash, key);
+    return 
+        (itr != kh_end(g_points_hash) && kh_exist(g_points_hash, itr))
+        ? kh_val(g_points_hash, itr)
+        : NULL;
+}
 
 
 static void
@@ -131,7 +143,7 @@ run_survey(void **reader_pars,
 
     /* parse one million data points per chunk. A data point is one
        locus in one sample */
-#define N_DATA_PER_CHUNK 1e6
+#define N_DATA_PER_CHUNK 1e7
 
     unsigned max_n_loci = N_DATA_PER_CHUNK / bam_samples.n;
     struct bam_scanner_info *bsi;
@@ -140,22 +152,28 @@ run_survey(void **reader_pars,
     while ((nb < g_dc_par.n_bounds || np < g_dc_par.n_point_sets)
            && breg != ereg) {
 
+        /* set work chunk beginning (the underlying region may be
+           truncated after this) */
+        for (t = 0; t != n_threads; ++t) {
+            bsi = reader_pars[t];
+            bsi->qbeg = breg;
+        }
+
         /* scan forward until we have n_loci */
-        unsigned n_loci = 0;
+        unsigned n_loci_tmp = 0;
         for (; breg != ereg; ++breg) {
-            n_loci += breg->end - breg->beg;
-            if (n_loci > max_n_loci) {
+            n_loci_tmp += breg->end - breg->beg;
+            if (n_loci_tmp > max_n_loci) {
                 save_end = breg->end;
-                breg->end -= (n_loci - max_n_loci);
+                breg->end -= (n_loci_tmp - max_n_loci);
                 break;
             }
         }
             
-        /* set the next chunk of work for each thread */
+        /* set end of chunk of work */
         for (t = 0; t != n_threads; ++t) {
             bsi = reader_pars[t];
-            bsi->qbeg = breg;
-            bsi->qend = ereg;
+            bsi->qend = breg + 1;
         }
     
         struct thread_queue *tq =
@@ -172,6 +190,7 @@ run_survey(void **reader_pars,
                               0, /* no outputs */
                               max_input_mem);
         
+        chunk_strategy_reset(max_n_loci);
         thread_queue_run(tq);
         thread_queue_free(tq);
 

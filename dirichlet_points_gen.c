@@ -5,15 +5,16 @@
 
 #include <string.h>
 #include <math.h>
-#include "yepMath.h"
-#include "yepCore.h"
 #include <assert.h>
 #include <float.h>
 
+#include "dir_cache.h"
+
+#include "yepMath.h"
+#include "yepCore.h"
+
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
-
-static double alpha_prior;
 
 static struct phred {
     float prob_right; /* probability that the true base matches the basecall */
@@ -25,11 +26,11 @@ static struct phred {
 /* used for */
 static double g_log_dbl_max, g_log_dbl_min, g_log_dbl_range;
 
-unsigned g_max_sample_points;
+static struct dirichlet_points_gen_params g_pg_par;
 
 void alloc_distrib_points(struct distrib_points *dpts)
 {
-    unsigned msp = g_max_sample_points;
+    unsigned msp = g_pg_par.max_sample_points;
     dpts->pgen = (struct points_gen){ 
         malloc(sizeof(struct points_gen_par)),
         gen_dirichlet_points_wrapper, 
@@ -48,6 +49,41 @@ void free_distrib_points(struct distrib_points *dpts)
     free((struct points_gen_par *)dpts->pgen.points_gen_par);
     free(dpts->points.buf);
     free(dpts->weights.buf);
+}
+
+
+void
+dirichlet_refresh_points(struct distrib_points *dpts)
+{
+    struct points_gen_par *pgp = dpts->pgen.points_gen_par;
+    POINT *p = dir_cache_try_get_points(pgp->alpha_counts);
+    if (p) dpts->points.p = p;
+    else {
+        dpts->points.p = dpts->points.buf;
+        POINT 
+            *pb = dpts->points.p,
+            *pe = dpts->points.p + g_pg_par.max_sample_points;
+        for (p = pb; p != pe; p += GEN_POINTS_BATCH)
+            dpts->pgen.gen_point(pgp, p);
+    }
+    dpts->points.size = g_pg_par.max_sample_points;
+}
+
+
+void
+dirichlet_refresh_weights(struct distrib_points *dpts)
+{
+    struct points_gen_par *pgp = dpts->pgen.points_gen_par;
+    POINT *p;
+
+    double *w, *we = dpts->weights.buf + g_pg_par.max_sample_points;
+    for (w = dpts->weights.buf, p = dpts->points.p; 
+         w != we; 
+         w += GEN_POINTS_BATCH, p += GEN_POINTS_BATCH)
+        dpts->pgen.weight(p, pgp, w);
+    
+    dpts->weights.size = g_pg_par.max_sample_points;
+    batch_scaled_exponentiate(dpts->weights.buf, dpts->weights.size);
 }
 
 
@@ -87,10 +123,9 @@ reset_locus_data(struct locus_data *ld)
 
 
 void
-dirichlet_points_gen_init(double _alpha_prior, unsigned max_sample_points)
+dirichlet_points_gen_init(struct dirichlet_points_gen_params pg_par)
 {
-    alpha_prior = _alpha_prior;
-    g_max_sample_points = max_sample_points;
+    g_pg_par = pg_par;
 
     unsigned q;
     double ep;
@@ -105,7 +140,7 @@ dirichlet_points_gen_init(double _alpha_prior, unsigned max_sample_points)
 
 double get_alpha_prior()
 {
-    return alpha_prior;
+    return g_pg_par.alpha_prior;
 }
 
 /* compute GEN_POINTS_BATCH of unnormalized dirichlet values using the
@@ -143,10 +178,10 @@ void gen_dirichlet_points_wrapper(const void *par, POINT *points)
     int i;
     const struct points_gen_par *gd = par;
     double alpha[] = { 
-        gd->alpha_counts[0] + alpha_prior,
-        gd->alpha_counts[1] + alpha_prior,
-        gd->alpha_counts[2] + alpha_prior,
-        gd->alpha_counts[3] + alpha_prior 
+        gd->alpha_counts[0] + g_pg_par.alpha_prior,
+        gd->alpha_counts[1] + g_pg_par.alpha_prior,
+        gd->alpha_counts[2] + g_pg_par.alpha_prior,
+        gd->alpha_counts[3] + g_pg_par.alpha_prior 
     };
 
     for (i = 0; i != GEN_POINTS_BATCH; ++i) {
@@ -203,7 +238,7 @@ calc_post_to_dir_logratio(POINT *points, const void *par, double *weights)
     struct phred ph;
     unsigned base_code;
     while (trm != trm_end) {
-        if (trm->qual < pd->min_base_quality) {
+        if (trm->qual < g_pg_par.min_base_quality) {
             ++trm;
             continue;
         }
@@ -227,7 +262,7 @@ calc_post_to_dir_logratio(POINT *points, const void *par, double *weights)
     /* This is the residual Dirichlet correction. */
     POINT residual_alpha;
     for (i = 0; i != NUM_NUCS; ++i)
-        residual_alpha[i] = (double)pd->alpha_counts[i] - alpha_prior + 1.0;
+        residual_alpha[i] = (double)pd->alpha_counts[i] - g_pg_par.alpha_prior + 1.0;
     ran_dirichlet_lnpdf_unnormalized(residual_alpha, (double *)points, ldir);
 
     /* for (i = 0; i != GEN_POINTS_BATCH; ++i) */

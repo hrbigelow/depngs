@@ -341,12 +341,9 @@ pileup_init(const char *samples_file,
     }
     thread_params.fasta_file = fasta_file;
 
+    chunk_strategy_init(bam_samples.n);
+    chunk_strategy_reset(n_total_loci);
 
-    /* chunking strategy */
-    if (locus_range_file)
-        cs_init_by_range(n_total_loci, bam_samples.n);
-    else
-        cs_init_whole_file(bam_samples.n);
 
 #define MAX_BYTES_SMALL_CHUNK 1e9
 #define SMALL_CHUNK 5e6

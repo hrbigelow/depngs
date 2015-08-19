@@ -23,9 +23,7 @@ struct chunk_strategy {
     /* marker that informs all threads where to resume reading */
     struct contig_pos pos;
 
-    unsigned do_range_estimation;
-
-    unsigned long *n_bytes_total;
+    unsigned n_files;
     unsigned long *n_bytes_read;
     unsigned long n_loci_total;
     unsigned long n_loci_read;
@@ -36,14 +34,34 @@ struct chunk_strategy {
     unsigned long default_bytes_per_locus;
 };
 
+
+/* call once at start of program */
+void
+chunk_strategy_init(unsigned n_files);
+
+
+/* call once at end of program */
+void
+chunk_strategy_free();
+
+
+/* call if you are re-running a new chunk of input that is within a
+  thread_queue_run() call. */
+void
+chunk_strategy_reset(unsigned long n_loci);
+
+
+
 /* call this if a range file is given */
 void cs_init_by_range(unsigned n_loci_total, unsigned n_files);
 
 /* call this if no range file is given */
 void cs_init_whole_file(unsigned n_files);
 
-/* call this for each file whose total bytes is known */
-void cs_set_total_bytes(unsigned i, unsigned long bytes);
+/* call to reset the position, if you want to re-process input. */
+void
+cs_stats_reset_pos();
+
 
 /* configure the chunking strategy.  if < max_bytes_small_chunk of
    input remain, switch to small chunks of size small_chunk_size.  if
@@ -57,8 +75,8 @@ void cs_set_defaults(unsigned long max_bytes_small_chunk,
 
 
 /* estimate the bytes wanted based on the strategy */
-unsigned cs_get_bytes_wanted(unsigned n_files); 
+unsigned long
+cs_get_bytes_wanted(unsigned n_files); 
 
-void cs_free();
 
 #endif /* _CHUNK_STRATEGY_H */
