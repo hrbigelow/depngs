@@ -15,7 +15,6 @@ struct dirichlet_diff_params {
 
 /* one instance per thread. */
 struct bound_search_params {
-    /* enum fuzzy_state query_state; */
     unsigned use_low_beta;
     double query_beta;
 
@@ -35,17 +34,37 @@ struct alpha_packed_large {
     unsigned a3 :8;  /*        256 */
 };
 
+
+khint64_t
+pack_alpha64(unsigned a0, unsigned a1, unsigned a2, unsigned a3);
+
+
+void
+unpack_alpha64(khint64_t k, unsigned *c);
+
+
+khint64_t
+pack_bounds(unsigned a2, unsigned b1, unsigned b2);
+
+
+void
+unpack_bounds(khint64_t k, unsigned *b);
+
+/* layout is:  
+   c[0]: a0:24, a3:8. 
+   c[1]: a1:20, a2:12 
+*/
 union alpha_large_key {
-    struct alpha_packed_large c;
+    uint32_t c[2];
     uint64_t key;
 };
 
 
 union bounds_key {
     struct {
-        unsigned a2:20; /*     1,048,576 */
-        unsigned b1:32; /* 4,294,967,296 */
-        unsigned b2:20; /*     1,048,576 */
+        unsigned a2:20; /*  1,048,576 */
+        unsigned b1:24; /* 16,777,216 */
+        unsigned b2:20; /*  1,048,576 */
     } f;
     int64_t key;
 };

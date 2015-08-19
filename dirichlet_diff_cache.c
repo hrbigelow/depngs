@@ -65,7 +65,7 @@ struct dirichlet_diff_cache_t {
 /* initializes the key from the counts, sets *packable to 1 on failure */
 void 
 init_alpha_packed_large(unsigned *cts, 
-                        union alpha_large_key *key,
+                        khint64_t *key,
                         unsigned *packable)
 {
     *packable = 
@@ -75,8 +75,57 @@ init_alpha_packed_large(unsigned *cts,
         && cts[3] <= alpha_packed_limits[3];
 
     if (*packable)
-        key->c = (struct alpha_packed_large){ cts[0], cts[1], cts[2], cts[3] };
+        *key = pack_alpha64(cts[0], cts[1], cts[2], cts[3]);
 }
+
+
+/* component sizes (24, 20, 12, 8) in bits */
+
+union pair {
+    uint32_t c[2];
+    uint64_t v;
+};
+
+
+khint64_t
+pack_alpha64(unsigned a0, unsigned a1, unsigned a2, unsigned a3)
+{
+    union pair p;
+    p.c[0] = (a0<<8) | a3;
+    p.c[1] = (a1<<12) | a2;
+    return p.v;
+}
+
+
+void
+unpack_alpha64(uint64_t k, unsigned *c)
+{
+    union pair p;
+    p.v = k;
+    c[0] = p.c[0]>>8;
+    c[3] = p.c[0] & 0xff;
+    c[1] = p.c[1]>>12;
+    c[2] = p.c[1] & 0xfff;
+}
+
+
+/* */
+khint64_t
+pack_bounds(unsigned a2, unsigned b1, unsigned b2)
+{
+    khint64_t k = (khint64_t)a2<<44 | (khint64_t)b1<<20 | (khint64_t)b2;
+    return k;
+}
+
+
+void
+unpack_bounds(khint64_t k, unsigned *b)
+{
+    b[0] = k>>44;
+    b[1] = (unsigned)(k>>20 & 0xffffff);
+    b[2] = (unsigned)(k & 0xffffff);
+}
+
 
 struct alpha_packed {
     unsigned a0 :12; /* 4,096 */
@@ -177,13 +226,14 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     binomial_est_init(be_par, be_par.max_sample_points, n_threads);
     printf("done.\n");
 
-    printf("Collecting input statistics...");
-    run_survey(dc_par, reader_pars, qbeg, qend, 
-               n_threads, n_max_reading, max_input_mem);
+    dir_cache_init(dc_par);
 
+    printf("Collecting input statistics...");
+    run_survey(reader_pars, qbeg, qend, n_threads, n_max_reading, max_input_mem);
     printf("done.\n");
+
     printf("Generating dirichlet point sets...");
-    generate_point_sets(n_threads, be_par.max_sample_points);
+    generate_point_sets(n_threads);
     printf("done.\n");
 
     printf("Calculating bounds...");
@@ -216,6 +266,7 @@ dirichlet_diff_cache_free()
     /* pthread_cond_destroy(&cache.locus_cond); */
 
     binomial_est_free();
+    dir_cache_free();
 }
 
 /* update dpts parameters and discard existing points.  if alpha is
@@ -379,7 +430,7 @@ find_cacheable_permutation(const unsigned *a,
 struct binomial_est_state 
 get_est_state(struct bound_search_params *bpar)
 {
-    union alpha_large_key key[2];
+    khint64_t key[2];
     unsigned packable[2];
     unsigned *cts[2];
     unsigned i;
@@ -392,7 +443,7 @@ get_est_state(struct bound_search_params *bpar)
         struct points_buf *pb = &bpar->dist[i]->points;
         if (pb->size == 0 && packable[i]) {
             /* attempt to retrieve points from the global point sets hash */
-            if ((itr = kh_get(points_h, g_points_hash, key[i].key)) 
+            if ((itr = kh_get(points_h, g_points_hash, key[i])) 
                 != kh_end(g_points_hash)) {
                 pb->p = kh_val(g_points_hash, itr);
                 pb->size = g_be_par.max_sample_points;
@@ -610,13 +661,12 @@ get_fuzzy_state(struct bound_search_params *bpar,
                 unsigned *was_set)
 {
     *was_set = 1;
-
-    union bounds_key bk = { .f = { a2, b1, b2 } };
+    khint64_t key = pack_bounds(a2, b1, b2);
     khiter_t itr;
     struct binomial_est_bounds beb;
     int state_unset;
 
-    if ((itr = kh_get(bounds_h, g_bounds_hash, bk.key)) != kh_end(g_bounds_hash)) {
+    if ((itr = kh_get(bounds_h, g_bounds_hash, key)) != kh_end(g_bounds_hash)) {
         beb = kh_val(g_bounds_hash, itr);
         *state = locate_cell(&beb, a1);
         state_unset = 0;

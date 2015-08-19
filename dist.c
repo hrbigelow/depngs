@@ -35,7 +35,7 @@ static struct {
     .dc_par = {
         .n_bounds = 1e8,
         .min_ct_keep_bound = 3,
-        .n_point_sets = 1e6
+        .fasta_file = NULL
     },
     .dd_par = {
         .pseudo_depth = 1e6,
@@ -235,14 +235,17 @@ main_dist(int argc, char **argv)
     opts.ld_par.post_confidence = opts.be_par.post_confidence;
     opts.ld_par.min_dirichlet_dist = opts.be_par.min_dirichlet_dist;
     opts.ld_par.prior_alpha = opts.dd_par.prior_alpha;
+    opts.dc_par.fasta_file = fasta_file;
+    opts.dc_par.max_sample_points = opts.be_par.max_sample_points;
 
-#define BYTES_PER_POINT sizeof(double) * NUM_NUCS
+    /* allot fractions of main memory to points and input buffers.
+       bounds and output buffers will be negligible */
+#define FRAC_MEM_POINTSETS 0.8
+    size_t max_point_sets = opts.max_mem 
+        / (sizeof(POINT) * opts.be_par.max_sample_points);
+    opts.dc_par.n_point_sets = max_point_sets * FRAC_MEM_POINTSETS;
 
-    /* this is just an empirically based estimate */
-#define FRAGMENTATION_FACTOR 0.85
-
-    /* */
-#define INPUT_MEM_FRACTION 0.4
+#define INPUT_MEM_FRACTION 0.15
 
     /* allot a fraction of total memory to input buffers. */
     unsigned long max_input_mem = opts.max_mem * INPUT_MEM_FRACTION;

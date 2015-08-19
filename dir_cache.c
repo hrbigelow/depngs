@@ -22,15 +22,49 @@ KHASH_MAP_INIT_INT64(bounds_tuple_h, unsigned);
 static pthread_mutex_t merge_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 /* Survey */
-static khash_t(points_tuple_h) *g_pt_hash;
-static khash_t(bounds_tuple_h) *g_bt_hash;
-
-/* Prepopulation */
+static khash_t(points_tuple_h) *g_ptup_hash;
+static khash_t(bounds_tuple_h) *g_btup_hash;
 
 /* Will hold all cached points */
 static POINT *g_point_sets_buf;
                                                                                           
                                // {};
+
+static struct dir_cache_params g_dc_par;
+
+
+void
+dir_cache_init(struct dir_cache_params dc_par)
+{
+    g_dc_par = dc_par;
+    g_ptup_hash = kh_init(points_tuple_h);
+    g_btup_hash = kh_init(bounds_tuple_h);
+    g_points_hash = kh_init(points_h);
+    g_bounds_hash = kh_init(bounds_h);
+    size_t buf_sz = 
+        (size_t)g_dc_par.n_point_sets
+        * (size_t)g_dc_par.max_sample_points
+        * sizeof(POINT);
+
+    g_point_sets_buf = malloc(buf_sz);
+    if (! g_point_sets_buf) {
+        fprintf(stderr, "%s:%u: Couldn't allocate point sets buffer of %Zu bytes\n",
+                __FILE__, __LINE__, buf_sz);
+        exit(1);
+    }
+}
+
+
+void
+dir_cache_free()
+{
+    kh_destroy(points_tuple_h, g_ptup_hash);
+    kh_destroy(bounds_tuple_h, g_btup_hash);
+    kh_destroy(points_h, g_points_hash);
+    kh_destroy(bounds_h, g_bounds_hash);
+    free(g_point_sets_buf);
+}
+
 
 
 static void
@@ -39,16 +73,22 @@ survey_worker(const struct managed_buf *in_bufs,
               void *scan_info,
               struct managed_buf *out_bufs);
 
+static void
+winnow_ptup_hash();
+
 
 static void
 survey_on_create()
 {
+    batch_pileup_thread_init(bam_samples.n,
+                             g_dc_par.fasta_file);
 }
 
 
 static void
 survey_on_exit()
 {
+    batch_pileup_thread_free();
 }
 
 
@@ -66,8 +106,7 @@ survey_offload(void *par,
    accumulating at least n_bounds and n_point_sets.  At each
    iteration,  */
 void
-run_survey(struct dir_cache_params dcpar,
-           void **reader_pars,
+run_survey(void **reader_pars,
            struct contig_region *qbeg,
            struct contig_region *qend,
            unsigned n_threads,
@@ -97,17 +136,18 @@ run_survey(struct dir_cache_params dcpar,
     unsigned max_n_loci = N_DATA_PER_CHUNK / bam_samples.n;
     struct bam_scanner_info *bsi;
 
-    while (nb < dcpar.n_bounds || np < dcpar.n_point_sets) {
+    /* loop until we have enough statistics or run out of input */
+    while ((nb < g_dc_par.n_bounds || np < g_dc_par.n_point_sets)
+           && breg != ereg) {
 
         /* scan forward until we have n_loci */
         unsigned n_loci = 0;
-        breg->beg = breg->end;
-        breg->end = save_end;
         for (; breg != ereg; ++breg) {
             n_loci += breg->end - breg->beg;
             if (n_loci > max_n_loci) {
                 save_end = breg->end;
                 breg->end -= (n_loci - max_n_loci);
+                break;
             }
         }
             
@@ -135,10 +175,14 @@ run_survey(struct dir_cache_params dcpar,
         thread_queue_run(tq);
         thread_queue_free(tq);
 
+        /* restore breg to be the unused portion of previous breg */
+        breg->beg = breg->end;
+        breg->end = save_end;
+
         nb = 0;
-        for (itr = kh_begin(g_bt_hash); itr != kh_end(g_bt_hash); ++itr) {
-            if (! kh_exist(g_bt_hash, itr)) continue;
-            if (kh_val(g_bt_hash, itr) >= dcpar.min_ct_keep_bound) ++nb;
+        for (itr = kh_begin(g_btup_hash); itr != kh_end(g_btup_hash); ++itr) {
+            if (! kh_exist(g_btup_hash, itr)) continue;
+            if (kh_val(g_btup_hash, itr) >= g_dc_par.min_ct_keep_bound) ++nb;
         }
         np = kh_size(g_points_hash);
     }
@@ -151,41 +195,69 @@ run_survey(struct dir_cache_params dcpar,
         bsi->qend = qend;
     }
 
+    winnow_ptup_hash();
+
 }
 
 
 
 /* merge */
 static void
-survey_merge(khash_t(points_tuple_h) *pt_hash,
-             khash_t(bounds_tuple_h) *bt_hash)
+survey_merge(khash_t(points_tuple_h) *ptup_hash,
+             khash_t(bounds_tuple_h) *btup_hash)
 {
     khiter_t itr1, itr2;
-    union alpha_large_key ak;
+    khint64_t key;
     unsigned ct;
     int ret;
-    for (itr1 = kh_begin(pt_hash); itr1 != kh_end(pt_hash); ++itr1) {
-        if (! kh_exist(pt_hash, itr1)) continue;
-        ak.key = kh_key(pt_hash, itr1);
-        ct = kh_val(pt_hash, itr1);
-        itr2 = kh_put(points_tuple_h, g_pt_hash, ak.key, &ret);
+    for (itr1 = kh_begin(ptup_hash); itr1 != kh_end(ptup_hash); ++itr1) {
+        if (! kh_exist(ptup_hash, itr1)) continue;
+        key = kh_key(ptup_hash, itr1);
+        ct = kh_val(ptup_hash, itr1);
+        itr2 = kh_put(points_tuple_h, g_ptup_hash, key, &ret);
         if (ret == 0)
-            kh_val(g_pt_hash, itr2) += ct;
+            kh_val(g_ptup_hash, itr2) += ct;
         else
-            kh_val(g_pt_hash, itr2) = ct;
+            kh_val(g_ptup_hash, itr2) = ct;
     }
-    union bounds_key bk;
-    for (itr1 = kh_begin(bt_hash); itr1 != kh_end(bt_hash); ++itr1) {
-        if (! kh_exist(bt_hash, itr1)) continue;
-        bk.key = kh_key(bt_hash, itr1);
-        ct = kh_val(bt_hash, itr1);
-        itr2 = kh_put(bounds_tuple_h, g_bt_hash, bk.key, &ret);
+    for (itr1 = kh_begin(btup_hash); itr1 != kh_end(btup_hash); ++itr1) {
+        if (! kh_exist(btup_hash, itr1)) continue;
+        key = kh_key(btup_hash, itr1);
+
+        ct = kh_val(btup_hash, itr1);
+        itr2 = kh_put(bounds_tuple_h, g_btup_hash, key, &ret);
         if (ret == 0)
-            kh_val(g_bt_hash, itr2) += ct;
+            kh_val(g_btup_hash, itr2) += ct;
         else
-            kh_val(g_bt_hash, itr2) = ct;
+            kh_val(g_btup_hash, itr2) = ct;
     }
 }
+
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+/* delete the lowest-count tuples in g_ptup_hash until the total size is
+   less than g_dc_par.n_point_sets. (not a very efficient method -- it
+   does multiple passes through the hash unnecessarily) */
+static void
+winnow_ptup_hash()
+{
+    unsigned ct, cur_min = 1, nxt_min = UINT_MAX;
+    khiter_t itr;
+    while (1) {
+        for (itr = kh_begin(g_ptup_hash); itr != kh_end(g_ptup_hash); ++itr) {
+            if (kh_size(g_ptup_hash) <= g_dc_par.n_point_sets) return;
+            if (! kh_exist(g_ptup_hash, itr)) continue;
+            ct = kh_val(g_ptup_hash, itr);
+            if (ct == cur_min) kh_del(points_tuple_h, g_ptup_hash, itr);
+            else nxt_min = MIN(ct, nxt_min);
+        }
+        cur_min = nxt_min;
+        nxt_min = UINT_MAX;
+    }
+}
+
+
 
 
 /* accumulate basecall statistics */
@@ -198,6 +270,7 @@ survey_worker(const struct managed_buf *in_bufs,
     struct managed_buf bam = { NULL, 0, 0 };
     struct bam_scanner_info *bsi = scan_info;
     unsigned s;
+    pileup_load_refseq_ranges(bsi);
     for (s = 0; s != bam_samples.n; ++s) {
         struct bam_stats *bs = &bsi->m[s];
         bam_inflate(&in_bufs[s], bs->chunks, bs->n_chunks, &bam);
@@ -212,82 +285,92 @@ survey_worker(const struct managed_buf *in_bufs,
     for (s = 0; s != bam_samples.n; ++s)
         pileup_prepare_basecalls(s);
 
-    struct locus_data ld[2];
-    alloc_locus_data(&ld[0]);
-    alloc_locus_data(&ld[1]);
+    struct locus_data 
+        *ld[2], 
+        *ldat = malloc(bam_samples.n * sizeof(struct locus_data)),
+        pseudo_data;
 
-    union alpha_large_key ak;
-    union bounds_key bk;
+    for (s = 0; s != bam_samples.n; ++s)
+        alloc_locus_data(&ldat[s]);
+
+    alloc_locus_data(&pseudo_data);
+
+    khint64_t key;
     unsigned perm[4], perm_found, *cts;
     khiter_t itr;
     int ret;
     unsigned i, pi;
-    khash_t(points_tuple_h) *pt_hash = kh_init(points_tuple_h);
-    khash_t(bounds_tuple_h) *bt_hash = kh_init(bounds_tuple_h);
+    khash_t(points_tuple_h) *ptup_hash = kh_init(points_tuple_h);
+    khash_t(bounds_tuple_h) *btup_hash = kh_init(bounds_tuple_h);
 
     while (pileup_next_pos()) {
         for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
             unsigned sp[] = { bam_sample_pairs.m[pi].s1, 
                               bam_sample_pairs.m[pi].s2 };
 
-            for (i = 0; i != 2; ++i) {
-                if (! ld[i].init.base_ct) {
-                    ld[i].base_ct = pileup_current_basecalls(sp[i]);
-                    ld[i].init.base_ct = 1;
+            ld[0] = &ldat[sp[0]];
+            ld[1] = sp[1] == PSEUDO_SAMPLE ? &pseudo_data : &ldat[sp[1]];
+
+            for (i = 0; i != 2; ++i)
+                if (! ld[i]->init.base_ct) {
+                    ld[i]->base_ct = pileup_current_basecalls(sp[i]);
+                    ld[i]->init.base_ct = 1;
                 }
-            }
+
             /* tally the dirichlet base count */
-            find_cacheable_permutation(ld[0].base_ct.ct_filt,
-                                       ld[1].base_ct.ct_filt,
+            find_cacheable_permutation(ld[0]->base_ct.ct_filt,
+                                       ld[1]->base_ct.ct_filt,
                                        alpha_packed_limits,
                                        perm,
                                        &perm_found);
             if (! perm_found) continue;
             
             for (i = 0; i != 2; ++i) {
-                cts = ld[i].base_ct.ct_filt;
-                ak.c = (struct alpha_packed_large){ 
-                    cts[perm[0]],
-                    cts[perm[1]],
-                    cts[perm[2]],
-                    cts[perm[3]]
-                };
-                itr = kh_put(points_tuple_h, pt_hash, ak.key, &ret);
+                cts = ld[i]->base_ct.ct_filt;
+                key = pack_alpha64(cts[perm[0]], cts[perm[1]], cts[perm[2]], cts[perm[3]]);
+                itr = kh_put(points_tuple_h, ptup_hash, key, &ret);
                 if (ret == 0)
-                    kh_val(pt_hash, itr)++;
+                    kh_val(ptup_hash, itr)++;
                 else
-                    kh_val(pt_hash, itr) = 1;
+                    kh_val(ptup_hash, itr) = 1;
             }
 
             /* tally the bounds tuple */
-            bk.f.a2 = ld[0].base_ct.ct_filt[perm[1]];
-            bk.f.b1 = ld[1].base_ct.ct_filt[perm[0]];
-            bk.f.b2 = ld[1].base_ct.ct_filt[perm[1]];
-
-            itr = kh_put(bounds_tuple_h, bt_hash, bk.key, &ret);
+            key = pack_bounds(ld[0]->base_ct.ct_filt[perm[1]],
+                              ld[1]->base_ct.ct_filt[perm[0]],
+                              ld[1]->base_ct.ct_filt[perm[1]]);
+            
+            itr = kh_put(bounds_tuple_h, btup_hash, key, &ret);
             if (ret == 0)
-                kh_val(bt_hash, itr)++;
+                kh_val(btup_hash, itr)++;
             else
-                kh_val(bt_hash, itr) = 1;
+                kh_val(btup_hash, itr) = 1;
         }
+        for (s = 0; s != bam_samples.n; ++s)
+            reset_locus_data(&ldat[s]);
+        reset_locus_data(&pseudo_data);
 
-        free_locus_data(&ld[0]);
-        free_locus_data(&ld[1]);
     }
+    pileup_clear_stats();
 
+    for (s = 0; s != bam_samples.n; ++s)
+        free_locus_data(&ldat[s]);
+    free(ldat);
+    free_locus_data(&pseudo_data);
+    
     pthread_mutex_lock(&merge_mtx);
-    survey_merge(pt_hash, bt_hash);
+    survey_merge(ptup_hash, btup_hash);
     pthread_mutex_unlock(&merge_mtx);
 
-    kh_destroy(points_tuple_h, pt_hash);
-    kh_destroy(bounds_tuple_h, bt_hash);
+    kh_destroy(points_tuple_h, ptup_hash);
+    kh_destroy(bounds_tuple_h, btup_hash);
 }
 
 
 struct gen_points_par {
     unsigned n_threads, nth;
-    unsigned max_sample_points;
 };
+
 
 static void *
 generate_points_worker(void *par)
@@ -300,27 +383,24 @@ generate_points_worker(void *par)
     
     khiter_t itr, itr2;
     unsigned i;
-    union alpha_large_key ak;
+    khint64_t key;
     POINT *points, *pend;
-    size_t block_ct = gp.max_sample_points;
+    size_t block_ct = g_dc_par.max_sample_points;
     int ret;
 
     khash_t(points_h) *ph = kh_init(points_h);
-    for (i = 0, itr = kh_begin(g_pt_hash); itr != kh_end(g_pt_hash); ++itr) {
-        if (! kh_exist(g_pt_hash, itr)) continue;
+    for (i = 0, itr = kh_begin(g_ptup_hash); itr != kh_end(g_ptup_hash); ++itr) {
+        if (! kh_exist(g_ptup_hash, itr)) continue;
         if (i % gp.n_threads == gp.nth) {
             /* create the hash entry */
-            ak.key = kh_key(g_pt_hash, itr);
+            key = kh_key(g_ptup_hash, itr);
             points = g_point_sets_buf + (i * block_ct);
-            itr2 = kh_put(points_h, ph, ak.key, &ret);
+            itr2 = kh_put(points_h, ph, key, &ret);
             assert(ret != 0);
             kh_val(ph, itr2) = points;
 
             /* prepare for points generation */
-            pgp.alpha_counts[0] = ak.c.a0;
-            pgp.alpha_counts[1] = ak.c.a1;
-            pgp.alpha_counts[2] = ak.c.a2;
-            pgp.alpha_counts[3] = ak.c.a3;
+            unpack_alpha64(key, pgp.alpha_counts);
 
             /* generate the points */
             pend = points + block_ct;
@@ -337,9 +417,9 @@ generate_points_worker(void *par)
     pthread_mutex_lock(&merge_mtx);
     for (itr = kh_begin(ph); itr != kh_end(ph); ++itr) {
         if (! kh_exist(ph, itr)) continue;
-        ak.key = kh_key(ph, itr);
+        key = kh_key(ph, itr);
         points = kh_val(ph, itr);
-        itr2 = kh_put(points_h, g_points_hash, ak.key, &ret);
+        itr2 = kh_put(points_h, g_points_hash, key, &ret);
         assert(ret != 0);
         kh_val(g_points_hash, itr2) = points;
     }
@@ -351,21 +431,21 @@ generate_points_worker(void *par)
 
 
 /* Populate g_points_hash with the total set of point sets from the
-   dirichlets of g_pt_hash */
+   dirichlets of g_ptup_hash */
 void
-generate_point_sets(unsigned n_threads,
-                    unsigned max_sample_points)
+generate_point_sets(unsigned n_threads)
 {
-    unsigned t;
     pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
-    struct gen_points_par gpp = { n_threads, 0, max_sample_points };
+    struct gen_points_par *gpp = malloc(n_threads * sizeof(struct gen_points_par));
+    unsigned t;
     for (t = 0; t != n_threads; ++t) {
-        gpp.nth = t;
-        pthread_create(&threads[t], NULL, generate_points_worker, &gpp);
+        gpp[t] = (struct gen_points_par){ n_threads, t };
+        pthread_create(&threads[t], NULL, generate_points_worker, &gpp[t]);
     }
     for (t = 0; t != n_threads; ++t)
         pthread_join(threads[t], NULL);
 
+    free(gpp);
     free(threads);
 }
 
@@ -385,13 +465,20 @@ generate_est_bounds_worker(void *par)
     unsigned i;
     int ret;
     struct binomial_est_bounds beb;
-    struct bound_search_params bpar;
+    
+    struct bound_search_params bpar = {
+        .dist = { malloc(sizeof(struct distrib_points)),
+                  malloc(sizeof(struct distrib_points)) }
+    };
 
-    for (i = 0, itr = kh_begin(g_bt_hash); itr != kh_end(g_bt_hash); ++itr) {
-        if (! kh_exist(g_bt_hash, itr)) continue;
+    alloc_distrib_points(bpar.dist[0]);
+    alloc_distrib_points(bpar.dist[1]);
+
+    for (i = 0, itr = kh_begin(g_btup_hash); itr != kh_end(g_btup_hash); ++itr) {
+        if (! kh_exist(g_btup_hash, itr)) continue;
         if (i % geb.n_threads == geb.nth) {
             /* create key */
-            bk.key = kh_key(g_bt_hash, itr);
+            bk.key = kh_key(g_btup_hash, itr);
             itr2 = kh_put(bounds_h, bh, bk.key, &ret);
             assert(ret != 0);
             initialize_est_bounds(bk.f.a2, bk.f.b1, bk.f.b2,
@@ -401,6 +488,11 @@ generate_est_bounds_worker(void *par)
         }
         ++i;
     }
+
+    free_distrib_points(bpar.dist[0]);
+    free_distrib_points(bpar.dist[1]);
+    free(bpar.dist[0]);
+    free(bpar.dist[1]);
 
     /* add to global hash */
     pthread_mutex_lock(&merge_mtx);
@@ -424,16 +516,18 @@ generate_est_bounds_worker(void *par)
 void
 generate_est_bounds(unsigned n_threads)
 {
-    unsigned t;
     pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
-    struct gen_est_bounds_par geb = { n_threads, 0 };
+    struct gen_est_bounds_par *geb = 
+        malloc(n_threads * sizeof(struct gen_est_bounds_par));
 
+    unsigned t;
     for (t = 0; t != n_threads; ++t) {
-        geb.nth = t;
-        pthread_create(&threads[t], NULL, generate_est_bounds_worker, &geb);
+        geb[t] = (struct gen_est_bounds_par){ n_threads, t };
+        pthread_create(&threads[t], NULL, generate_est_bounds_worker, &geb[t]);
     }
     for (t = 0; t != n_threads; ++t)
         pthread_join(threads[t], NULL);
 
+    free(geb);
     free(threads);
 }

@@ -96,6 +96,7 @@ thread_queue_init(thread_queue_reader_t reader,
     struct thread_queue *tq = malloc(sizeof(struct thread_queue));
     tq->reader = reader;
     tq->n_max_reading = n_max_reading;
+    pthread_mutex_init(&tq->read_mtx, NULL);
     tq->n_reading = 0;
     pthread_mutex_init(&tq->scan_mtx, NULL);
     pthread_cond_init(&tq->read_slot_avail, NULL);
@@ -149,6 +150,36 @@ thread_queue_init(thread_queue_reader_t reader,
     return tq;
 }
 
+
+/* release resources */
+void
+thread_queue_free(struct thread_queue *tq)
+{
+    pthread_mutex_destroy(&tq->out_mtx);
+    pthread_mutex_destroy(&tq->scan_mtx);
+    pthread_mutex_destroy(&tq->read_mtx);
+    pthread_cond_destroy(&tq->read_slot_avail);
+    pthread_cond_destroy(&tq->out_buf_avail);
+
+    free(tq->threads);
+
+    unsigned t, b;
+    for (t = 0; t != tq->n_threads; ++t) {
+        for (b = 0; b != tq->n_inputs; ++b)
+            free(tq->input[t].buf[b].buf);
+        free(tq->input[t].buf);
+    }
+    free(tq->input);
+    unsigned n_pool = tq->n_threads + tq->n_extra;
+    for (t = 0; t != n_pool; ++t) {
+        for (b = 0; b != tq->n_outputs; ++b)
+            free(tq->out_pool[t].buf[b].buf);
+        free(tq->out_pool[t].buf);
+    }
+    free(tq->out_pool);
+}
+
+
 static void *
 worker_func(void *args);
 
@@ -179,34 +210,6 @@ thread_queue_run(struct thread_queue *tq)
         CHECK_THREAD(rc);
     }
     return 0;
-}
-
-
-/* release resources */
-void
-thread_queue_free(struct thread_queue *tq)
-{
-    pthread_mutex_destroy(&tq->out_mtx);
-    pthread_mutex_destroy(&tq->scan_mtx);
-    pthread_cond_destroy(&tq->read_slot_avail);
-    pthread_cond_destroy(&tq->out_buf_avail);
-
-    free(tq->threads);
-
-    unsigned t, b;
-    for (t = 0; t != tq->n_threads; ++t) {
-        for (b = 0; b != tq->n_inputs; ++b)
-            free(tq->input[t].buf[b].buf);
-        free(tq->input[t].buf);
-    }
-    free(tq->input);
-    unsigned n_pool = tq->n_threads + tq->n_extra;
-    for (t = 0; t != n_pool; ++t) {
-        for (b = 0; b != tq->n_outputs; ++b)
-            free(tq->out_pool[t].buf[b].buf);
-        free(tq->out_pool[t].buf);
-    }
-    free(tq->out_pool);
 }
 
 

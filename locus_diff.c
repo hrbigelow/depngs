@@ -26,7 +26,6 @@ static struct timespec start_time;
 static struct {
     struct bam_scanner_info *reader_buf;
     void **reader_pars;
-    unsigned n_max_reading;
     struct contig_region *ranges;
     unsigned n_ranges;
     unsigned n_threads;
@@ -185,16 +184,6 @@ locus_diff_tq_init(const char *locus_range_file,
         /*     cs_set_total_bytes(s, ix[s].root->end_offset - ix[s].root->start_offset); */
     }
 
-    dirichlet_diff_cache_init(dd_par,
-                              be_par,
-                              dc_par,
-                              thread_params.reader_pars,
-                              thread_params.ranges,
-                              thread_params.ranges + thread_params.n_ranges,
-                              thread_params.n_max_reading,
-                              max_input_mem,
-                              n_threads);
-
 #define MAX_BYTES_SMALL_CHUNK 1e8
 #define SMALL_CHUNK 1e5
 #define DEFAULT_BYTES_PER_LOCUS 100
@@ -202,6 +191,17 @@ locus_diff_tq_init(const char *locus_range_file,
     cs_set_defaults(MAX_BYTES_SMALL_CHUNK,
                     SMALL_CHUNK, 
                     DEFAULT_BYTES_PER_LOCUS);
+
+
+    dirichlet_diff_cache_init(dd_par,
+                              be_par,
+                              dc_par,
+                              thread_params.reader_pars,
+                              thread_params.ranges,
+                              thread_params.ranges + thread_params.n_ranges,
+                              n_max_reading,
+                              max_input_mem,
+                              n_threads);
 
     thread_params.offload_par = 
         (struct locus_diff_offload_par){ dist_fh, comp_fh, indel_fh };

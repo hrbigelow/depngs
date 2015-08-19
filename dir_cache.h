@@ -20,7 +20,19 @@ struct dir_cache_params {
     unsigned n_bounds;
     unsigned min_ct_keep_bound;
     unsigned n_point_sets;
+    unsigned max_sample_points;
+    const char *fasta_file; /* needed to initialize batch_pileup */
 };
+
+/* call once at start of program */
+void
+dir_cache_init(struct dir_cache_params dc_par);
+
+
+/* call once at end of program */
+void
+dir_cache_free();
+
 
 /* main routine for running the survey.  read chunks of input until
    accumulating at least n_bounds and n_point_sets.  The number of
@@ -28,8 +40,7 @@ struct dir_cache_params {
    >= min_ct_keep_bound are counted towards the n_bounds
    requirement. */
 void
-run_survey(struct dir_cache_params dcpar,
-           void **reader_pars,
+run_survey(void **reader_pars,
            struct contig_region *qbeg,
            struct contig_region *qend,
            unsigned n_threads,
@@ -42,8 +53,7 @@ run_survey(struct dir_cache_params dcpar,
    in g_pt_hash.  run_survey and dirichlet_points_gen_init to be
    called first. */
 void
-generate_point_sets(unsigned n_threads,
-                    unsigned max_sample_points);
+generate_point_sets(unsigned n_threads);
 
 
 /* populate g_bounds_hash with computed est bounds for the bounds

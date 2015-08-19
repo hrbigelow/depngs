@@ -2,47 +2,41 @@
 #define _BATCH_PILEUP_H
 
 /*
-  Initialization:
-  
-  1. Call batch_pileup_init() once for the entire program.  Call
-     batch_pileup_thread_init() once for each thread.
-  
-  Use:
-  
-  1. Obtain an array of blocks of BAM records that overlap a given
-  region, then call tally_pileup_stats(bam, s) to compile all
-  statistics.  Call this for each sample.
+  Synopsis:
 
-  2. Call summarize_pileup_stats(s) for each sample s.  You must issue
-  all of these calls *after* calling tally_pileup_stats(bam, s) for
-  each sample.  (This is because the tally phase keeps track of the
-  global highest start position of any record encountered, which
-  serves as an upper bound for summarizing complete statistics.
-  
-  3. You must call pileup_prepare_bqs(s) once per chunk of work in
-  order to use pileup_current_bqs(s, ...) in your main loop.
-  Similarly, pileup_prepare_indels(s), and pileup_prepare_basecalls(s)
-  must be called to use pileup_current_indels(s) and
-  pileup_current_basecalls(s).  Since these operations are expensive,
-  only call the *prepare* functions that are needed.
+  1. At program start: batch_pileup_init()
+  2. At each thread start: batch_pileup_thread_init()
+  3. After reading a chunk of data:
+     a. call pileup_load_refseq_ranges() once.
+     b. call pileup_tally_stats() once for each sample.
+     c. if there is no more input after this, call pileup_final_input()
+     d. (optional) call pileup_prepare_basecalls() once for each sample
+     e. (optional) call pileup_prepare_bqs() once for each sample
+     f. (optional) call pileup_prepare_indels() once for each sample
+  4. Main loop:
+     a. call pileup_next_pos()
+     b. (optional) call pileup_current_basecalls()
+     c. (optional) call pileup_current_bqs()
+     d. (optional) call pileup_current_indels()
 
-  4. Call pileup_next_pos() to advance the current position marker.
-  The current position marker (tls.cur_pos) affects the
-  pileup_current_* family of functions.
-  
-  5. Once you reach the end of a chunk of input, call
-  pileup_clear_stats() to prepare for the next chunk.  If this is the
-  last chunk of input, call pileup_final_input() before calling
-  pileup_tally_stats(s).  Then, all statistics will be summarized up
-  until the very end of the input.  (The default case is to summarize
-  only up until just before the start position of the last record
-  parsed)
+  5. After main loop:
+     a. call pileup_clear_stats()
 
-  Cleanup:
+  6. At end of input:
+     a. At each thread end: batch_pileup_thread_free()
+     b. At program end: batch_pileup_free()
+
+  Notes:
+
+  The optional pileup_prepare_* functions must be called for each
+  matching pileup_current_* function that you want to call.
+
+  pileup_next_pos() advances the current position marker.  The current
+  position marker (tls.cur_pos) determines the output of each
+  pileup_current_* function.
   
-  6. Call batch_pileup_free()
-  
- */
+*/
+
 #include <stdint.h>
 #include "htslib/sam.h"
 #include "khash.h"
