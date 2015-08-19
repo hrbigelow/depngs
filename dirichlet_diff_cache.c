@@ -220,7 +220,7 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     enum YepStatus status = yepLibrary_Init();
     assert(status == YepStatusOk);
 
-    dirichlet_points_gen_init(g_dd_par.prior_alpha);
+    dirichlet_points_gen_init(g_dd_par.prior_alpha, g_be_par.max_sample_points);
 
     printf("Precomputing confidence interval statistics...");
     binomial_est_init(be_par, be_par.max_sample_points, n_threads);
@@ -531,10 +531,18 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
     unsigned xmax = xend - 1;
 
     y = pair_dist_aux(xmin, bpar);
-    a->x = xmin, a->y = y.beta_qval_lo, a->left = NULL, a->right = b, a->down = (void *)0xDEADBEEF;
+    a->x = xmin;
+    a->y = y.beta_qval_lo;
+    a->left = NULL;
+    a->right = b;
+    a->down = (void *)0xDEADBEEF;
 
     y = pair_dist_aux(xmax, bpar);
-    b->x = xmax, b->y = y.beta_qval_lo, b->left = a, b->right = NULL, b->down = (void *)0xDEADBEEF;
+    b->x = xmax;
+    b->y = y.beta_qval_lo;
+    b->left = a;
+    b->right = NULL;
+    b->down = (void *)0xDEADBEEF;
 
     /* order the two anchors vertically */
     struct ipoint *hd = a->y > b->y ? a : b;

@@ -87,9 +87,10 @@ reset_locus_data(struct locus_data *ld)
 
 
 void
-dirichlet_points_gen_init(double _alpha_prior)
+dirichlet_points_gen_init(double _alpha_prior, unsigned max_sample_points)
 {
     alpha_prior = _alpha_prior;
+    g_max_sample_points = max_sample_points;
 
     unsigned q;
     double ep;

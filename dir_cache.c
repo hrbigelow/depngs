@@ -460,9 +460,9 @@ generate_est_bounds_worker(void *par)
     struct gen_est_bounds_par geb = *(struct gen_est_bounds_par *)par;
     khiter_t itr, itr2;
     khash_t(bounds_h) *bh = kh_init(bounds_h);
-    union bounds_key bk;
+    khint64_t key;
 
-    unsigned i;
+    unsigned i, bounds[3];
     int ret;
     struct binomial_est_bounds beb;
     
@@ -478,10 +478,13 @@ generate_est_bounds_worker(void *par)
         if (! kh_exist(g_btup_hash, itr)) continue;
         if (i % geb.n_threads == geb.nth) {
             /* create key */
-            bk.key = kh_key(g_btup_hash, itr);
-            itr2 = kh_put(bounds_h, bh, bk.key, &ret);
+            key = kh_key(g_btup_hash, itr);
+            itr2 = kh_put(bounds_h, bh, key, &ret);
             assert(ret != 0);
-            initialize_est_bounds(bk.f.a2, bk.f.b1, bk.f.b2,
+            unpack_bounds(key, bounds);
+            /* !!! if this is not commented out, free_distrib_points
+                   crashes. */
+            initialize_est_bounds(bounds[0], bounds[1], bounds[2],
                                   &bpar, &beb);
 
             kh_val(bh, itr2) = beb;
@@ -498,9 +501,9 @@ generate_est_bounds_worker(void *par)
     pthread_mutex_lock(&merge_mtx);
     for (itr = kh_begin(bh); itr != kh_end(bh); ++itr) {
         if (! kh_exist(bh, itr)) continue;
-        bk.key = kh_key(bh, itr);
+        key = kh_key(bh, itr);
         beb = kh_val(bh, itr);
-        itr2 = kh_put(bounds_h, g_bounds_hash, bk.key, &ret);
+        itr2 = kh_put(bounds_h, g_bounds_hash, key, &ret);
         assert(ret != 0);
         kh_val(g_bounds_hash, itr2) = beb;
     }

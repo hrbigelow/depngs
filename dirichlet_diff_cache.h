@@ -27,12 +27,12 @@ struct bound_search_params {
 extern unsigned alpha_packed_limits[];
 
 
-struct alpha_packed_large {
-    unsigned a0 :24; /* 16,777,216 */
-    unsigned a1 :20; /*  1,048,576 */
-    unsigned a2 :12; /*      4,096 */
-    unsigned a3 :8;  /*        256 */
-};
+/* struct alpha_packed_large { */
+/*     unsigned a0 :24; /\* 16,777,216 *\/ */
+/*     unsigned a1 :20; /\*  1,048,576 *\/ */
+/*     unsigned a2 :12; /\*      4,096 *\/ */
+/*     unsigned a3 :8;  /\*        256 *\/ */
+/* }; */
 
 
 khint64_t
@@ -60,14 +60,14 @@ union alpha_large_key {
 };
 
 
-union bounds_key {
-    struct {
-        unsigned a2:20; /*  1,048,576 */
-        unsigned b1:24; /* 16,777,216 */
-        unsigned b2:20; /*  1,048,576 */
-    } f;
-    int64_t key;
-};
+/* union bounds_key { */
+/*     struct { */
+/*         unsigned a2:20; /\*  1,048,576 *\/ */
+/*         unsigned b1:24; /\* 16,777,216 *\/ */
+/*         unsigned b2:20; /\*  1,048,576 *\/ */
+/*     } f; */
+/*     int64_t key; */
+/* }; */
 
 
 

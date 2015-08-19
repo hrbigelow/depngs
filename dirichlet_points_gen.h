@@ -87,7 +87,7 @@ reset_locus_data(struct locus_data *ld);
 /* initializes error_probability and alpha_prior.  (no allocation
    needed) */
 void
-dirichlet_points_gen_init(double _alpha_prior);
+dirichlet_points_gen_init(double _alpha_prior, unsigned max_sample_points);
 
 double get_alpha_prior();
 
