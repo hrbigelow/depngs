@@ -464,7 +464,7 @@ void
 bam_scanner(void *par, size_t bytes_wanted)
 {
     struct bam_scanner_info *bp = par;
-    size_t bytes_tmp = cs_get_bytes_wanted(bp->n);
+    size_t bytes_tmp = cs_max_bytes_wanted();
     size_t bytes_target = MIN(bytes_wanted * 0.95, bytes_tmp);
     size_t *bytes = malloc(sizeof(size_t) * bp->n);
     size_t max_bytes = bytes_wanted;

@@ -24,20 +24,20 @@ struct chunk_strategy {
     struct contig_pos pos;
 
     unsigned n_files;
+    unsigned n_threads;
     unsigned long *n_bytes_read;
     unsigned long n_loci_total;
     unsigned long n_loci_read;
 
-    unsigned long max_bytes_small_chunk; /* # bytes left to switch to
-                                              small chunk strategy */
-    unsigned long small_chunk_size;
+    /* unsigned long max_bytes_small_chunk; */
+    /* unsigned long small_chunk_size; */
     unsigned long default_bytes_per_locus;
 };
 
 
 /* call once at start of program */
 void
-chunk_strategy_init(unsigned n_files);
+chunk_strategy_init(unsigned n_files, unsigned n_threads);
 
 
 /* call once at end of program */
@@ -69,14 +69,14 @@ cs_stats_reset_pos();
    initial estimate (before any input is read) in order to convert
    from a locus count estimate to a bytes estimate.
  */
-void cs_set_defaults(unsigned long max_bytes_small_chunk,
-                     unsigned long small_chunk_size,
-                     unsigned long default_bytes_per_locus);
+/* void cs_set_defaults(unsigned long max_bytes_small_chunk, */
+/*                      unsigned long small_chunk_size, */
+/*                      unsigned long default_bytes_per_locus); */
 
 
 /* estimate the bytes wanted based on the strategy */
 unsigned long
-cs_get_bytes_wanted(unsigned n_files); 
+cs_max_bytes_wanted(); 
 
 
 #endif /* _CHUNK_STRATEGY_H */

@@ -341,17 +341,8 @@ pileup_init(const char *samples_file,
     }
     thread_params.fasta_file = fasta_file;
 
-    chunk_strategy_init(bam_samples.n);
+    chunk_strategy_init(bam_samples.n, n_threads);
     chunk_strategy_reset(n_total_loci);
-
-
-#define MAX_BYTES_SMALL_CHUNK 1e9
-#define SMALL_CHUNK 5e6
-#define DEFAULT_BYTES_PER_LOCUS 100
-
-    cs_set_defaults(MAX_BYTES_SMALL_CHUNK,
-                    SMALL_CHUNK, 
-                    DEFAULT_BYTES_PER_LOCUS);
 
     unsigned n_extra = n_threads * 2;
     unsigned n_outputs = 1; /* just producing a pileup file */

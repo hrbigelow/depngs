@@ -176,17 +176,8 @@ locus_diff_tq_init(const char *locus_range_file,
     }
     thread_params.fasta_file = fasta_file;
 
-    chunk_strategy_init(bam_samples.n);
+    chunk_strategy_init(bam_samples.n, n_threads);
     chunk_strategy_reset(n_total_loci);
-
-#define MAX_BYTES_SMALL_CHUNK 1e8
-#define SMALL_CHUNK 1e5
-#define DEFAULT_BYTES_PER_LOCUS 100
-
-    cs_set_defaults(MAX_BYTES_SMALL_CHUNK,
-                    SMALL_CHUNK, 
-                    DEFAULT_BYTES_PER_LOCUS);
-
 
     dirichlet_diff_cache_init(dd_par,
                               be_par,
@@ -442,7 +433,7 @@ distance_quantiles_aux(struct managed_buf *out_buf)
         ld[1] = sp[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[sp[1]];
         
         tls_dw.metrics.total++;
-        ++tls_dw.pair_stats[pi].total;
+        tls_dw.pair_stats[pi].total++;
 
         /* load this particular pair of distp into the bep */
         for (i = 0; i != 2; ++i) {
@@ -910,11 +901,11 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         if (dist_buf || comp_buf)
             distance_quantiles_aux(dist_buf);
         
-        if (indel_buf)
-            indel_distance_quantiles_aux(indel_buf);
+        /* if (indel_buf) */
+        /*     indel_distance_quantiles_aux(indel_buf); */
 
-        if (comp_buf)
-            comp_quantiles_aux(comp_buf);
+        /* if (comp_buf) */
+        /*     comp_quantiles_aux(comp_buf); */
 
         for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);

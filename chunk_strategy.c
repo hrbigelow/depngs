@@ -6,13 +6,20 @@ struct chunk_strategy cs_stats;
 
 #define MAX(a,b) ((a) < (b) ? (b) : (a))
 
+/* in order to simplify the interface, we choose a reasonable default
+   value for this. it may be off by a factor of 10 or so, but that
+   won't matter for large input. */
+#define DEFAULT_BYTES_PER_LOCUS 100
+
 void
-chunk_strategy_init(unsigned n_files)
+chunk_strategy_init(unsigned n_files, unsigned n_threads)
 {
     cs_stats.pos = (struct contig_pos){ 0, 0 };
     cs_stats.n_files = n_files;
+    cs_stats.n_threads = n_threads;
     cs_stats.n_bytes_read = calloc(n_files, sizeof(cs_stats.n_bytes_read[0]));
     cs_stats.n_loci_read = 0;
+    cs_stats.default_bytes_per_locus = DEFAULT_BYTES_PER_LOCUS;
 }
 
 
@@ -42,38 +49,38 @@ cs_stats_reset_pos()
 }
 
 
-void cs_set_defaults(unsigned long max_bytes_small_chunk,
-                     unsigned long small_chunk_size,
-                     unsigned long default_bytes_per_locus)
-{
-    cs_stats.max_bytes_small_chunk = max_bytes_small_chunk;
-    cs_stats.small_chunk_size = small_chunk_size;
-    cs_stats.default_bytes_per_locus = default_bytes_per_locus;
-}
+/* void cs_set_defaults(unsigned long max_bytes_small_chunk, */
+/*                      unsigned long small_chunk_size, */
+/*                      unsigned long default_bytes_per_locus) */
+/* { */
+/*     cs_stats.max_bytes_small_chunk = max_bytes_small_chunk; */
+/*     cs_stats.small_chunk_size = small_chunk_size; */
+/*     cs_stats.default_bytes_per_locus = default_bytes_per_locus; */
+/* } */
 
-/* estimate the bytes wanted based on the strategy.
-   see .h file for notes. */
+/* return the estimated maximum number of bytes that we should attempt
+   to parse per thread. */
 unsigned long
-cs_get_bytes_wanted(unsigned n_files)
+cs_max_bytes_wanted()
 {
-    unsigned long most_bytes_left = 0;
-    unsigned f;
-    for (f = 0; f != n_files; ++f) {
-        unsigned n_bytes_per_locus = 
-            cs_stats.n_loci_read == 0
-            ? cs_stats.default_bytes_per_locus
-            : cs_stats.n_bytes_read[f] / cs_stats.n_loci_read;
-        
-        most_bytes_left = MAX((cs_stats.n_loci_total - cs_stats.n_loci_read)
-                              * n_bytes_per_locus, 
-                              most_bytes_left);
+    /* find maximum of n_bytes_per_locus across samples */
+    unsigned long max_bytes_per_locus = 0;
+    if (cs_stats.n_loci_read == 0)
+        max_bytes_per_locus = cs_stats.default_bytes_per_locus;
+    else {
+        unsigned long max_bytes_read = 0;
+        unsigned f;
+        for (f = 0; f != cs_stats.n_files; ++f)
+            max_bytes_read = MAX(max_bytes_read, cs_stats.n_bytes_read[f]);
+        max_bytes_per_locus = max_bytes_read / cs_stats.n_loci_read;
     }
-    unsigned long bytes_wanted = 
-        most_bytes_left > cs_stats.max_bytes_small_chunk
-        ? most_bytes_left
-        : cs_stats.small_chunk_size;
 
-    return bytes_wanted;
+    /* the most bytes that are left in any one sample */
+    unsigned long most_bytes_left = 
+        (cs_stats.n_loci_total - cs_stats.n_loci_read)
+        * max_bytes_per_locus;
+
+    return most_bytes_left / cs_stats.n_threads;
 }
 
 
