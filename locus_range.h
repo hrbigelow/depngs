@@ -61,10 +61,11 @@ parse_locus_ranges(const char *locus_range_file,
 
 
 /* find the subrange of the sorted range [qbeg, qend) that intersects
-   subset, storing it in *qlo, *qhi. */
-void
-find_intersecting_span(struct contig_region *qbeg,
-                       struct contig_region *qend,
+   subset, storing it in *qlo, *qhi. return the total number of loci
+   in the intersection. */
+unsigned long
+find_intersecting_span(const struct contig_region *qbeg,
+                       const struct contig_region *qend,
                        struct contig_span subset,
                        struct contig_region **qlo,
                        struct contig_region **qhi);

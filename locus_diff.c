@@ -26,8 +26,6 @@ static struct timespec start_time;
 static struct {
     struct bam_scanner_info *reader_buf;
     void **reader_pars;
-    struct contig_region *ranges;
-    unsigned n_ranges;
     unsigned n_threads;
     struct locus_diff_offload_par offload_par;
     const char *fasta_file;
@@ -38,16 +36,27 @@ static struct locus_diff_params g_ld_par;
 static __thread struct locus_diff_input tls_dw;
 
 
-void
-locus_diff_init(struct locus_diff_params ldpar,
-                unsigned n_threads,
-                const char *samples_file,
-                const char *sample_pairs_file,
-                const char *fasta_file,
-                struct bam_filter_params bam_filter)
-{
-    g_ld_par = ldpar;
+#define NUM_EXTRA_BUFS_PER_THREAD 50
 
+void
+dist_on_create();
+
+void
+dist_on_exit();
+
+
+struct thread_queue *
+locus_diff_init(const char *samples_file, const char *sample_pairs_file, 
+                const char *locus_range_file, const char *fasta_file,
+                unsigned n_threads, unsigned n_max_reading, unsigned long max_input_mem,
+                struct locus_diff_params ld_par,
+                struct dirichlet_diff_params dd_par,
+                struct binomial_est_params be_par,
+                struct dir_cache_params dc_par,
+                struct bam_filter_params bf_par,
+                FILE *dist_fh, FILE *comp_fh, FILE *indel_fh)
+{
+    g_ld_par = ld_par;
     clock_gettime(CLOCK_REALTIME, &start_time);
     if (g_ld_par.post_confidence < 0.8
         || g_ld_par.post_confidence > 0.999999) {
@@ -62,24 +71,80 @@ locus_diff_init(struct locus_diff_params ldpar,
                 "Should be in [0, 1]\n", g_ld_par.min_dirichlet_dist);
         exit(1);
     }
-
     bam_sample_info_init(samples_file, sample_pairs_file);
+    chunk_strategy_init(bam_samples.n, n_threads, locus_range_file, fasta_file);
 
     /* we do not want to skip empty loci, because we need to traverse
        these in order to get statistics for missing data */
     unsigned skip_empty_loci = 0;
-    batch_pileup_init(bam_filter, skip_empty_loci, PSEUDO_DEPTH);
+    batch_pileup_init(bf_par, skip_empty_loci, PSEUDO_DEPTH);
 
+    thread_params.n_threads = n_threads;
+    thread_params.reader_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
+    thread_params.reader_pars = malloc(n_threads * sizeof(void *));
+
+    unsigned t, s;
+    for (t = 0; t != n_threads; ++t) {
+        thread_params.reader_buf[t] = (struct bam_scanner_info){
+            malloc(bam_samples.n * sizeof(struct bam_stats)),
+            bam_samples.n,
+        };
+        for (s = 0; s != bam_samples.n; ++s)
+            bam_stats_init(bam_samples.m[s].bam_file, 
+                           &thread_params.reader_buf[t].m[s]);
+        
+        thread_params.reader_pars[t] = &thread_params.reader_buf[t];
+    }
+    thread_params.fasta_file = fasta_file;
+
+    dirichlet_diff_cache_init(dd_par, be_par, dc_par, bf_par,
+                              thread_params.reader_buf,
+                              n_max_reading, max_input_mem, n_threads);
+
+    thread_params.offload_par = 
+        (struct locus_diff_offload_par){ dist_fh, comp_fh, indel_fh };
+
+    /* To avoid a stall, n_extra / n_threads should be greater than
+       Max(work chunk time) / Avg(work chunk time). */
+    size_t n_extra = n_threads * NUM_EXTRA_BUFS_PER_THREAD;
+    size_t n_output_files = (dist_fh ? 1 : 0) + (comp_fh ? 1 : 0) + (indel_fh ? 1 : 0);
+
+    thread_queue_reader_t reader = { bam_reader, bam_scanner };
+
+    struct thread_queue *tqueue =
+        thread_queue_init(reader, 
+                          thread_params.reader_pars,
+                          locus_diff_worker,
+                          locus_diff_offload, 
+                          &thread_params.offload_par,
+                          dist_on_create,
+                          dist_on_exit,
+                          n_threads, n_extra, n_max_reading, bam_samples.n,
+                          n_output_files, max_input_mem);
+    return tqueue;
 }
 
 
 void
-locus_diff_free()
+locus_diff_free(struct thread_queue *tq)
 {
-    bam_sample_info_free();
-    batch_pileup_free();
     dirichlet_diff_cache_free();
+    batch_pileup_free();
+    chunk_strategy_free();
+    bam_sample_info_free();
+
+    unsigned t, s;
+    for (t = 0; t != thread_params.n_threads; ++t) {
+        for (s = 0; s != bam_samples.n; ++s)
+            bam_stats_free(&thread_params.reader_buf[t].m[s]);
+        free(thread_params.reader_buf[t].m);
+    }
+
+    free(thread_params.reader_buf);
+    free(thread_params.reader_pars);
+    thread_queue_free(tq);
 }
+
 
 
 /* called just after this thread is created */
@@ -129,112 +194,6 @@ dist_on_exit()
 }
 
 
-#define NUM_EXTRA_BUFS_PER_THREAD 50
-
-struct thread_queue *
-locus_diff_tq_init(const char *locus_range_file,
-                   const char *fasta_file,
-                   unsigned n_threads,
-                   unsigned n_max_reading,
-                   unsigned long max_input_mem,
-                   struct dirichlet_diff_params dd_par,
-                   struct binomial_est_params be_par,
-                   struct dir_cache_params dc_par,
-                   struct bam_filter_params bf_par,
-                   FILE *dist_fh,
-                   FILE *comp_fh,
-                   FILE *indel_fh)
-{
-    thread_params.n_threads = n_threads;
-
-    unsigned long n_total_loci;
-    thread_params.ranges = 
-        parse_locus_ranges(locus_range_file,
-                           fasta_file,
-                           &thread_params.n_ranges,
-                           &n_total_loci);
-
-    thread_params.reader_buf = 
-        malloc(n_threads * sizeof(struct bam_scanner_info));
-
-    thread_params.reader_pars = malloc(n_threads * sizeof(void *));
-
-    unsigned t, s;
-    for (t = 0; t != n_threads; ++t) {
-        thread_params.reader_buf[t] = (struct bam_scanner_info){
-            malloc(bam_samples.n * sizeof(struct bam_stats)),
-            bam_samples.n,
-            
-            thread_params.ranges, 
-            thread_params.ranges + thread_params.n_ranges
-        };
-        for (s = 0; s != bam_samples.n; ++s)
-            bam_stats_init(bam_samples.m[s].bam_file, 
-                           &thread_params.reader_buf[t].m[s]);
-        
-        thread_params.reader_pars[t] = &thread_params.reader_buf[t];
-    }
-    thread_params.fasta_file = fasta_file;
-
-    chunk_strategy_init(bam_samples.n, n_threads);
-    chunk_strategy_reset(n_total_loci);
-
-    dirichlet_diff_cache_init(dd_par,
-                              be_par,
-                              dc_par,
-                              bf_par,
-                              thread_params.reader_pars,
-                              thread_params.ranges,
-                              thread_params.ranges + thread_params.n_ranges,
-                              n_max_reading,
-                              max_input_mem,
-                              n_threads);
-
-    thread_params.offload_par = 
-        (struct locus_diff_offload_par){ dist_fh, comp_fh, indel_fh };
-
-    /* To avoid a stall, n_extra / n_threads should be greater than
-       Max(work chunk time) / Avg(work chunk time). */
-    size_t n_extra = n_threads * NUM_EXTRA_BUFS_PER_THREAD;
-    size_t n_output_files = 
-        (dist_fh ? 1 : 0) + (comp_fh ? 1 : 0) + (indel_fh ? 1 : 0);
-
-    thread_queue_reader_t reader = { bam_reader, bam_scanner };
-
-    struct thread_queue *tqueue =
-        thread_queue_init(reader, 
-                          thread_params.reader_pars,
-                          locus_diff_worker,
-                          locus_diff_offload, 
-                          &thread_params.offload_par,
-                          dist_on_create,
-                          dist_on_exit,
-                          n_threads, n_extra, n_max_reading, bam_samples.n,
-                          n_output_files, max_input_mem);
-
-    /* this is needed after dirichlet_diff_cache_init.  we are
-       starting over reading the input. */
-    chunk_strategy_reset(n_total_loci);
-
-    return tqueue;
-}
-
-
-void
-locus_diff_tq_free()
-{
-    unsigned t, s;
-    for (t = 0; t != thread_params.n_threads; ++t) {
-        for (s = 0; s != bam_samples.n; ++s)
-            bam_stats_free(&thread_params.reader_buf[t].m[s]);
-        free(thread_params.reader_buf[t].m);
-    }
-
-    free(thread_params.reader_buf);
-    free(thread_params.reader_pars);
-    free(thread_params.ranges);
-    chunk_strategy_free();
-}
 
 typedef double COMP_QV[NUM_NUCS][MAX_NUM_QUANTILES];
 
@@ -898,19 +857,20 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         /* if (! tls_dw.bep.bounds_hash_frozen) */
         /*     tls_dw.bep.bounds_hash_frozen = freeze_bounds_hash(); */
 
-        if (dist_buf || comp_buf)
-            distance_quantiles_aux(dist_buf);
-        
-        /* if (indel_buf) */
-        /*     indel_distance_quantiles_aux(indel_buf); */
-
-        /* if (comp_buf) */
-        /*     comp_quantiles_aux(comp_buf); */
-
+        reset_locus_data(&tls_dw.pseudo_sample);
         for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);
 
-        reset_locus_data(&tls_dw.pseudo_sample);
+
+        if (dist_buf || comp_buf)
+            distance_quantiles_aux(dist_buf);
+        
+        if (indel_buf)
+            indel_distance_quantiles_aux(indel_buf);
+
+        if (comp_buf)
+            comp_quantiles_aux(comp_buf);
+
     }   
 
     /* frees statistics that have already been used in one of the

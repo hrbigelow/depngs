@@ -24,6 +24,7 @@ struct dir_cache_params {
     unsigned min_ct_keep_bound;
     unsigned n_point_sets;
     unsigned max_sample_points;
+    unsigned long n_max_survey_loci;
     const char *fasta_file; /* needed to initialize batch_pileup */
 };
 
@@ -49,9 +50,8 @@ dir_cache_try_get_points(unsigned *alpha);
    >= min_ct_keep_bound are counted towards the n_bounds
    requirement. */
 void
-run_survey(void **reader_pars,
-           struct contig_region *qbeg,
-           struct contig_region *qend,
+run_survey(struct bam_scanner_info *reader_buf,
+           unsigned long n_max_survey_loci,
            unsigned n_threads,
            unsigned n_max_reading,
            unsigned long max_input_mem);

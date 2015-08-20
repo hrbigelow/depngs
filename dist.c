@@ -35,7 +35,8 @@ static struct {
     .dc_par = {
         .n_bounds = 1e8,
         .min_ct_keep_bound = 3,
-        .fasta_file = NULL
+        .fasta_file = NULL,
+        .n_max_survey_loci = 1e8
     },
     .dd_par = {
         .pseudo_depth = 1e6,
@@ -255,39 +256,24 @@ main_dist(int argc, char **argv)
                    &opts.ld_par.n_quantiles, 
                    MAX_NUM_QUANTILES);
 
-    locus_diff_init(opts.ld_par,
-                    opts.n_threads, 
-                    samples_file, 
-                    sample_pairs_file, 
-                    fasta_file,
-                    opts.bf_par);
-
     struct thread_queue *tqueue =
-        locus_diff_tq_init(query_range_file, 
-                           fasta_file,
-                           opts.n_threads,
-                           opts.n_max_reading, 
-                           max_input_mem,
-                           opts.dd_par,
-                           opts.be_par,
-                           opts.dc_par,
-                           opts.bf_par,
-                           dist_fh, comp_fh, indel_fh);
+        locus_diff_init(samples_file, sample_pairs_file, 
+                        query_range_file, fasta_file,
+                        opts.n_threads, opts.n_max_reading, max_input_mem,
+                        opts.ld_par, opts.dd_par, opts.be_par, opts.dc_par, opts.bf_par,
+                        dist_fh, comp_fh, indel_fh);
 
     printf("Starting input processing.\n");
     thread_queue_run(tqueue);
-    thread_queue_free(tqueue);
 
     if (summary_stats_file)
         print_pair_stats(summary_stats_file);
-
-    locus_diff_tq_free();
 
     if (dist_fh) fclose(dist_fh);
     if (comp_fh) fclose(comp_fh);
     if (indel_fh) fclose(indel_fh);
 
-    locus_diff_free();
+    locus_diff_free(tqueue);
 
     if (opts.bf_par.readgroup_include_hash)
         free_readgroup_hash(opts.bf_par.readgroup_include_hash);

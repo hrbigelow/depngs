@@ -177,6 +177,7 @@ thread_queue_free(struct thread_queue *tq)
         free(tq->out_pool[t].buf);
     }
     free(tq->out_pool);
+    free(tq);
 }
 
 

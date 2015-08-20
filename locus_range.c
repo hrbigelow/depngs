@@ -157,10 +157,11 @@ less_virtual_query(unsigned pos, void *par)
 
 
 /* find the subrange of the sorted range [qbeg, qend) that intersects
-   subset, storing it in *qlo, *qhi. */
-void
-find_intersecting_span(struct contig_region *qbeg,
-                       struct contig_region *qend,
+   subset, storing it in *qlo, *qhi. return the total number of loci
+   in the intersection. */
+unsigned long
+find_intersecting_span(const struct contig_region *qbeg,
+                       const struct contig_region *qend,
                        struct contig_span subset,
                        struct contig_region **qlo,
                        struct contig_region **qhi)
@@ -179,6 +180,14 @@ find_intersecting_span(struct contig_region *qbeg,
     vpar.q = (struct contig_region)
         { subset.end.tid, subset.end.pos, subset.end.pos + 1 };
     *qhi = qbeg + virtual_upper_bound(0, qend - qbeg, less_virtual_query, &vpar);
+
+    struct contig_region *q, ix;
+    unsigned long n_loci = 0;
+    for (q = *qlo; q != *qhi; ++q) {
+        ix = region_span_intersect(*q, subset);
+        n_loci += ix.end - ix.beg;
+    }
+    return n_loci;
 }
 
 

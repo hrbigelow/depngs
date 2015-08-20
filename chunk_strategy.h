@@ -3,41 +3,36 @@
 
 #include "locus_range.h"
 
-/* tallys statistics that allow the reader to adjust its strategy
-   during program execution. one of two strategies is used to estimate
-   the number of bytes left.
-
-   1.  if do_range_estimation is set, we have been given a list of
-       locus ranges to process.  n_loci_total is initialized at the
-       start. n_loci_read, n_bytes_read are maintained.  A running
-       estimate of bytes per locus is maintained, and from this, an
-       estimate of bytes left.
-
-   2.  otherwise, we are processing the whole file.  n_bytes_total and
-       n_bytes_read are used to directly account for the number of
-       bytes left.
-
-       
+/* Provides a global resource (to be accessed by one thread at a time)
+   to guide which ranges of input to process.  query_regions define
+   the subset of genomic loci to consider, and remains constant
+   through the life of the program.  span defines the current subset
+   of these ranges to load.  The client will update span as it reads
+   input.  Other fields provide a mechanism for dividing up the
+   remaining input to keep all threads occupied.
  */
 struct chunk_strategy {
-    /* marker that informs all threads where to resume reading */
-    struct contig_pos pos;
 
     unsigned n_files;
     unsigned n_threads;
-    unsigned long *n_bytes_read;
+    unsigned long *n_all_bytes_read;
+    unsigned long n_all_loci_read;
     unsigned long n_loci_total;
     unsigned long n_loci_read;
-
-    /* unsigned long max_bytes_small_chunk; */
-    /* unsigned long small_chunk_size; */
-    unsigned long default_bytes_per_locus;
+    unsigned long bytes_per_locus;
+    const struct contig_region *query_regions;
+    unsigned n_query_regions;
+    struct contig_span span;
 };
+
+extern struct chunk_strategy cs_stats;
 
 
 /* call once at start of program */
 void
-chunk_strategy_init(unsigned n_files, unsigned n_threads);
+chunk_strategy_init(unsigned n_files, unsigned n_threads,
+                    const char *locus_range_file,
+                    const char *fasta_file);
 
 
 /* call once at end of program */
@@ -46,32 +41,17 @@ chunk_strategy_free();
 
 
 /* call if you are re-running a new chunk of input that is within a
-  thread_queue_run() call. */
+  thread_queue_run() call. resets everything except n_all_loci_read,
+  n_all_bytes_read. */
 void
-chunk_strategy_reset(unsigned long n_loci);
+chunk_strategy_reset();
 
 
-
-/* call this if a range file is given */
-void cs_init_by_range(unsigned n_loci_total, unsigned n_files);
-
-/* call this if no range file is given */
-void cs_init_whole_file(unsigned n_files);
-
-/* call to reset the position, if you want to re-process input. */
+/* call to define a new workload. sets span.  sets n_loci_total to the
+   size of the intersection between span and the query_regions.  sets
+   n_loci_read to zero. */
 void
-cs_stats_reset_pos();
-
-
-/* configure the chunking strategy.  if < max_bytes_small_chunk of
-   input remain, switch to small chunks of size small_chunk_size.  if
-   we are doing range estimation, use default_bytes_per_locus as an
-   initial estimate (before any input is read) in order to convert
-   from a locus count estimate to a bytes estimate.
- */
-/* void cs_set_defaults(unsigned long max_bytes_small_chunk, */
-/*                      unsigned long small_chunk_size, */
-/*                      unsigned long default_bytes_per_locus); */
+chunk_strategy_set_span(struct contig_span span);
 
 
 /* estimate the bytes wanted based on the strategy */

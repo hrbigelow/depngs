@@ -11,8 +11,6 @@
 
 #include <assert.h>
 
-extern struct chunk_strategy cs_stats;
-
 /* extract compressed offset from voffset */
 #define BAM_COFFSET(v) ((v)>>16)
 
@@ -347,8 +345,8 @@ accumulate_chunks(kbtree_t(itree_t) *itree,
    tiling windows that were consumed.
 */
 static struct contig_span
-hts_size_to_range(struct contig_region *qbeg,
-                  struct contig_region *qend,
+hts_size_to_range(const struct contig_region *qbeg,
+                  const struct contig_region *qend,
                   struct contig_span subset,
                   size_t min_wanted_bytes,
                   hts_idx_t *idx,
@@ -445,61 +443,61 @@ size_t
 num_span_loci(struct bam_scanner_info *bsi)
 {
     struct contig_region *qlo, *qhi;
-    find_intersecting_span(bsi->qbeg, bsi->qend, bsi->loaded_span, &qlo, &qhi);
-    struct contig_region ix;
-    size_t n_loci = 0;
-    while (qlo != qhi) {
-        ix = region_span_intersect(*qlo++, bsi->loaded_span);
-        n_loci += ix.end - ix.beg;
-    }
-    return n_loci;
+    return find_intersecting_span(cs_stats.query_regions, 
+                                  cs_stats.query_regions + cs_stats.n_query_regions,
+                                  bsi->loaded_span, &qlo, &qhi);
 }
 
 
 /* scans the bam index to find all chunks covering a range starting at
-   cs_stats.pos.  scans forward until *close to* but less than
-   max_bytes are found. stores the found chunks in par's fields, and
-   updates cs_stats.pos to the newest position.  */
+   cs_stats.span.beg.  scans forward until *close to* but less than
+   bytes_wanted are found. stores the found chunks in par's fields,
+   and updates cs_stats.span to the newest position.  */
 void
 bam_scanner(void *par, size_t bytes_wanted)
 {
-    struct bam_scanner_info *bp = par;
+    struct bam_scanner_info *bsi = par;
     size_t bytes_tmp = cs_max_bytes_wanted();
     size_t bytes_target = MIN(bytes_wanted * 0.95, bytes_tmp);
-    size_t *bytes = malloc(sizeof(size_t) * bp->n);
+    size_t *bytes = malloc(sizeof(size_t) * bsi->n);
     size_t max_bytes = bytes_wanted;
 
     unsigned s, n_tiles = UINT_MAX;
 
     /* the largest position in the region of interest */
-    struct contig_pos min_end = { (bp->qend - 1)->tid, (bp->qend - 1)->end };
+    const struct contig_region 
+        *qbeg = cs_stats.query_regions,
+        *qend = qbeg + cs_stats.n_query_regions;
+
+    struct contig_pos min_end = { UINT_MAX, UINT_MAX };
+    struct contig_span target_span = cs_stats.span;
+
     while (n_tiles > 1 && max_bytes >= bytes_wanted) {
         max_bytes = 0;
-        for (s = 0; s != bp->n; ++s) {
-            struct bam_stats *bs = &bp->m[s];
-            struct contig_span subset = { cs_stats.pos, min_end };
-            bp->loaded_span =
-                hts_size_to_range(bp->qbeg, bp->qend, subset,
+        for (s = 0; s != bsi->n; ++s) {
+            struct bam_stats *bs = &bsi->m[s];
+            bsi->loaded_span =
+                hts_size_to_range(qbeg, qend, target_span,
                                   bytes_target,
                                   bs->idx, 
                                   &bs->chunks, &bs->n_chunks,
                                   &bs->more_input,
                                   &n_tiles);
-            min_end = MIN_CONTIG_POS(min_end, bp->loaded_span.end);
+            min_end = MIN_CONTIG_POS(min_end, bsi->loaded_span.end);
             bytes[s] = tally_est_bgzf_bytes(bs->chunks, bs->n_chunks);
             max_bytes = MAX(bytes[s], max_bytes);
         }
         if (n_tiles > 1) --n_tiles;
     }
+    target_span.beg = min_end;
+    chunk_strategy_set_span(target_span);
 
-    for (s = 0; s != bp->n; ++s)
-        cs_stats.n_bytes_read[s] += bytes[s];
+    for (s = 0; s != bsi->n; ++s)
+        cs_stats.n_all_bytes_read[s] += bytes[s];
 
-    bp->loaded_span.end = min_end;
-    cs_stats.n_loci_read += num_span_loci(bp);
+    bsi->loaded_span.end = min_end;
+    cs_stats.n_all_loci_read += num_span_loci(bsi);
 
-    assert(min_end.pos != 0);
-    cs_stats.pos = min_end;
     free(bytes);
 }
 
@@ -538,7 +536,7 @@ bgzf_block_size(char *bgzf)
 unsigned
 bam_reader(void *par, struct managed_buf *bufs)
 {
-    struct bam_scanner_info *bp = par;
+    struct bam_scanner_info *bsi = par;
     unsigned s, c;
     int block_span, block_sz, remain;
     ssize_t n_chars_read;
@@ -547,8 +545,8 @@ bam_reader(void *par, struct managed_buf *bufs)
     size_t max_grow;
     unsigned more_input = 0;
 
-    for (s = 0; s != bp->n; ++s) {
-        struct bam_stats *bs = &bp->m[s];
+    for (s = 0; s != bsi->n; ++s) {
+        struct bam_stats *bs = &bsi->m[s];
         if (bs->more_input) more_input = 1;
         bufs[s].size = 0;
 

@@ -165,9 +165,7 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
                           struct binomial_est_params be_par,
                           struct dir_cache_params dc_par,
                           struct bam_filter_params bf_par,
-                          void **reader_pars,
-                          struct contig_region *qbeg,
-                          struct contig_region *qend,
+                          struct bam_scanner_info *reader_buf,
                           unsigned n_max_reading,
                           unsigned long max_input_mem,
                           unsigned n_threads)
@@ -236,13 +234,13 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     dir_cache_init(dc_par);
 
     printf("Collecting input statistics...");
-    run_survey(reader_pars, qbeg, qend, n_threads, n_max_reading, max_input_mem);
+    run_survey(reader_buf, dc_par.n_max_survey_loci, n_threads, n_max_reading, max_input_mem);
     printf("done.\n");
 
     /* This is needed to return batch_pileup back to the beginning
        state. */
     pileup_reset_pos();
-    cs_stats_reset_pos();
+    chunk_strategy_reset();
 
     printf("Generating dirichlet point sets...");
     generate_point_sets(n_threads);
@@ -442,27 +440,24 @@ find_cacheable_permutation(const unsigned *a,
 struct binomial_est_state 
 get_est_state(struct bound_search_params *bpar)
 {
-    khint64_t key[2];
-    unsigned packable[2];
-    unsigned *cts[2];
-    unsigned i;
     khiter_t itr;
-    struct points_gen_par *pgp;
+    unsigned i;
     for (i = 0; i != 2; ++i) {
-        pgp = bpar->dist[i]->pgen.points_gen_par;
-        cts[i] = pgp->alpha_counts;
-        init_alpha_packed_large(cts[i], &key[i], &packable[i]);
+        unsigned packable, *cts;
+        khint64_t key;
+        struct points_gen_par *pgp = bpar->dist[i]->pgen.points_gen_par;
+        cts = pgp->alpha_counts;
+        init_alpha_packed_large(cts, &key, &packable);
         struct points_buf *pb = &bpar->dist[i]->points;
-        if (pb->size == 0 && packable[i]) {
-            /* attempt to retrieve points from the global point sets hash */
-            if ((itr = kh_get(points_h, g_points_hash, key[i])) 
-                != kh_end(g_points_hash)) {
-                pb->p = kh_val(g_points_hash, itr);
-                pb->size = g_be_par.max_sample_points;
-            } else {
-                pb->p = pb->buf;
-                pb->size = 0;
-            }
+        if (pb->size == 0 
+            && packable
+            && (itr = kh_get(points_h, g_points_hash, key)) != kh_end(g_points_hash)
+            && kh_exist(g_points_hash, itr)) {
+            pb->p = kh_val(g_points_hash, itr);
+            pb->size = g_be_par.max_sample_points;
+        } else {
+            pb->p = pb->buf;
+            pb->size = 0;
         }
             /* sync_points(key[i], &bpar->dist[i]->points,  */
             /*             bpar->points_hash_frozen); */

@@ -25,13 +25,17 @@ struct locus_diff_params {
 
 
 /* program-wide initialization of static variables */
-void
-locus_diff_init(struct locus_diff_params ldpar,
-                unsigned n_threads,
-                const char *samples_file,
-                const char *sample_pairs_file,
-                const char *fasta_file,
-                struct bam_filter_params bam_filter);
+struct thread_queue *
+locus_diff_init(const char *samples_file, const char *sample_pair_file, 
+                const char *locus_range_file, const char *fasta_file,
+                unsigned n_threads, unsigned n_max_reading, unsigned long max_input_mem,
+                struct locus_diff_params ld_par,
+                struct dirichlet_diff_params dd_par,
+                struct binomial_est_params be_par,
+                struct dir_cache_params dc_par,
+                struct bam_filter_params bf_par,
+                FILE *dist_fh, FILE *comp_fh, FILE *indel_fh);
+
 
 void locus_diff_free();
 

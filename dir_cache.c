@@ -114,13 +114,12 @@ survey_offload(void *par,
 
 
 
-/* main routine for running the survey.  read chunks of input until
-   accumulating at least n_bounds and n_point_sets.  At each
-   iteration,  */
+/* main routine for running the survey.  read chunks of input as
+   determined by reader_pars until either n_max_loci are read, or at
+   least n_bounds and n_point_sets. */
 void
-run_survey(void **reader_pars,
-           struct contig_region *qbeg,
-           struct contig_region *qend,
+run_survey(struct bam_scanner_info *reader_buf,
+           unsigned long n_max_survey_loci,
            unsigned n_threads,
            unsigned n_max_reading,
            unsigned long max_input_mem)
@@ -130,52 +129,44 @@ run_survey(void **reader_pars,
     khiter_t itr;
     unsigned t;
 
-    /* clone the original logical range */
-    unsigned n_ranges = qend - qbeg;
-    assert(n_ranges);
+    const struct contig_region 
+        *qbeg = cs_stats.query_regions,
+        *qend = qbeg + cs_stats.n_query_regions,
+        *qcur = qbeg;
 
-    struct contig_region
-        *regs = malloc(n_ranges * sizeof(struct contig_region)),
-        *breg = regs,
-        *ereg = regs + n_ranges;
-    memcpy(regs, qbeg, n_ranges * sizeof(struct contig_region));
-    unsigned save_end = breg->end;
-
+    struct contig_span target_span;
+    target_span.beg = CONTIG_REGION_BEG(*qbeg);
+    unsigned long n_loci_left = n_max_survey_loci;
+    
     /* parse one million data points per chunk. A data point is one
        locus in one sample */
 #define N_DATA_PER_CHUNK 1e7
 
     unsigned max_n_loci = N_DATA_PER_CHUNK / bam_samples.n;
     struct bam_scanner_info *bsi;
+    void **reader_pars = malloc(n_threads * sizeof(void *));
+    for (t = 0; t != n_threads; ++t)
+        reader_pars[t] = &reader_buf[t];
 
     /* loop until we have enough statistics or run out of input */
     while ((nb < g_dc_par.n_bounds || np < g_dc_par.n_point_sets)
-           && breg != ereg) {
-
-        /* set work chunk beginning (the underlying region may be
-           truncated after this) */
-        for (t = 0; t != n_threads; ++t) {
-            bsi = reader_pars[t];
-            bsi->qbeg = breg;
-        }
+           && n_loci_left > 0) {
 
         /* scan forward until we have n_loci */
         unsigned n_loci_tmp = 0;
-        for (; breg != ereg; ++breg) {
-            n_loci_tmp += breg->end - breg->beg;
+        for (; qcur != qend; ++qcur) {
+            n_loci_tmp += qcur->end - qcur->beg;
             if (n_loci_tmp > max_n_loci) {
-                save_end = breg->end;
-                breg->end -= (n_loci_tmp - max_n_loci);
+                target_span.end = (struct contig_pos){ qcur->tid, qcur->end - (n_loci_tmp - max_n_loci) };
                 break;
             }
         }
-            
-        /* set end of chunk of work */
-        for (t = 0; t != n_threads; ++t) {
-            bsi = reader_pars[t];
-            bsi->qend = breg + 1;
+        if (n_loci_tmp <= max_n_loci) {
+            target_span.end = (struct contig_pos){ UINT_MAX, UINT_MAX };
+            n_loci_left = 0;
         }
-    
+        chunk_strategy_set_span(target_span);
+            
         struct thread_queue *tq =
             thread_queue_init(reader,
                               reader_pars,
@@ -190,13 +181,10 @@ run_survey(void **reader_pars,
                               0, /* no outputs */
                               max_input_mem);
         
-        chunk_strategy_reset(max_n_loci);
         thread_queue_run(tq);
         thread_queue_free(tq);
 
-        /* restore breg to be the unused portion of previous breg */
-        breg->beg = breg->end;
-        breg->end = save_end;
+        target_span.beg = target_span.end;
 
         nb = 0;
         for (itr = kh_begin(g_btup_hash); itr != kh_end(g_btup_hash); ++itr) {
@@ -205,17 +193,8 @@ run_survey(void **reader_pars,
         }
         np = kh_size(g_points_hash);
     }
-    free(regs);
-
-    /* restore original settings for the reader_pars */
-    for (t = 0; t != n_threads; ++t) {
-        bsi = reader_pars[t];
-        bsi->qbeg = qbeg;
-        bsi->qend = qend;
-    }
-
+    free(reader_pars);
     winnow_ptup_hash();
-
 }
 
 

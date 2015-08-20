@@ -14,6 +14,7 @@
 #include "bam_sample_info.h"
 #include "fasta.h"
 #include "locus_range.h"
+#include "chunk_strategy.h"
 
 #include <stdint.h>
 #include <assert.h>
@@ -196,6 +197,7 @@ batch_pileup_init(struct bam_filter_params _bam_filter,
     bam_filter = _bam_filter;
     skip_empty_loci = skip_empty;
     pseudo_depth = _pseudo_depth;
+    chunk_strategy_reset();
 }
 
 
@@ -307,8 +309,8 @@ batch_pileup_thread_free()
 
 static void
 process_bam_block(char *rec, char *end,
-                  struct contig_region *qbeg,
-                  struct contig_region *qend,
+                  const struct contig_region *qbeg,
+                  const struct contig_region *qend,
                   struct contig_span loaded_span,
                   struct tally_stats *ts);
 
@@ -321,13 +323,17 @@ process_bam_block(char *rec, char *end,
 void
 pileup_load_refseq_ranges(struct bam_scanner_info *bsi)
 {
-    if (bsi->qbeg == bsi->qend) return;
+    if (cs_stats.n_query_regions == 0) return;
 
     struct contig_region *q, *qlo, *qhi;
-    find_intersecting_span(bsi->qbeg, bsi->qend, bsi->loaded_span, &qlo, &qhi);
+    const struct contig_region 
+        *qbeg = cs_stats.query_regions,
+        *qend = qbeg + cs_stats.n_query_regions;
+
+    find_intersecting_span(qbeg, qend, bsi->loaded_span, &qlo, &qhi);
     if (qlo == qhi) return;
 
-    /* find the first region in [bsi->qbeg, bsi->qend) */
+    /* find the first region in [qbeg, qend) */
     unsigned r = 0, alloc = 0;
     for (q = qlo; q != qhi; ++q) {
         ALLOC_GROW(tls.refseqs, r + 1, alloc);
@@ -397,8 +403,12 @@ pileup_tally_stats(const struct managed_buf bam,
                    struct bam_scanner_info *bsi,
                    unsigned s)
 {
+    const struct contig_region 
+        *qbeg = cs_stats.query_regions,
+        *qend = qbeg + cs_stats.n_query_regions;
+
     process_bam_block(bam.buf, bam.buf + bam.size,
-                      bsi->qbeg, bsi->qend, bsi->loaded_span,
+                      qbeg, qend, bsi->loaded_span,
                       &tls.ts[s]);
 }    
 
@@ -851,8 +861,8 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
    the start position of the last record parsed). */
 static void
 process_bam_block(char *rec, char *end,
-                  struct contig_region *qbeg,
-                  struct contig_region *qend,
+                  const struct contig_region *qbeg,
+                  const struct contig_region *qend,
                   struct contig_span loaded_span,
                   struct tally_stats *ts)
 {

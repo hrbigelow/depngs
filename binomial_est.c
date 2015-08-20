@@ -308,11 +308,13 @@ binomial_quantile_est(struct points_gen pgen1,
 
     /* cur: next point to be used for distance calculation.
        end: next point to be drawn from distribution */
-    /* !!! here's the problem. */
     POINT 
         *pcur1 = points1->p, *pend1 = points1->p + points1->size,
         *pcur2 = points2->p, *pend2 = points2->p + points2->size;
-        
+
+    assert(pcur1 != NULL);
+    assert(pcur2 != NULL);
+
     /* invariant: pcur <= pend */
     /*
     unsigned *alpha1_cts = ((struct points_gen_par *)pgen1.points_gen_par)->alpha_counts;

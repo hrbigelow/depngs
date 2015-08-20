@@ -314,13 +314,6 @@ pileup_init(const char *samples_file,
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 
     /* fasta_init is called from within batch_pileup_init */
-    unsigned long n_total_loci;
-    thread_params.ranges = 
-        parse_locus_ranges(locus_range_file,
-                           fasta_file,
-                           &thread_params.n_ranges,
-                           &n_total_loci);
-
     thread_params.n_threads = n_threads;
     thread_params.scanner_info_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
     thread_params.reader_pars = malloc(n_threads * sizeof(void *));
@@ -330,8 +323,6 @@ pileup_init(const char *samples_file,
         thread_params.scanner_info_buf[t] = (struct bam_scanner_info){
             malloc(bam_samples.n * sizeof(struct bam_stats)),
             bam_samples.n,
-            thread_params.ranges, 
-            thread_params.ranges + thread_params.n_ranges
         };
         for (s = 0; s != bam_samples.n; ++s)
             bam_stats_init(bam_samples.m[s].bam_file, 
@@ -341,8 +332,7 @@ pileup_init(const char *samples_file,
     }
     thread_params.fasta_file = fasta_file;
 
-    chunk_strategy_init(bam_samples.n, n_threads);
-    chunk_strategy_reset(n_total_loci);
+    chunk_strategy_init(bam_samples.n, n_threads, locus_range_file, fasta_file);
 
     unsigned n_extra = n_threads * 2;
     unsigned n_outputs = 1; /* just producing a pileup file */

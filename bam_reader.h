@@ -31,8 +31,8 @@ struct bam_scanner_info {
     struct bam_stats *m;
     unsigned n;
 
-    /* set of defined logical ranges */
-    struct contig_region *qbeg, *qend;
+    /* set of defined logical ranges (moved to chunk_strategy) */
+    /* const struct contig_region *const qbeg, *const qend; */
     struct contig_span loaded_span;
 };
 
