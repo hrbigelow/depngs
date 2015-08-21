@@ -5,9 +5,6 @@
 
 #include "sampling.h"
 
-#include "yepLibrary.h"
-#include "yepCore.h"
-
 #include <gsl/gsl_math.h>
 #include <gsl/gsl_randist.h>
 #include <time.h>
@@ -72,12 +69,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
         exit(1);
     }
     bam_sample_info_init(samples_file, sample_pairs_file);
-    chunk_strategy_init(bam_samples.n, n_threads, locus_range_file, fasta_file);
-
-    /* we do not want to skip empty loci, because we need to traverse
-       these in order to get statistics for missing data */
-    unsigned skip_empty_loci = 0;
-    batch_pileup_init(bf_par, skip_empty_loci, PSEUDO_DEPTH);
+    chunk_strategy_init(bam_samples.n, n_threads, 5e5, locus_range_file, fasta_file);
 
     thread_params.n_threads = n_threads;
     thread_params.reader_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
@@ -110,6 +102,11 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     size_t n_output_files = (dist_fh ? 1 : 0) + (comp_fh ? 1 : 0) + (indel_fh ? 1 : 0);
 
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
+
+    /* we do not want to skip empty loci, because we need to traverse
+       these in order to get statistics for missing data */
+    unsigned skip_empty_loci = 0;
+    batch_pileup_init(bf_par, skip_empty_loci, dd_par.pseudo_depth);
 
     struct thread_queue *tqueue =
         thread_queue_init(reader, 
@@ -258,24 +255,6 @@ print_basecomp_quantiles(COMP_QV quantile_values,
 
         mb->size += sprintf(mb->buf + mb->size, "\n");
     }
-}
-
-
-/* populates square_dist_buf with squares of euclidean distances
-   between points1 and points2 in the barycentric space (R4,
-   normalized positive components).  populates weights_buf with
-   product of weights1 and weights2. */
-void
-compute_wsq_dist(const double *points1,
-                 const double *weights1,
-                 const double *points2,
-                 const double *weights2,
-                 size_t n_points,
-                 double *square_dist_buf,
-                 double *weights_buf)
-{
-    compute_square_dist(points1, points2, n_points, 4, square_dist_buf);
-    (void)yepCore_Multiply_V64fV64f_V64f(weights1, weights2, weights_buf, n_points);
 }
 
 

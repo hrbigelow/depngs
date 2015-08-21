@@ -52,6 +52,16 @@ struct distrib_points {
 };
 
 
+/* initializes error_probability and alpha_prior.  (no allocation
+   needed) */
+void
+dirichlet_points_gen_init(struct dirichlet_points_gen_params pg_par);
+
+
+void
+dirichlet_points_gen_free();
+
+
 void alloc_distrib_points(struct distrib_points *dpts);
 
 void free_distrib_points(struct distrib_points *dpts);
@@ -100,11 +110,6 @@ void
 reset_locus_data(struct locus_data *ld);
 
 
-/* initializes error_probability and alpha_prior.  (no allocation
-   needed) */
-void
-dirichlet_points_gen_init(struct dirichlet_points_gen_params pg_par);
-
 double get_alpha_prior();
 
 /* Generate GEN_POINTS_BATCH points using par to parameterize the
@@ -121,6 +126,17 @@ void gen_reference_points_wrapper(const void *par, POINT *points);
 /* Generate GEN_POINTS_BATCH weights (ratio of posterior to dirichlet) */
 void
 calc_post_to_dir_logratio(POINT *points, const void *par, double *weights);
+
+
+/* populates square_dist_buf with squares of euclidean distances
+   between points1 and points2 in the barycentric space (R4,
+   normalized positive components).  populates weights_buf with
+   product of weights1 and weights2. */
+void
+compute_wsq_dist(const double *points1, const double *weights1,
+                 const double *points2, const double *weights2,
+                 size_t n_points,
+                 double *square_dist_buf, double *weights_buf);
 
 
 /* Generate GEN_POINTS_BATCH dummy weights of value 1 */

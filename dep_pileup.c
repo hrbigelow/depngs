@@ -332,7 +332,7 @@ pileup_init(const char *samples_file,
     }
     thread_params.fasta_file = fasta_file;
 
-    chunk_strategy_init(bam_samples.n, n_threads, locus_range_file, fasta_file);
+    chunk_strategy_init(bam_samples.n, n_threads, 5e5, locus_range_file, fasta_file);
 
     unsigned n_extra = n_threads * 2;
     unsigned n_outputs = 1; /* just producing a pileup file */

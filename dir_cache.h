@@ -50,7 +50,9 @@ dir_cache_try_get_points(unsigned *alpha);
    >= min_ct_keep_bound are counted towards the n_bounds
    requirement. */
 void
-run_survey(struct bam_scanner_info *reader_buf,
+run_survey(struct bam_filter_params bf_par,
+           struct bam_scanner_info *reader_buf,
+           unsigned pseudo_depth,
            unsigned long n_max_survey_loci,
            unsigned n_threads,
            unsigned n_max_reading,

@@ -216,9 +216,6 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     /* for (i = 0; i != cache.n_vals_mtx; ++i) */
     /*     pthread_mutex_init(&cache.dir_points_vals_mtx[i], NULL); */
 
-    enum YepStatus status = yepLibrary_Init();
-    assert(status == YepStatusOk);
-
     struct dirichlet_points_gen_params pg_par = {
         .min_base_quality = bf_par.min_base_quality,
         .max_sample_points = g_be_par.max_sample_points,
@@ -234,7 +231,8 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     dir_cache_init(dc_par);
 
     printf("Collecting input statistics...");
-    run_survey(reader_buf, dc_par.n_max_survey_loci, n_threads, n_max_reading, max_input_mem);
+    run_survey(bf_par, reader_buf, dd_par.pseudo_depth, 
+               dc_par.n_max_survey_loci, n_threads, n_max_reading, max_input_mem);
     printf("done.\n");
 
     /* This is needed to return batch_pileup back to the beginning

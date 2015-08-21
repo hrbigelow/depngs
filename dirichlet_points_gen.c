@@ -28,6 +28,35 @@ static double g_log_dbl_max, g_log_dbl_min, g_log_dbl_range;
 
 static struct dirichlet_points_gen_params g_pg_par;
 
+
+void
+dirichlet_points_gen_init(struct dirichlet_points_gen_params pg_par)
+{
+    g_pg_par = pg_par;
+    enum YepStatus status = yepLibrary_Init();
+    assert(status == YepStatusOk);
+
+    unsigned q;
+    double ep;
+    for (q = 0; q != 255; ++q) {
+        ep = pow(10.0, -(double)q / 10.0);
+        error_probability[q] = (struct phred){ 1.0 - ep, ep / 3.0 };
+    }
+    g_log_dbl_max = log(DBL_MAX);
+    g_log_dbl_min = log(DBL_MIN);
+    g_log_dbl_range = g_log_dbl_max - g_log_dbl_min;
+}
+
+
+void
+dirichlet_points_gen_free()
+{
+    enum YepStatus status = yepLibrary_Release();
+    assert(status == YepStatusOk);
+}
+
+
+
 void alloc_distrib_points(struct distrib_points *dpts)
 {
     unsigned msp = g_pg_par.max_sample_points;
@@ -121,22 +150,6 @@ reset_locus_data(struct locus_data *ld)
     ld->confirmed_changed = 0;
 }
 
-
-void
-dirichlet_points_gen_init(struct dirichlet_points_gen_params pg_par)
-{
-    g_pg_par = pg_par;
-
-    unsigned q;
-    double ep;
-    for (q = 0; q != 255; ++q) {
-        ep = pow(10.0, -(double)q / 10.0);
-        error_probability[q] = (struct phred){ 1.0 - ep, ep / 3.0 };
-    }
-    g_log_dbl_max = log(DBL_MAX);
-    g_log_dbl_min = log(DBL_MIN);
-    g_log_dbl_range = g_log_dbl_max - g_log_dbl_min;
-}
 
 double get_alpha_prior()
 {
@@ -308,6 +321,21 @@ batch_scaled_exponentiate(double *val, unsigned n_val)
     /*     max_val2 = MAX(max_val2, val[i]); */
     /* } */
     /* assert(max_val2 > 0); */
+}
+
+
+/* populates square_dist_buf with squares of euclidean distances
+   between points1 and points2 in the barycentric space (R4,
+   normalized positive components).  populates weights_buf with
+   product of weights1 and weights2. */
+void
+compute_wsq_dist(const double *points1, const double *weights1,
+                 const double *points2, const double *weights2,
+                 size_t n_points,
+                 double *square_dist_buf, double *weights_buf)
+{
+    compute_square_dist(points1, points2, n_points, 4, square_dist_buf);
+    (void)yepCore_Multiply_V64fV64f_V64f(weights1, weights2, weights_buf, n_points);
 }
 
 

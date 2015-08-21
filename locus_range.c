@@ -159,7 +159,8 @@ less_virtual_query(unsigned pos, void *par)
 
 /* find the subrange of the sorted range [qbeg, qend) that intersects
    subset, storing it in *qlo, *qhi. return the total number of loci
-   in the intersection. */
+   in the intersection. if subset is zero-length, qlo and qhi will be
+   equal. */
 unsigned long
 find_intersecting_span(const struct contig_region *qbeg,
                        const struct contig_region *qend,

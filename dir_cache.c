@@ -34,6 +34,8 @@ static POINT *g_point_sets_buf;
 static struct dir_cache_params g_dc_par;
 
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 void
 dir_cache_init(struct dir_cache_params dc_par)
 {
@@ -118,12 +120,17 @@ survey_offload(void *par,
    determined by reader_pars until either n_max_loci are read, or at
    least n_bounds and n_point_sets. */
 void
-run_survey(struct bam_scanner_info *reader_buf,
+run_survey(struct bam_filter_params bf_par,
+           struct bam_scanner_info *reader_buf,
+           unsigned pseudo_depth,
            unsigned long n_max_survey_loci,
            unsigned n_threads,
            unsigned n_max_reading,
            unsigned long max_input_mem)
 {
+    unsigned skip_empty_loci = 1;
+    batch_pileup_init(bf_par, skip_empty_loci, pseudo_depth);
+
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
     unsigned nb = 0, np = 0;
     khiter_t itr;
@@ -140,10 +147,9 @@ run_survey(struct bam_scanner_info *reader_buf,
     
     /* parse one million data points per chunk. A data point is one
        locus in one sample */
-#define N_DATA_PER_CHUNK 1e7
+#define N_LOCI_PER_CHUNK 1e7
 
-    unsigned max_n_loci = N_DATA_PER_CHUNK / bam_samples.n;
-    struct bam_scanner_info *bsi;
+    unsigned max_n_loci_loop = N_LOCI_PER_CHUNK;
     void **reader_pars = malloc(n_threads * sizeof(void *));
     for (t = 0; t != n_threads; ++t)
         reader_pars[t] = &reader_buf[t];
@@ -151,17 +157,20 @@ run_survey(struct bam_scanner_info *reader_buf,
     /* loop until we have enough statistics or run out of input */
     while ((nb < g_dc_par.n_bounds || np < g_dc_par.n_point_sets)
            && n_loci_left > 0) {
+        max_n_loci_loop = MIN(max_n_loci_loop, n_loci_left);
 
-        /* scan forward until we have n_loci */
+        /* scan forward through the ranges until we have   */
         unsigned n_loci_tmp = 0;
         for (; qcur != qend; ++qcur) {
             n_loci_tmp += qcur->end - qcur->beg;
-            if (n_loci_tmp > max_n_loci) {
-                target_span.end = (struct contig_pos){ qcur->tid, qcur->end - (n_loci_tmp - max_n_loci) };
+            if (n_loci_tmp > max_n_loci_loop) {
+                unsigned n_loci_surplus = n_loci_tmp - max_n_loci_loop;
+                target_span.end = (struct contig_pos){ qcur->tid, qcur->end - n_loci_surplus };
+                n_loci_left -= max_n_loci_loop;
                 break;
             }
         }
-        if (n_loci_tmp <= max_n_loci) {
+        if (n_loci_tmp <= max_n_loci_loop) {
             target_span.end = (struct contig_pos){ UINT_MAX, UINT_MAX };
             n_loci_left = 0;
         }
@@ -191,9 +200,10 @@ run_survey(struct bam_scanner_info *reader_buf,
             if (! kh_exist(g_btup_hash, itr)) continue;
             if (kh_val(g_btup_hash, itr) >= g_dc_par.min_ct_keep_bound) ++nb;
         }
-        np = kh_size(g_points_hash);
+        np = kh_size(g_ptup_hash);
     }
     free(reader_pars);
+    batch_pileup_free();
     winnow_ptup_hash();
 }
 
@@ -302,6 +312,10 @@ survey_worker(const struct managed_buf *in_bufs,
     khash_t(bounds_tuple_h) *btup_hash = kh_init(bounds_tuple_h);
 
     while (pileup_next_pos()) {
+        reset_locus_data(&pseudo_data);
+        for (s = 0; s != bam_samples.n; ++s)
+            reset_locus_data(&ldat[s]);
+
         for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
             unsigned sp[] = { bam_sample_pairs.m[pi].s1, 
                               bam_sample_pairs.m[pi].s2 };
@@ -344,9 +358,6 @@ survey_worker(const struct managed_buf *in_bufs,
             else
                 kh_val(btup_hash, itr) = 1;
         }
-        for (s = 0; s != bam_samples.n; ++s)
-            reset_locus_data(&ldat[s]);
-        reset_locus_data(&pseudo_data);
 
     }
     pileup_clear_stats();
@@ -362,6 +373,10 @@ survey_worker(const struct managed_buf *in_bufs,
 
     kh_destroy(points_tuple_h, ptup_hash);
     kh_destroy(bounds_tuple_h, btup_hash);
+
+    fprintf(stdout, "Surveyed %u:%u-%u\n", 
+            bsi->loaded_span.beg.tid, bsi->loaded_span.beg.pos,
+            bsi->loaded_span.end.pos);
 }
 
 

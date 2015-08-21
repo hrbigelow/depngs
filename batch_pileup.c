@@ -190,11 +190,11 @@ static struct bam_filter_params bam_filter;
 
 
 void
-batch_pileup_init(struct bam_filter_params _bam_filter,
+batch_pileup_init(struct bam_filter_params bf_par,
                   unsigned skip_empty,
                   unsigned _pseudo_depth)
 {
-    bam_filter = _bam_filter;
+    bam_filter = bf_par;
     skip_empty_loci = skip_empty;
     pseudo_depth = _pseudo_depth;
     chunk_strategy_reset();

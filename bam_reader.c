@@ -359,6 +359,21 @@ hts_size_to_range(const struct contig_region *qbeg,
                   unsigned *more_input,
                   unsigned *n_tiles)
 {
+    unsigned n_max_tiles = *n_tiles;
+    size_t bgzf_bytes = 0;
+    *n_chunks = 0;
+    *more_input = 0;
+    *n_tiles = 0;
+
+    /* creg is the intersection of the current interval with the subset */
+    struct contig_region creg;
+    struct contig_pos cpos = { subset.end.tid, subset.end.pos };
+    struct contig_span loaded_span = { cpos, cpos };
+
+    const struct contig_region *qlo, *qhi;
+    unsigned long ix_sz = find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
+    if (! ix_sz) return loaded_span;
+    
     /* constants */
     int firstbin0 = hts_bin_first(idx->n_lvls);
     int firstbin1 = hts_bin_first(idx->n_lvls - 1);
@@ -366,27 +381,11 @@ hts_size_to_range(const struct contig_region *qbeg,
     int n_bins, *bins = malloc(idx->n_lvls * sizeof(int));
     int ms = idx->min_shift; /* convert between 16kb window index and
                                 position */
-
-    /* find the first item in the query range [qbeg, qend) that
-       overlaps beg. */
-    const struct contig_region *qlo, *qhi;
-    find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
-
-    /* [subset.beg, cpos) defines the accumulating region. if loop
-       below never executes, it means there was no data in the subset
-       region, and we are done with this subset. */
-    struct contig_pos cpos = { subset.end.tid, subset.end.pos };
-    
-    /* creg is the intersection of the current interval with the subset */
-    struct contig_region creg;
-    struct contig_span loaded_span = { cpos, cpos };
-
-    size_t bgzf_bytes;
     uint64_t min_off;
     kbtree_t(itree_t) *itree = kb_init(itree_t, 128);
-    int ti_beg, ti_end, n_max_tiles = *n_tiles;
-    
-    for (*n_chunks = bgzf_bytes = *n_tiles = 0; qlo != qhi; ++qlo) {
+
+    int ti_beg, ti_end;
+    while (qlo != qhi) {
         creg = region_span_intersect(*qlo, subset);
         loaded_span.beg = MIN_CONTIG_POS(loaded_span.beg, CONTIG_REGION_BEG(creg));
 
@@ -424,6 +423,7 @@ hts_size_to_range(const struct contig_region *qbeg,
                     add_bin_chunks_aux(bins[b], idx->bidx[creg.tid], min_off, itree);
             ++(*n_tiles);
         }
+        ++qlo;
     }
  END:
     *more_input = qlo != qhi;

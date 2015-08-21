@@ -19,9 +19,9 @@ struct chunk_strategy {
     unsigned long n_all_loci_read;
     unsigned long n_loci_total;
     unsigned long n_loci_read;
-    unsigned long bytes_per_locus;
     const struct contig_region *query_regions;
     unsigned n_query_regions;
+    unsigned long n_min_absolute_bytes; /* min for cs_max_bytes_wanted() */
     struct contig_span span;
 };
 
@@ -31,6 +31,7 @@ extern struct chunk_strategy cs_stats;
 /* call once at start of program */
 void
 chunk_strategy_init(unsigned n_files, unsigned n_threads,
+                    unsigned long n_min_absolute_bytes,
                     const char *locus_range_file,
                     const char *fasta_file);
 

@@ -6,11 +6,7 @@
 #include <time.h>
 #include <string.h>
 
-enum buf_status {
-    EMPTY,
-    LOADING,
-    FULL
-};
+enum buf_status { EMPTY, LOADING, FULL, UNLOADING };
 
 /* managed output buffers.  There will be T + E of these and they will
    be owned by 0 or 1 thread at any given time (but not necessarily
@@ -59,7 +55,7 @@ struct thread_queue {
 
     void *offload_par;
 
-    /* protects */
+    /* protects out_head, pool_status,  */
     pthread_mutex_t out_mtx;
     pthread_cond_t out_buf_avail;
     struct output_node *out_pool, *out_head, *out_tail;
@@ -311,16 +307,19 @@ offload_full_buffers(struct thread_comp_input *par)
 {
     struct thread_queue *tq = par->tq;
     while (tq->out_head && tq->out_head->status == FULL) {
+        tq->pool_status[tq->out_head->status]--;
+        tq->out_head->status = UNLOADING;
+        tq->pool_status[tq->out_head->status]++;
+
+        /* once tq->out_head->status is set to UNLOADING, program
+           logic ensures it is safe to use tq->out_head->buf */
         pthread_mutex_unlock(&tq->out_mtx);
-        
-        /* once tq->out_head->status == FULL, program logic
-           ensures it is safe to use tq->out_head->buf */
         tq->offload(tq->offload_par, tq->out_head->buf);
-        
         pthread_mutex_lock(&tq->out_mtx);
-        --tq->pool_status[tq->out_head->status];
+
+        tq->pool_status[tq->out_head->status]--;
         tq->out_head->status = EMPTY;
-        ++tq->pool_status[tq->out_head->status];
+        tq->pool_status[tq->out_head->status]++;
         
         unsigned b;
         for (b = 0; b != tq->n_outputs; ++b)
