@@ -202,6 +202,7 @@ add_chunk_to_itree(kbtree_t(itree_t) *itree, hts_pair64_t q)
 }
 
 
+#if 0
 static unsigned
 total_itree_bytes(kbtree_t(itree_t) *itree)
 {
@@ -217,6 +218,9 @@ total_itree_bytes(kbtree_t(itree_t) *itree)
     }
     return sz;
 }
+#endif
+
+
 
 /* taken from htslib/hts.c */
 typedef struct {
@@ -365,7 +369,7 @@ hts_size_to_range(const struct contig_region *qbeg,
 
     /* find the first item in the query range [qbeg, qend) that
        overlaps beg. */
-    struct contig_region *qlo, *qhi;
+    const struct contig_region *qlo, *qhi;
     find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
 
     /* [subset.beg, cpos) defines the accumulating region. if loop
@@ -442,7 +446,7 @@ unpackInt16(const uint8_t *buffer)
 size_t
 num_span_loci(struct bam_scanner_info *bsi)
 {
-    struct contig_region *qlo, *qhi;
+    const struct contig_region *qlo, *qhi;
     return find_intersecting_span(cs_stats.query_regions, 
                                   cs_stats.query_regions + cs_stats.n_query_regions,
                                   bsi->loaded_span, &qlo, &qhi);
@@ -506,8 +510,8 @@ bam_scanner(void *par, size_t bytes_wanted)
    otherwise. update (*beg) to point to first region that overlaps */
 int
 rec_overlaps(bam1_t *b, 
-             struct contig_region **beg,
-             struct contig_region *end)
+             const struct contig_region **beg,
+             const struct contig_region *end)
 {
     /* increment beg until it intersects or passes b */
     struct contig_region bam_reg = { b->core.tid, b->core.pos, bam_endpos(b) };
@@ -781,7 +785,6 @@ khash_t(readgroup_h) *
 init_readgroup_file(FILE *readgroup_fh)
 {
     khash_t(readgroup_h) *rh = kh_init(readgroup_h);
-    khiter_t itr;
     char rg[MAX_READGROUP_NAME_LEN], *newline;
     int ret;
     while (fgets(rg, MAX_READGROUP_NAME_LEN, readgroup_fh)) {
@@ -795,7 +798,7 @@ init_readgroup_file(FILE *readgroup_fh)
         } else {
             *newline = '\0';
             char *rgdup = strdup(rg);
-            itr = kh_put(readgroup_h, rh, rgdup, &ret);
+            (void)kh_put(readgroup_h, rh, rgdup, &ret);
             if (ret == 0) free(rgdup);
         }
     }

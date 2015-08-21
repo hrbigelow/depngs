@@ -325,7 +325,7 @@ pileup_load_refseq_ranges(struct bam_scanner_info *bsi)
 {
     if (cs_stats.n_query_regions == 0) return;
 
-    struct contig_region *q, *qlo, *qhi;
+    const struct contig_region *q, *qlo, *qhi;
     const struct contig_region 
         *qbeg = cs_stats.query_regions,
         *qend = qbeg + cs_stats.n_query_regions;
@@ -821,10 +821,9 @@ process_bam_stats(bam1_t *b, struct tally_stats *ts)
                 stat.base = bam_seqi(bam_seq, q);
                 stat.qual = bam_qual[q];
                 key = pack_pbqt(stat);
-                if ((it = kh_get(pbqt_h, ph, key)) == kh_end(ph)) {
-                    it = kh_put(pbqt_h, ph, key, &ret);
+                it = kh_put(pbqt_h, ph, key, &ret);
+                if (ret != 0)
                     kh_val(ph, it) = 0;
-                }
                 kh_val(ph, it)++;
             }
         } else if (op == BAM_CINS) {
@@ -875,7 +874,7 @@ process_bam_block(char *rec, char *end,
     int ret;
     char *rec_next;
 
-    struct contig_region *qcur, *qhi;
+    const struct contig_region *qcur, *qhi;
     find_intersecting_span(qbeg, qend, loaded_span, &qcur, &qhi);
 
     if (qcur == qhi) return;
@@ -977,16 +976,14 @@ summarize_base_counts(unsigned s, struct contig_pos tally_end)
         if (cmp_contig_pos(trg_k.v, tally_end) != -1) continue;
 
         ct = kh_val(src_h, src_itr);
-        trg_itr = kh_get(pb_h, trg_h, trg_k.k);
-        if (trg_itr == kh_end(trg_h)) {
-            trg_itr = kh_put(pb_h, trg_h, trg_k.k, &ret);
-            assert(ret != 0);
+        trg_itr = kh_put(pb_h, trg_h, trg_k.k, &ret);
+        if (ret != 0) 
             kh_val(trg_h, trg_itr) = 
                 (struct base_count){ .ct_filt = { 0, 0, 0, 0 }, 
                                      .n_match_lo_q = 0,
                                      .n_match_hi_q = 0,
                                      .n_match_fuzzy = 0 };
-        }
+        
         int pure_base = seq_nt16_int[stat.base];
         if (pure_base == 4) 
             kh_val(trg_h, trg_itr).n_match_fuzzy += ct;

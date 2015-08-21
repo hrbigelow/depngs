@@ -58,8 +58,8 @@ bam_scanner(void *scanner_info, size_t max_bytes);
    set (*beg) == end if no overlap found. */
 int
 rec_overlaps(bam1_t *b, 
-             struct contig_region **beg,
-             struct contig_region *end);
+             const struct contig_region **beg,
+             const struct contig_region *end);
 
 
 /* parse the next record of an uncompressed raw bam buffer into b,

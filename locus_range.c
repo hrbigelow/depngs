@@ -131,7 +131,8 @@ parse_locus_ranges(const char *locus_range_file,
 
 
 struct virt_less_range_par {
-    struct contig_region *ary, q;
+    const struct contig_region *ary;
+    struct contig_region q;
 };
 
 
@@ -163,12 +164,12 @@ unsigned long
 find_intersecting_span(const struct contig_region *qbeg,
                        const struct contig_region *qend,
                        struct contig_span subset,
-                       struct contig_region **qlo,
-                       struct contig_region **qhi)
+                       const struct contig_region **qlo,
+                       const struct contig_region **qhi)
 {
     if (cmp_contig_pos(subset.beg, subset.end) == 0) {
         *qlo = *qhi = qend;
-        return;
+        return 0;
     }
 
     struct virt_less_range_par vpar;
@@ -181,7 +182,8 @@ find_intersecting_span(const struct contig_region *qbeg,
         { subset.end.tid, subset.end.pos, subset.end.pos + 1 };
     *qhi = qbeg + virtual_upper_bound(0, qend - qbeg, less_virtual_query, &vpar);
 
-    struct contig_region *q, ix;
+    const struct contig_region *q;
+    struct contig_region ix;
     unsigned long n_loci = 0;
     for (q = *qlo; q != *qhi; ++q) {
         ix = region_span_intersect(*q, subset);

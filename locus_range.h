@@ -67,8 +67,8 @@ unsigned long
 find_intersecting_span(const struct contig_region *qbeg,
                        const struct contig_region *qend,
                        struct contig_span subset,
-                       struct contig_region **qlo,
-                       struct contig_region **qhi);
+                       const struct contig_region **qlo,
+                       const struct contig_region **qhi);
 
 /* returns the contig_region that is the intersection between r and s,
    or a zero-length region if there is no intersection. */
