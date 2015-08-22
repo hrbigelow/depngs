@@ -95,11 +95,9 @@ dirichlet_diff_cache_free();
 
 // void prepopulate_bounds_keys(unsigned n_threads);
 
-void
+unsigned
 find_cacheable_permutation(const unsigned *a, const unsigned *b, 
-                           const unsigned *lim,
-                           unsigned *permutation, 
-                           unsigned *perm_found);
+                           const unsigned *lim, unsigned *permutation);
 
 void
 update_points_gen_params(struct distrib_points *dpts,

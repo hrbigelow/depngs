@@ -125,8 +125,3 @@ fasta_fetch_iseq(unsigned tid, int beg, int end)
     }
     return seq;
 }
-
-
-
-
-

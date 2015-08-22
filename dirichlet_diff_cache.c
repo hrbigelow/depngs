@@ -4,7 +4,6 @@
 
 #include "dirichlet_diff_cache.h"
 #include "virtual_bound.h"
-#include "yepLibrary.h"
 #include "chunk_strategy.h"
 
 #include <float.h>
@@ -15,9 +14,7 @@
 
 static struct binomial_est_params g_be_par;
 
-unsigned alpha_packed_limits[] = {
-    1<<24, 1<<20, 1<<12, 1<<8
-};
+
 
 
 /* Describes estimated distance between two Dirichlets with alphas equal to:
@@ -63,20 +60,26 @@ struct dirichlet_diff_cache_t {
 } cache;
 
 
-/* initializes the key from the counts, sets *packable to 1 on failure */
-void 
-init_alpha_packed_large(unsigned *cts, 
-                        khint64_t *key,
-                        unsigned *packable)
+
+unsigned alpha_packed_limits[] = {
+    1<<24, 1<<20, 1<<12, 1<<8
+};
+
+/* attempts to initialize the key from the counts. returns 1 on
+   success, 0 on failure. if counts do not fit within the packing
+   limits, does not modify key. */
+unsigned 
+init_alpha_packed_large(unsigned *cts, khint64_t *key)
 {
-    *packable = 
+    unsigned packable = 
         cts[0] <= alpha_packed_limits[0]
         && cts[1] <= alpha_packed_limits[1]
         && cts[2] <= alpha_packed_limits[2]
         && cts[3] <= alpha_packed_limits[3];
 
-    if (*packable)
+    if (packable)
         *key = pack_alpha64(cts[0], cts[1], cts[2], cts[3]);
+    return packable;
 }
 
 
@@ -109,13 +112,39 @@ unpack_alpha64(uint64_t k, unsigned *c)
 }
 
 
-/* */
+/* defines the limits for using pack_bounds. */
+static unsigned bounds_packed_limits[] = {
+    1<<20, 1<<24, 1<<20
+};
+
+
+/* use to find a joint permutation between a and b, such that a2, b1,
+   b2 could be packable. */
+static unsigned bounds_perm_limits[] = { 
+    (1<<24) + 1, (1<<20) + 1, 1, 1 
+};
+
+
 khint64_t
 pack_bounds(unsigned a2, unsigned b1, unsigned b2)
 {
     khint64_t k = (khint64_t)a2<<44 | (khint64_t)b1<<20 | (khint64_t)b2;
     return k;
 }
+
+unsigned
+try_pack_bounds(unsigned a2, unsigned b1, unsigned b2, khint64_t *key)
+{
+    unsigned packable = 
+        (a2 <= bounds_packed_limits[0]
+         && b1 <= bounds_packed_limits[1]
+         && b2 <= bounds_packed_limits[2]);
+
+    if (packable)
+        *key = pack_bounds(a2, b1, b2);
+    return packable;
+}
+
 
 
 void
@@ -384,14 +413,11 @@ enum fuzzy_state locate_cell(struct binomial_est_bounds *beb, unsigned a1)
 
    Assumes that lim is descending.  lim[i] >= lim[i+1]
 */
-void
-find_cacheable_permutation(const unsigned *a, 
-                           const unsigned *b, 
-                           const unsigned *lim,
-                           unsigned *permutation, 
-                           unsigned *perm_found)
+unsigned
+find_cacheable_permutation(const unsigned *a, const unsigned *b, 
+                           const unsigned *lim, unsigned *permutation)
 {
-    *perm_found = 1;
+    unsigned perm_found = 1;
     /* mpi[i] (max permutation index) is the maximum position in the
        permutation (described above) that the (a, b) pair may attain
        and still stay below the limits. */
@@ -423,10 +449,11 @@ find_cacheable_permutation(const unsigned *a,
         if (max_i != 4)
             permutation[i] = max_i, mpi[max_i] = -1;
         else {
-            *perm_found = 0;
+            perm_found = 0;
             break;
         }
     }
+    return perm_found;
 }
 
 
@@ -441,11 +468,10 @@ get_est_state(struct bound_search_params *bpar)
     khiter_t itr;
     unsigned i;
     for (i = 0; i != 2; ++i) {
-        unsigned packable, *cts;
         khint64_t key;
         struct points_gen_par *pgp = bpar->dist[i]->pgen.points_gen_par;
-        cts = pgp->alpha_counts;
-        init_alpha_packed_large(cts, &key, &packable);
+        unsigned *cts = pgp->alpha_counts;
+        unsigned packable = init_alpha_packed_large(cts, &key);
         struct points_buf *pb = &bpar->dist[i]->points;
         if (pb->size == 0 
             && packable
@@ -665,28 +691,19 @@ initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
 
 
 /* attempt to retrieve a cached distance classification of { a1, a2,
-   0, 0 } and { b1, b2, 0, 0 }. */
+   0, 0 } and { b1, b2, 0, 0 }.  if the cache contained this entry,
+   set *state and return 1.  otherwise, return 0 */
 int
-get_fuzzy_state(struct bound_search_params *bpar,
-                unsigned a1, unsigned a2, 
+get_fuzzy_state(unsigned a1, unsigned a2, 
                 unsigned b1, unsigned b2,
-                enum fuzzy_state *state,
-                unsigned *was_set)
+                enum fuzzy_state *state)
 {
-    *was_set = 1;
-    khint64_t key = pack_bounds(a2, b1, b2);
-    khiter_t itr;
-    struct binomial_est_bounds beb;
-    int state_unset;
-
-    if ((itr = kh_get(bounds_h, g_bounds_hash, key)) != kh_end(g_bounds_hash)) {
-        beb = kh_val(g_bounds_hash, itr);
-        *state = locate_cell(&beb, a1);
-        state_unset = 0;
-    } else
-        state_unset = 1;
-    
-    return state_unset;
+    struct binomial_est_bounds *beb = dir_cache_try_get_bounds(a2, b1, b2);
+    if (beb) {
+        *state = locate_cell(beb, a1);
+        return 1;
+    } else 
+        return 0;
 }
 
 
@@ -700,22 +717,18 @@ cached_dirichlet_diff(unsigned *a,
                       unsigned *cacheable,
                       unsigned *cache_was_set)
 {
-    unsigned lim[] = { g_dd_par.pseudo_depth + 1, g_dd_par.pseudo_depth + 1, 1, 1 };
     unsigned p[4];
     enum fuzzy_state state = UNCHANGED;
-    int state_unset;
-
-    find_cacheable_permutation(a, b, lim, p, cacheable);
+    int state_set = 0;
+    *cache_was_set = 0;
+    *cacheable = find_cacheable_permutation(a, b, bounds_perm_limits, p);
     if (*cacheable) {
         unsigned a1 = a[p[0]], a2 = a[p[1]], b1 = b[p[0]], b2 = b[p[1]];
-        state_unset = get_fuzzy_state(bpar, a1, a2, b1, b2, &state, cache_was_set);
+        state_set = get_fuzzy_state(a1, a2, b1, b2, &state);
+        *cache_was_set = state_set;
     }
-    else state_unset = 1;
-
-    if (state_unset) {
-        /* not worth caching */
-        unsigned lim2[] = { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
-        find_cacheable_permutation(a, b, lim2, p, cacheable);
+    if (! state_set) {
+        *cacheable = find_cacheable_permutation(a, b, alpha_packed_limits, p);
         assert(*cacheable);
         update_points_gen_params(bpar->dist[0], a, p);
         update_points_gen_params(bpar->dist[1], b, p);

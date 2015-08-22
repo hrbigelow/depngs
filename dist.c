@@ -241,12 +241,12 @@ main_dist(int argc, char **argv)
 
     /* allot fractions of main memory to points and input buffers.
        bounds and output buffers will be negligible */
-#define FRAC_MEM_POINTSETS 0.8
+#define FRAC_MEM_POINTSETS 0.9
     size_t max_point_sets = opts.max_mem 
         / (sizeof(POINT) * opts.be_par.max_sample_points);
     opts.dc_par.n_point_sets = max_point_sets * FRAC_MEM_POINTSETS;
 
-#define INPUT_MEM_FRACTION 0.15
+#define INPUT_MEM_FRACTION 0.05
 
     /* allot a fraction of total memory to input buffers. */
     unsigned long max_input_mem = opts.max_mem * INPUT_MEM_FRACTION;

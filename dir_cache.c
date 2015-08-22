@@ -81,6 +81,18 @@ dir_cache_try_get_points(unsigned *alpha)
 }
 
 
+struct binomial_est_bounds *
+dir_cache_try_get_bounds(unsigned a2, unsigned b1, unsigned b2)
+{
+    khint64_t key = pack_bounds(a2, b1, b2);
+    khiter_t itr;
+    if ((itr = kh_get(bounds_h, g_bounds_hash, key)) != kh_end(g_bounds_hash)
+        && kh_exist(g_bounds_hash, itr))
+        return &kh_val(g_bounds_hash, itr);
+    else return NULL;
+}
+
+
 static void
 survey_worker(const struct managed_buf *in_bufs,
               unsigned more_input,
@@ -145,8 +157,7 @@ run_survey(struct bam_filter_params bf_par,
     target_span.beg = CONTIG_REGION_BEG(*qbeg);
     unsigned long n_loci_left = n_max_survey_loci;
     
-    /* parse one million data points per chunk. A data point is one
-       locus in one sample */
+    /*  */
 #define N_LOCI_PER_CHUNK 1e7
 
     unsigned max_n_loci_loop = N_LOCI_PER_CHUNK;
@@ -154,7 +165,10 @@ run_survey(struct bam_filter_params bf_par,
     for (t = 0; t != n_threads; ++t)
         reader_pars[t] = &reader_buf[t];
 
-    /* loop until we have enough statistics or run out of input */
+    /* loop until we have enough statistics or run out of input.  nb,
+     np, n_loci_left, target_span, and qcur are all updated in the
+     iteration. */
+    
     while ((nb < g_dc_par.n_bounds || np < g_dc_par.n_point_sets)
            && n_loci_left > 0) {
         max_n_loci_loop = MIN(max_n_loci_loop, n_loci_left);
@@ -162,10 +176,12 @@ run_survey(struct bam_filter_params bf_par,
         /* scan forward through the ranges until we have   */
         unsigned n_loci_tmp = 0;
         for (; qcur != qend; ++qcur) {
-            n_loci_tmp += qcur->end - qcur->beg;
+            assert(qcur->tid == target_span.beg.tid);
+            n_loci_tmp += qcur->end - target_span.beg.pos;
             if (n_loci_tmp > max_n_loci_loop) {
                 unsigned n_loci_surplus = n_loci_tmp - max_n_loci_loop;
-                target_span.end = (struct contig_pos){ qcur->tid, qcur->end - n_loci_surplus };
+                target_span.end = 
+                    (struct contig_pos){ qcur->tid, qcur->end - n_loci_surplus };
                 n_loci_left -= max_n_loci_loop;
                 break;
             }
@@ -266,14 +282,12 @@ winnow_ptup_hash()
 }
 
 
-
-
 /* accumulate basecall statistics */
 static void
 survey_worker(const struct managed_buf *in_bufs,
               unsigned more_input,
               void *scan_info,
-              struct managed_buf *out_bufs)
+              struct managed_buf *out_bufs /* unused */)
 {
     struct managed_buf bam = { NULL, 0, 0 };
     struct bam_scanner_info *bsi = scan_info;
@@ -330,11 +344,11 @@ survey_worker(const struct managed_buf *in_bufs,
                 }
 
             /* tally the dirichlet base count */
-            find_cacheable_permutation(ld[0]->base_ct.ct_filt,
-                                       ld[1]->base_ct.ct_filt,
-                                       alpha_packed_limits,
-                                       perm,
-                                       &perm_found);
+            perm_found = 
+                find_cacheable_permutation(ld[0]->base_ct.ct_filt,
+                                           ld[1]->base_ct.ct_filt,
+                                           alpha_packed_limits,
+                                           perm);
             if (! perm_found) continue;
             
             for (i = 0; i != 2; ++i) {
@@ -374,9 +388,10 @@ survey_worker(const struct managed_buf *in_bufs,
     kh_destroy(points_tuple_h, ptup_hash);
     kh_destroy(bounds_tuple_h, btup_hash);
 
-    fprintf(stdout, "Surveyed %u:%u-%u\n", 
+    fprintf(stdout, "Surveyed %u:%u-%u\t%u\n", 
             bsi->loaded_span.beg.tid, bsi->loaded_span.beg.pos,
-            bsi->loaded_span.end.pos);
+            bsi->loaded_span.end.pos,
+            bsi->loaded_span.end.pos - bsi->loaded_span.beg.pos);
 }
 
 
@@ -495,8 +510,6 @@ generate_est_bounds_worker(void *par)
             itr2 = kh_put(bounds_h, bh, key, &ret);
             assert(ret != 0);
             unpack_bounds(key, bounds);
-            /* !!! if this is not commented out, free_distrib_points
-                   crashes. */
             initialize_est_bounds(bounds[0], bounds[1], bounds[2],
                                   &bpar, &beb);
 

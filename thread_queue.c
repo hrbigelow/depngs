@@ -355,14 +355,17 @@ worker_func(void *args)
 
         /* reserve the first empty out buffer.  we must do this within
            the scan_mtx to ensure output order.  */
-        PROGRESS_START("RESERVEOUT");
-        pthread_mutex_lock(&tq->out_mtx);
-        while (! tq->pool_status[EMPTY])
-            pthread_cond_wait(&tq->out_buf_avail, &tq->out_mtx);
+        if (tq->n_outputs) {
+            PROGRESS_START("RESERVEOUT");
+            pthread_mutex_lock(&tq->out_mtx);
+            while (! tq->pool_status[EMPTY])
+                pthread_cond_wait(&tq->out_buf_avail, &tq->out_mtx);
+            
+            reserve_out_buffer(par);
+            pthread_mutex_unlock(&tq->out_mtx);
+            PROGRESS_MSG("RESERVEOUT");
+        }
 
-        reserve_out_buffer(par);
-        pthread_mutex_unlock(&tq->out_mtx);
-        PROGRESS_MSG("RESERVEOUT");
         pthread_mutex_unlock(&tq->scan_mtx);
 
         /* wait and reserve reader slot */
@@ -385,14 +388,17 @@ worker_func(void *args)
 
         /* load the output buffer. */
         PROGRESS_START("WORK");
-        tq->worker(par->buf, more_input, par->scan_info, par->out->buf);
+        struct managed_buf *reserved_out_buf = tq->n_outputs ? par->out->buf : NULL;
+        tq->worker(par->buf, more_input, par->scan_info, reserved_out_buf);
         PROGRESS_MSG("WORK");
 
-        pthread_mutex_lock(&tq->out_mtx);
-        set_outnode_status(tq, par->out, FULL);
-        par->out = NULL;
-        offload_full_buffers(par);
-        pthread_mutex_unlock(&tq->out_mtx);
+        if (tq->n_outputs) {
+            pthread_mutex_lock(&tq->out_mtx);
+            set_outnode_status(tq, par->out, FULL);
+            par->out = NULL;
+            offload_full_buffers(par);
+            pthread_mutex_unlock(&tq->out_mtx);
+        }
     }
     tq->on_exit();
     pthread_exit(NULL);

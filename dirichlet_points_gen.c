@@ -9,7 +9,9 @@
 #include <float.h>
 
 #include "dir_cache.h"
+#include "geometry.h"
 
+#include "yepLibrary.h"
 #include "yepMath.h"
 #include "yepCore.h"
 

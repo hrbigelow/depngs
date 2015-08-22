@@ -43,6 +43,10 @@ dir_cache_free();
 POINT *
 dir_cache_try_get_points(unsigned *alpha);
 
+/* return a cached bounds or NULL if not cached */
+struct binomial_est_bounds *
+dir_cache_try_get_bounds(unsigned a2, unsigned b1, unsigned b2);
+
 
 /* main routine for running the survey.  read chunks of input until
    accumulating at least n_bounds and n_point_sets.  The number of

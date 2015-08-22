@@ -953,7 +953,8 @@ process_bam_block(char *rec, char *end,
 
 
 /* marginalize out q and t from pbqt_hash, storing results in pb_hash.
-   counts are only tallied if q >= bam_filter.min_base_quality (global var).   */
+   counts are only tallied if q >= bam_filter.min_base_quality (global
+   var). pb_hash must be freed by the caller. */
 static khash_t(pb_h) *
 summarize_base_counts(unsigned s, struct contig_pos tally_end)
 {
@@ -1027,6 +1028,7 @@ pileup_prepare_basecalls(unsigned s)
             k.k = kh_key(ph, it);
             ary[i++] = (struct pos_base_count){ k.v, kh_val(ph, it) };
         }
+    kh_destroy(pb_h, ph);
     
     ks_introsort(pbc_sort, i, ary);
     ts->base_ct = ary;
