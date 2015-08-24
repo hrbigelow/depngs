@@ -13,19 +13,22 @@ struct chunk_strategy cs_stats;
 
 void
 chunk_strategy_init(unsigned n_files, unsigned n_threads,
-                    unsigned long n_min_absolute_bytes,
                     const char *locus_range_file,
-                    const char *fasta_file)
+                    const char *fasta_file,
+                    unsigned long bytes_zone2,
+                    unsigned long bytes_zone3)
 {
     cs_stats.n_files = n_files;
     cs_stats.n_threads = n_threads;
-    cs_stats.n_min_absolute_bytes = n_min_absolute_bytes;
+    cs_stats.query_regions =
+        parse_locus_ranges(locus_range_file,
+                           fasta_file,
+                           &cs_stats.n_query_regions,
+                           &cs_stats.n_loci_total);
+
     cs_stats.n_all_bytes_read = calloc(n_files, sizeof(cs_stats.n_all_bytes_read[0]));
     cs_stats.n_all_loci_read = 0;
-    cs_stats.query_regions = parse_locus_ranges(locus_range_file,
-                                                fasta_file,
-                                                &cs_stats.n_query_regions,
-                                                &cs_stats.n_loci_total);
+
     /* initializes span and n_loci_total */
     chunk_strategy_reset();
 }

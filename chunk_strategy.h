@@ -3,26 +3,41 @@
 
 #include "locus_range.h"
 
-/* Provides a global resource (to be accessed by one thread at a time)
-   to guide which ranges of input to process.  query_regions define
-   the subset of genomic loci to consider, and remains constant
-   through the life of the program.  span defines the current subset
-   of these ranges to load.  The client will update span as it reads
-   input.  Other fields provide a mechanism for dividing up the
-   remaining input to keep all threads occupied.
- */
+/* The chunking strategy attempts to prevent thread starvation as the
+   program nears the end of the input.  The input, of total size T, is
+   divided into three zones of decreasing size.  The first zone is of
+   size T - S2 - S1.  The second and third are of sizes S2 and S1.  S1
+   and S2 are given by the user, where S1 < S2.  T, however, is
+   estimated for each sample, based on the known total number of loci,
+   and the estimated number of bytes per locus.
+
+   If T is less than (S1 + S2), then the first zone doesn't exist.  In
+   each zone, the function cs_max_bytes_wanted returns the size of the
+   zone divided by n_threads.  This ensures that at least n_threads
+   will get a piece of that zone.
+
+   The difficulty in this is that we cannot simply request input based
+   on a total number of loci wanted, because this violates a hard
+   memory constraint. */
 struct chunk_strategy {
 
-    unsigned n_files;
-    unsigned n_threads;
-    unsigned long *n_all_bytes_read;
-    unsigned long n_all_loci_read;
-    unsigned long n_loci_total;
-    unsigned long n_loci_read;
+    /* global configuration defining input and strategy */
+    unsigned n_files, n_threads;
     const struct contig_region *query_regions;
     unsigned n_query_regions;
-    unsigned long n_min_absolute_bytes; /* min for cs_max_bytes_wanted() */
-    struct contig_span span;
+    struct contig_span total_span;
+    unsigned long bytes_zone2, bytes_zone3;
+    
+    /* running per-sample statistics needed for estimating bytes
+       left. */
+    unsigned long *n_all_bytes_read;
+    unsigned long n_all_loci_read;
+
+    /* ??? */
+    unsigned long n_loci_read;
+
+    /* current position for starting the next read */
+    struct contig_pos cur_pos;
 };
 
 extern struct chunk_strategy cs_stats;
@@ -31,9 +46,10 @@ extern struct chunk_strategy cs_stats;
 /* call once at start of program */
 void
 chunk_strategy_init(unsigned n_files, unsigned n_threads,
-                    unsigned long n_min_absolute_bytes,
                     const char *locus_range_file,
-                    const char *fasta_file);
+                    const char *fasta_file,
+                    unsigned long bytes_zone2,
+                    unsigned long bytes_zone3);
 
 
 /* call once at end of program */
@@ -48,11 +64,11 @@ void
 chunk_strategy_reset();
 
 
-/* call to define a new workload. sets span.  sets n_loci_total to the
-   size of the intersection between span and the query_regions.  sets
-   n_loci_read to zero. */
+/* call to restrict the desired set of loci.  modifies total_span to {
+   span.beg, x } where x is <= span.end and the total number of loci
+   in the intersection of query_regions is <= n_max_loci. */
 void
-chunk_strategy_set_span(struct contig_span span);
+cs_subset_input(struct contig_span span, unsigned long n_max_loci);
 
 
 /* estimate the bytes wanted based on the strategy */
