@@ -474,7 +474,7 @@ bam_scanner(void *par, size_t bytes_wanted)
         *qend = qbeg + cs_stats.n_query_regions;
 
     struct contig_pos min_end = { UINT_MAX, UINT_MAX };
-    struct contig_span target_span = cs_stats.span;
+    struct contig_span target_span = { cs_stats.cur_pos, cs_stats.total_span.end };
 
     while (n_tiles > 1 && max_bytes >= bytes_wanted) {
         max_bytes = 0;
@@ -493,8 +493,7 @@ bam_scanner(void *par, size_t bytes_wanted)
         }
         if (n_tiles > 1) --n_tiles;
     }
-    target_span.beg = min_end;
-    chunk_strategy_set_span(target_span);
+    cs_stats.cur_pos = min_end;
 
     for (s = 0; s != bsi->n; ++s)
         cs_stats.n_all_bytes_read[s] += bytes[s];

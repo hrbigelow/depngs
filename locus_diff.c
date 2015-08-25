@@ -68,8 +68,12 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
                 "Should be in [0, 1]\n", g_ld_par.min_dirichlet_dist);
         exit(1);
     }
+    unsigned long cs_bytes_zone2 = 1e8, cs_bytes_zone3 = 1e6;
+
     bam_sample_info_init(samples_file, sample_pairs_file);
-    chunk_strategy_init(bam_samples.n, n_threads, 5e5, locus_range_file, fasta_file);
+    chunk_strategy_init(bam_samples.n, n_threads, 
+                        locus_range_file, fasta_file,
+                        cs_bytes_zone2, cs_bytes_zone3);
 
     thread_params.n_threads = n_threads;
     thread_params.reader_buf = malloc(n_threads * sizeof(struct bam_scanner_info));

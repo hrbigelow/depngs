@@ -70,6 +70,19 @@ find_intersecting_span(const struct contig_region *qbeg,
                        const struct contig_region **qlo,
                        const struct contig_region **qhi);
 
+
+/* return the largest contig position end such that the intersection
+   of [beg, end) and [qbeg, qend) is <= n_max_loci. sets *n_found_loci
+   to the number of loci that are actually in the intersection of
+   [qbeg, qend) and [beg, end) */
+struct contig_pos
+find_span_of_size(const struct contig_region *qbeg,
+                  const struct contig_region *qend,
+                  struct contig_pos beg,
+                  unsigned long n_max_loci,
+                  unsigned long *n_found_loci);
+
+
 /* returns the contig_region that is the intersection between r and s,
    or a zero-length region if there is no intersection. */
 struct contig_region

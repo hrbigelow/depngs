@@ -24,12 +24,11 @@ chunk_strategy_init(unsigned n_files, unsigned n_threads,
         parse_locus_ranges(locus_range_file,
                            fasta_file,
                            &cs_stats.n_query_regions,
-                           &cs_stats.n_loci_total);
+                           &cs_stats.n_total_loci);
 
     cs_stats.n_all_bytes_read = calloc(n_files, sizeof(cs_stats.n_all_bytes_read[0]));
     cs_stats.n_all_loci_read = 0;
 
-    /* initializes span and n_loci_total */
     chunk_strategy_reset();
 }
 
@@ -54,13 +53,13 @@ chunk_strategy_reset()
 void
 chunk_strategy_set_span(struct contig_span span)
 {
-    cs_stats.span = span;
+    cs_stats.total_span = span;
     const struct contig_region *qlo, *qhi;
-    cs_stats.n_loci_total =
+    cs_stats.n_total_loci =
         find_intersecting_span(cs_stats.query_regions,
                                cs_stats.query_regions + cs_stats.n_query_regions,
                                span, &qlo, &qhi);
-    cs_stats.n_loci_read = 0;
+    cs_stats.cur_pos = span.beg;
 }
 
 
@@ -69,7 +68,16 @@ chunk_strategy_set_span(struct contig_span span)
 unsigned long
 cs_max_bytes_wanted()
 {
-    /* find maximum of n_bytes_per_locus across samples */
+    /* calculate how many loci are left */
+    struct contig_span subset = { cs_stats.cur_pos, cs_stats.total_span.end };
+    const struct contig_region *qlo, *qhi;
+    unsigned long n_loci_left = 
+        find_intersecting_span(cs_stats.query_regions,
+                               cs_stats.query_regions + cs_stats.n_query_regions,
+                               subset,
+                               &qlo, &qhi);
+    
+    /* estimate the minimum number of bytes_left in any sample */
     unsigned long max_bytes_per_locus = 0;
     if (cs_stats.n_all_loci_read == 0)
         max_bytes_per_locus = DEFAULT_BYTES_PER_LOCUS;
@@ -82,9 +90,18 @@ cs_max_bytes_wanted()
     }
 
     /* the most bytes that are left in any one sample */
-    unsigned long most_bytes_left = 
-        (cs_stats.n_loci_total - cs_stats.n_loci_read)
-        * max_bytes_per_locus / cs_stats.n_threads;
+    unsigned long most_bytes_left = n_loci_left * max_bytes_per_locus;
 
-    return MAX(most_bytes_left, cs_stats.n_min_absolute_bytes);
+    /* return the size of the zone, divided by the number of threads */
+    if (most_bytes_left > cs_stats.bytes_zone2 + cs_stats.bytes_zone3) {
+        /* in zone 1 */
+        unsigned long n_est_bytes_zone1 = cs_stats.n_total_loci * max_bytes_per_locus;
+        return n_est_bytes_zone1 / cs_stats.n_threads;
+    } else if (most_bytes_left > cs_stats.bytes_zone3) {
+        /* in zone 2 */
+        return cs_stats.bytes_zone2 / cs_stats.n_threads;
+    } else {
+        /* in zone 3 */
+        return cs_stats.bytes_zone3 / cs_stats.n_threads;
+    }
 }

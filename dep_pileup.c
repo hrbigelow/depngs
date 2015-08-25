@@ -332,7 +332,16 @@ pileup_init(const char *samples_file,
     }
     thread_params.fasta_file = fasta_file;
 
-    chunk_strategy_init(bam_samples.n, n_threads, 5e5, locus_range_file, fasta_file);
+    /* estimated bytes left of bam input in a sample to switch to
+       smaller chunking zones to avoid thread starvation.  see
+       chunk_strategy.h */
+    unsigned long bytes_zone2 = 1e8;
+    unsigned long bytes_zone3 = 1e6;
+
+    chunk_strategy_init(bam_samples.n, n_threads, 
+                        locus_range_file, fasta_file,
+                        bytes_zone2,
+                        bytes_zone3);
 
     unsigned n_extra = n_threads * 2;
     unsigned n_outputs = 1; /* just producing a pileup file */

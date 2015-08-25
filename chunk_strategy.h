@@ -4,12 +4,12 @@
 #include "locus_range.h"
 
 /* The chunking strategy attempts to prevent thread starvation as the
-   program nears the end of the input.  The input, of total size T, is
-   divided into three zones of decreasing size.  The first zone is of
-   size T - S2 - S1.  The second and third are of sizes S2 and S1.  S1
-   and S2 are given by the user, where S1 < S2.  T, however, is
-   estimated for each sample, based on the known total number of loci,
-   and the estimated number of bytes per locus.
+   program nears the end of the input.  The input for a given sample
+   of total size T, is divided into three zones of decreasing size.
+   The first zone is of size T - S2 - S1.  The second and third are of
+   sizes S2 and S1.  S1 and S2 are given by the user, where S1 < S2.
+   T, however, is estimated for each sample, based on the known total
+   number of loci, and the estimated number of bytes per locus.
 
    If T is less than (S1 + S2), then the first zone doesn't exist.  In
    each zone, the function cs_max_bytes_wanted returns the size of the
@@ -25,16 +25,16 @@ struct chunk_strategy {
     unsigned n_files, n_threads;
     const struct contig_region *query_regions;
     unsigned n_query_regions;
-    struct contig_span total_span;
     unsigned long bytes_zone2, bytes_zone3;
+ 
+    /* configuration that can be refreshed when new span is set */
+    struct contig_span total_span;
+    unsigned long n_total_loci;
     
     /* running per-sample statistics needed for estimating bytes
        left. */
     unsigned long *n_all_bytes_read;
     unsigned long n_all_loci_read;
-
-    /* ??? */
-    unsigned long n_loci_read;
 
     /* current position for starting the next read */
     struct contig_pos cur_pos;
@@ -43,7 +43,7 @@ struct chunk_strategy {
 extern struct chunk_strategy cs_stats;
 
 
-/* call once at start of program */
+/* call once at start of program. */
 void
 chunk_strategy_init(unsigned n_files, unsigned n_threads,
                     const char *locus_range_file,
@@ -64,11 +64,9 @@ void
 chunk_strategy_reset();
 
 
-/* call to restrict the desired set of loci.  modifies total_span to {
-   span.beg, x } where x is <= span.end and the total number of loci
-   in the intersection of query_regions is <= n_max_loci. */
+/* call to prepare for processing a new span. */
 void
-cs_subset_input(struct contig_span span, unsigned long n_max_loci);
+chunk_strategy_set_span(struct contig_span span);
 
 
 /* estimate the bytes wanted based on the strategy */

@@ -144,23 +144,17 @@ run_survey(struct bam_filter_params bf_par,
     batch_pileup_init(bf_par, skip_empty_loci, pseudo_depth);
 
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
-    unsigned nb = 0, np = 0;
+    unsigned t, nb = 0, np = 0;
     khiter_t itr;
-    unsigned t;
-
-    const struct contig_region 
-        *qbeg = cs_stats.query_regions,
-        *qend = qbeg + cs_stats.n_query_regions,
-        *qcur = qbeg;
 
     struct contig_span target_span;
-    target_span.beg = CONTIG_REGION_BEG(*qbeg);
+    target_span.beg = CONTIG_REGION_BEG(cs_stats.query_regions[0]);
     unsigned long n_loci_left = n_max_survey_loci;
     
-    /*  */
 #define N_LOCI_PER_CHUNK 1e7
 
     unsigned max_n_loci_loop = N_LOCI_PER_CHUNK;
+    unsigned long n_found_loci;
     void **reader_pars = malloc(n_threads * sizeof(void *));
     for (t = 0; t != n_threads; ++t)
         reader_pars[t] = &reader_buf[t];
@@ -168,28 +162,15 @@ run_survey(struct bam_filter_params bf_par,
     /* loop until we have enough statistics or run out of input.  nb,
      np, n_loci_left, target_span, and qcur are all updated in the
      iteration. */
-    
     while ((nb < g_dc_par.n_bounds || np < g_dc_par.n_point_sets)
            && n_loci_left > 0) {
         max_n_loci_loop = MIN(max_n_loci_loop, n_loci_left);
+        target_span.end = 
+            find_span_of_size(cs_stats.query_regions,
+                              cs_stats.query_regions + cs_stats.n_query_regions,
+                              target_span.beg, max_n_loci_loop, &n_found_loci);
 
-        /* scan forward through the ranges until we have   */
-        unsigned n_loci_tmp = 0;
-        for (; qcur != qend; ++qcur) {
-            assert(qcur->tid == target_span.beg.tid);
-            n_loci_tmp += qcur->end - target_span.beg.pos;
-            if (n_loci_tmp > max_n_loci_loop) {
-                unsigned n_loci_surplus = n_loci_tmp - max_n_loci_loop;
-                target_span.end = 
-                    (struct contig_pos){ qcur->tid, qcur->end - n_loci_surplus };
-                n_loci_left -= max_n_loci_loop;
-                break;
-            }
-        }
-        if (n_loci_tmp <= max_n_loci_loop) {
-            target_span.end = (struct contig_pos){ UINT_MAX, UINT_MAX };
-            n_loci_left = 0;
-        }
+        n_loci_left -= n_found_loci;
         chunk_strategy_set_span(target_span);
             
         struct thread_queue *tq =

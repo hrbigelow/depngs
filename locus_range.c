@@ -195,27 +195,41 @@ find_intersecting_span(const struct contig_region *qbeg,
 
 
 /* return the largest contig position end such that the intersection
-   of [beg, end) and [qbeg, qend) is <= n_max_loci. */
+   of [beg, end) and [qbeg, qend) is <= n_max_loci. sets *n_found_loci
+   to the number of loci that are actually in the intersection of
+   [qbeg, qend) and [beg, end) */
 struct contig_pos
 find_span_of_size(const struct contig_region *qbeg,
                   const struct contig_region *qend,
                   struct contig_pos beg,
-                  unsigned long n_max_loci)
+                  unsigned long n_max_loci,
+                  unsigned long *n_found_loci)
 {
+    struct contig_pos end = beg;
+    *n_found_loci = 0;
     const struct contig_region *qint;
     struct virt_less_range_par vpar;
     vpar.ary = qbeg;
     vpar.q = (struct contig_region){ beg.tid, beg.pos, beg.pos + 1 };
     qint = qbeg + virtual_lower_bound(0, qend - qbeg, less_virtual_elem, &vpar);
+    if (qint == qend)
+        return end;
 
-    struct contig_pos end = beg;
-    
-    unsigned long n_loci = qint != qend ? (qint->end - qint->beg) : 0;
+    unsigned long n_loci = 0;
+    struct contig_pos max_beg;
     while (qint != qend && n_loci < n_max_loci) {
-        n_loci += qint->end - qint->beg;
+        max_beg = MAX_CONTIG_POS(beg, CONTIG_REGION_BEG(*qint));
+        assert(qint->tid == max_beg.tid);
+        n_loci += qint->end - max_beg.pos;
+        end = CONTIG_REGION_END(*qint);
         ++qint;
     }
-    /* here, if */
+    if (n_loci >= n_max_loci) {
+        end.pos -= (n_loci - n_max_loci);
+        n_loci = n_max_loci;
+    }
+
+    *n_found_loci = n_loci;
     return end;
 }
 
