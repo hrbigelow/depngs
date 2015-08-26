@@ -132,8 +132,8 @@ void
 free_locus_data(struct locus_data *ld)
 {
     free_distrib_points(&ld->distp);
-    free(ld->bqs_ct);
-    free(ld->indel_ct);
+    if (ld->bqs_ct != NULL) free(ld->bqs_ct);
+    if (ld->indel_ct != NULL) free(ld->indel_ct);
     free_pileup_data(&ld->sample_data);
 }
 
@@ -150,6 +150,14 @@ reset_locus_data(struct locus_data *ld)
     ld->distp.points.size = 0;
     ld->distp.weights.size = 0;
     ld->confirmed_changed = 0;
+    if (ld->bqs_ct != NULL) {
+        free(ld->bqs_ct);
+        ld->bqs_ct = NULL;
+    }
+    if (ld->indel_ct != NULL) {
+        free(ld->indel_ct);
+        ld->indel_ct = NULL;
+    }
 }
 
 

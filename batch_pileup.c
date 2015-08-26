@@ -21,21 +21,6 @@
 #include <ctype.h>
 
 
-static inline khint_t
-indel_hash_func(struct indel_seq *a)
-{
-    return kh_str_hash_func(a->seq);
-}
-
-static inline int
-indel_hash_equal(struct indel_seq *a, struct indel_seq *b)
-{
-    return a->is_ins == b->is_ins 
-        && kh_str_hash_equal(a->seq, b->seq);
-}
-
-
-
 struct pbqt {
     uint32_t pos;
     uint32_t tid; /* 1,048,576 */
@@ -608,6 +593,7 @@ pileup_make_indel_pairs(struct indel_count *cts1, unsigned n_cts1,
         ++ip;
     }            
     *n_pair_cts = ip - *pair_cts;
+    assert(*n_pair_cts <= max_n_events);
 }
 
 
@@ -640,6 +626,7 @@ pileup_current_indel_seq(struct indel *idl)
     isq->is_ins = idl->is_ins;
     if (isq->is_ins) {
         const char *ins_seq = kh_key(tls.seq_hash, idl->ins_itr);
+        assert(strlen(ins_seq) == idl->length);
         strcpy(isq->seq, ins_seq);
     } else {
         char *del_seq = fasta_fetch_iseq(tls.cur_pos.tid,
@@ -673,6 +660,9 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         return;
     }        
 
+    struct pileup_locus_info pli;
+    pileup_current_info(&pli);
+
     unsigned n_bqs_ct;
     struct bqs_count *bqs_ct = NULL;
     pileup_current_bqs(s, &bqs_ct, &n_bqs_ct);
@@ -703,8 +693,6 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
     ALLOC_GROW(pd->calls.buf, n_calls + indel_len_total, pd->calls.alloc);
     
     /* print out the calls */
-    struct pileup_locus_info pli;
-    pileup_current_info(&pli);
     unsigned refbase_i = get_cur_refbase_code16();
     unsigned p = 0, p_cur, p_end;
     for (b = 0; b != n_bqs_ct; ++b) {
@@ -714,9 +702,13 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         p_cur = p;
         for (; p != p_end; ++p) pd->calls.buf[p] = bc;
         for (p = p_cur; p != p_end; ++p) pd->quals.buf[p] = qs;
+        assert(p_end <= pd->calls.alloc);
+        assert(p_end <= pd->quals.alloc);
     }
     pd->quals.size = p;
     pd->calls.size = p;
+
+    assert(bqs_ct != NULL);
     free(bqs_ct);
 
     /* print out all indel representations */
@@ -726,6 +718,10 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
     p = pd->calls.size;
     for (b = 0; b != n_indel_ct; ++b) {
         isq = pileup_current_indel_seq(&indel_ct[b].idl);
+
+        if (indel_ct[b].idl.is_ins)
+            assert(indel_ct[b].idl.length == strlen(isq->seq));
+
         for (c = 0; c != indel_ct[b].ct; ++c)
             p += sprintf(pd->calls.buf + p, "%c%Zu%s", 
                          sign[(int)isq->is_ins],
@@ -733,6 +729,7 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         free(isq);
     }
     pd->calls.size = p;
+    assert(indel_ct != NULL);
     free(indel_ct);
 }
 
@@ -1079,6 +1076,19 @@ pileup_prepare_indels(unsigned s)
     ks_introsort(pi_sort, i, ts->indel_ct);
     ts->indel_cur = ts->indel_ct;
     ts->indel_end = ts->indel_ct + i;
+
+    /* check integrity of all indels */
+    while (ts->indel_cur != ts->indel_end) {
+        struct indel *id = &ts->indel_cur->ict.idl;
+        if (id->is_ins) {
+            const char *seq = kh_key(tls.seq_hash, id->ins_itr);
+            printf("id->length: %u\tstrlen: %Zu\tins_itr: %u\tseq: %s\n",
+                   id->length, strlen(seq), id->ins_itr, seq);
+            // assert(id->length == strlen(seq));
+        }
+        ++ts->indel_cur;
+    }
+    ts->indel_cur = ts->indel_ct;
 }
 
 
@@ -1094,20 +1104,9 @@ incr_indel_count_aux(struct tally_stats *ts,
                      uint8_t *bam_seq,
                      unsigned bam_rec_start)
 {
-    union pos_key k = { .v = pos };
-    khash_t(indel_ct_h) *ih = ts->indel_ct_hash;
-
-    khiter_t itr;
-    int ret;
-    if ((itr = kh_get(indel_ct_h, ih, k.k)) == kh_end(ih)) {
-        itr = kh_put(indel_ct_h, ih, k.k, &ret);
-        kh_val(ih, itr) = (struct indel_count_ary)
-            { .i = malloc(sizeof(struct indel_count)), .n = 0, .m = 1 };
-    }
-    struct indel_count_ary ica = kh_val(ih, itr);
-
-    char is_ins = (len >= 0);
-    char *seq, *seqp;
+    /* if insertion, extract insertion sequence and store in seq_hash */
+    int new_entry;
+    char is_ins = (len >= 0), *seq, *seqp;
     khiter_t seq_itr = 0; /* to suppress warnings */
     if (is_ins) {
         seq = malloc(len + 1);
@@ -1118,13 +1117,21 @@ incr_indel_count_aux(struct tally_stats *ts,
             ++q;
         }
         *seqp++ = '\0';
-        if ((seq_itr = kh_get(str_h, tls.seq_hash, seq)) == kh_end(tls.seq_hash))
-            seq_itr = kh_put(str_h, tls.seq_hash, seq, &ret);
-        else
+        seq_itr = kh_put(str_h, tls.seq_hash, seq, &new_entry);
+        if (! new_entry)
             free(seq);
     }
 
-    /* linear search through the array */
+    /* update the indel_count_ary item at this position by linear
+       search. */
+    union pos_key k = { .v = pos };
+    khash_t(indel_ct_h) *ih = ts->indel_ct_hash;
+    khiter_t ct_itr = kh_put(indel_ct_h, ih, k.k, &new_entry);
+    if (new_entry)
+        kh_val(ih, ct_itr) = (struct indel_count_ary)
+            { .i = malloc(sizeof(struct indel_count)), .n = 0, .m = 1 };
+
+    struct indel_count_ary ica = kh_val(ih, ct_itr);
     struct indel_count *ic = ica.i, *ice = ic + ica.n;
     unsigned ulen = abs(len);
     while (ic != ice) {
@@ -1143,15 +1150,17 @@ incr_indel_count_aux(struct tally_stats *ts,
         }
         ++ic;
     }        
-
     if (ic == ice) {
         /* didn't find one */
         ALLOC_GROW(ica.i, ica.n + 1, ica.m);
-        if (is_ins)
+        if (is_ins) {
             ica.i[ica.n] = (struct indel_count){ 
                 { .is_ins = 1, .length = ulen, .ins_itr = seq_itr },
                 .ct = 1
             };
+            const char *seq = kh_key(tls.seq_hash, seq_itr);
+            assert(strlen(seq) == ulen);
+        }
         else
             ica.i[ica.n] = (struct indel_count){
                 { .is_ins = 0, .length = ulen },
@@ -1160,7 +1169,7 @@ incr_indel_count_aux(struct tally_stats *ts,
         ica.n++;
     }
     /* update the value (ica was a copy of the hash value) */
-    kh_val(ih, itr) = ica;
+    kh_val(ih, ct_itr) = ica;
 }
 
 

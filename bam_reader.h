@@ -34,6 +34,7 @@ struct bam_scanner_info {
     /* set of defined logical ranges (moved to chunk_strategy) */
     /* const struct contig_region *const qbeg, *const qend; */
     struct contig_span loaded_span;
+    unsigned do_print_progress;
 };
 
 /* called by up to n_readers threads at a time. par instructs the

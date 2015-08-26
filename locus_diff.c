@@ -3,6 +3,7 @@
 
 #include "locus_diff.h"
 
+#include "wquantile.h"
 #include "sampling.h"
 
 #include <gsl/gsl_math.h>
@@ -17,8 +18,6 @@
 #include "fasta.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
-
-static struct timespec start_time;
 
 static struct {
     struct bam_scanner_info *reader_buf;
@@ -54,7 +53,6 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
                 FILE *dist_fh, FILE *comp_fh, FILE *indel_fh)
 {
     g_ld_par = ld_par;
-    clock_gettime(CLOCK_REALTIME, &start_time);
     if (g_ld_par.post_confidence < 0.8
         || g_ld_par.post_confidence > 0.999999) {
         fprintf(stderr,
@@ -82,8 +80,9 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     unsigned t, s;
     for (t = 0; t != n_threads; ++t) {
         thread_params.reader_buf[t] = (struct bam_scanner_info){
-            malloc(bam_samples.n * sizeof(struct bam_stats)),
-            bam_samples.n,
+            .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
+            .n = bam_samples.n,
+            .do_print_progress = 0
         };
         for (s = 0; s != bam_samples.n; ++s)
             bam_stats_init(bam_samples.m[s].bam_file, 
@@ -112,6 +111,10 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     unsigned skip_empty_loci = 0;
     batch_pileup_init(bf_par, skip_empty_loci, dd_par.pseudo_depth);
 
+    /* now turn on progress messages */
+    for (t = 0; t != n_threads; ++t)
+        thread_params.reader_buf[t].do_print_progress = 1;
+    
     struct thread_queue *tqueue =
         thread_queue_init(reader, 
                           thread_params.reader_pars,
@@ -162,7 +165,7 @@ dist_on_create()
     tls_dw.pair_stats = calloc(bam_sample_pairs.n, sizeof(struct pair_dist_stats));
     tls_dw.square_dist_buf = malloc(sizeof(double) * g_ld_par.max_sample_points);
     tls_dw.weights_buf = malloc(sizeof(double) * g_ld_par.max_sample_points);
-    tls_dw.do_print_progress = 1; /* !!! how to choose which thread prints progress? */
+    /* tls_dw.do_print_progress = 1; /\* !!! how to choose which thread prints progress? *\/ */
     /* tls_dw.bep.points_hash_frozen = 0; */
 
     batch_pileup_thread_init(bam_samples.n, 
@@ -196,7 +199,6 @@ dist_on_exit()
 
 
 
-typedef double COMP_QV[NUM_NUCS][MAX_NUM_QUANTILES];
 
 struct dim_mean {
     unsigned dim;
@@ -211,7 +213,7 @@ less_mean(const void *ap, const void *bp)
 }
  
 void
-print_basecomp_quantiles(COMP_QV quantile_values,
+print_basecomp_quantiles(comp_quantile_vals_t quantile_values,
                          const double *means,
                          size_t n_quantiles,
                          const char *label_string,
@@ -259,26 +261,6 @@ print_basecomp_quantiles(COMP_QV quantile_values,
 
         mb->size += sprintf(mb->buf + mb->size, "\n");
     }
-}
-
-
-/* Compute the requested set of distance quantile values from two sets
-   of weighted points. */
-void
-compute_dist_wquantiles(double *square_dist_buf,
-                        double *weights_buf,
-                        size_t n_points,
-                        const double *quantiles,
-                        size_t n_quantiles,
-                        double *dist_quantile_values)
-{
-    compute_marginal_wquantiles(square_dist_buf, weights_buf, n_points, 1, 0,
-                                quantiles, n_quantiles,
-                                dist_quantile_values);
-
-    unsigned q;
-    for (q = 0; q != n_quantiles; ++q) 
-        dist_quantile_values[q] = sqrt(dist_quantile_values[q]);
 }
 
 
@@ -441,29 +423,29 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                              tls_dw.square_dist_buf,
                              tls_dw.weights_buf);
 
-            double test_quantile = 1.0 - g_ld_par.post_confidence, test_quantile_value;
-
+            double test_quantile = 1.0 - g_ld_par.post_confidence;
+            quantile_vals_t test_quantile_values;
             /* Compute the test distance quantile (relative to the
                dist, not squared dist) */
-            compute_dist_wquantiles(tls_dw.square_dist_buf,
-                                    tls_dw.weights_buf,
-                                    g_ld_par.max_sample_points,
-                                    &test_quantile,
-                                    1,
-                                    &test_quantile_value);
+            compute_dist_wgt_quantiles(tls_dw.square_dist_buf,
+                                       tls_dw.weights_buf,
+                                       g_ld_par.max_sample_points,
+                                       &test_quantile,
+                                       1,
+                                       test_quantile_values);
 
-            if (test_quantile_value > g_ld_par.min_dirichlet_dist) {
+            if (test_quantile_values[0] > g_ld_par.min_dirichlet_dist) {
                 ++tls_dw.pair_stats[pi].confirmed_changed;
                 ld[0]->confirmed_changed = 1;
                 ld[1]->confirmed_changed = 1;
 
                 if (out_buf) {
-                    compute_dist_wquantiles(tls_dw.square_dist_buf,
-                                            tls_dw.weights_buf,
-                                            g_ld_par.max_sample_points,
-                                            g_ld_par.quantiles,
-                                            g_ld_par.n_quantiles,
-                                            tls_dw.dist_quantile_values);            
+                    compute_dist_wgt_quantiles(tls_dw.square_dist_buf,
+                                               tls_dw.weights_buf,
+                                               g_ld_par.max_sample_points,
+                                               g_ld_par.quantiles,
+                                               g_ld_par.n_quantiles,
+                                               tls_dw.dist_quantile_values);            
                     
                     /* quantile values are in squared distance terms, and
                        in the [0, 1] x 4 space of points.  The maximum
@@ -601,10 +583,13 @@ print_indel_distance_quantiles(size_t pair_index,
 void
 indel_distance_quantiles_aux(struct managed_buf *buf)
 {
+    struct pileup_locus_info pli;
+    pileup_current_info(&pli);
+
     struct indel_pair_count *indel_pairs = NULL;
     struct locus_data *ld[2];
     for (size_t pi = 0; pi != bam_sample_pairs.n; ++pi) {
-        int s[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
+        unsigned s[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
         
         ld[0] = &tls_dw.ldat[s[0]];
         ld[1] = s[1] == REFERENCE_SAMPLE ? &tls_dw.pseudo_sample : &tls_dw.ldat[s[1]];
@@ -630,9 +615,11 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
                 ld[i]->init.sample_data = 1;
             }
         }
+
+
         
         /* traverse the sorted indel counts in tandem */
-        unsigned n_indel_pairs;
+        unsigned n_indel_pairs = 1;
         pileup_make_indel_pairs(ld[0]->indel_ct, ld[0]->n_indel_ct,
                                 ld[1]->indel_ct, ld[1]->n_indel_ct,
                                 &indel_pairs, &n_indel_pairs);
@@ -663,6 +650,7 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
                              malloc(buf_sz * sizeof(double))
         };
 
+#if 0        
         unsigned c;
         double *p, *pe;
         for (i = 0; i != 2; ++i) {
@@ -710,7 +698,8 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
                                            tls_dw.dist_quantile_values,
                                            indel_pairs, n_indel_pairs, buf);
         }
-
+#endif
+        
         free(points[0]);
         free(points[1]);
         free(alpha[0]);
@@ -726,44 +715,41 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
 void
 comp_quantiles_aux(struct managed_buf *comp_buf)
 {
-    COMP_QV comp_quantile_values;
+    comp_quantile_vals_t comp_quantile_values;
     double comp_means[NUM_NUCS];
 
     struct pileup_locus_info ploc;
     ploc.pos = UINT_MAX; /* signal that this isn't initialized yet */
 
-    unsigned s;
+    unsigned d, s;
     for (s = 0; s != bam_samples.n; ++s) {
         struct locus_data *ld = &tls_dw.ldat[s];
         
         if (ld->confirmed_changed) {
-                
-            unsigned d;
-            for (d = 0; d != NUM_NUCS; ++d) {
-                compute_marginal_wquantiles((double *)ld->distp.points.p,
-                                            ld->distp.weights.buf,
-                                            g_ld_par.max_sample_points,
-                                            NUM_NUCS,
-                                            d,
-                                            g_ld_par.quantiles,
-                                            g_ld_par.n_quantiles,
-                                            comp_quantile_values[d]);
+            compute_marginal_wgt_quantiles((double *)ld->distp.points.p,
+                                           ld->distp.weights.buf,
+                                           g_ld_par.max_sample_points,
+                                           NUM_NUCS,
+                                           g_ld_par.quantiles,
+                                           g_ld_par.n_quantiles,
+                                           (quantile_vals_t *)&comp_quantile_values[0][0]);
+            for (d = 0; d != NUM_NUCS; ++d)
                 comp_means[d] = 
                     compute_marginal_mean((double *)ld->distp.points.p,
                                           ld->distp.weights.buf,
                                           g_ld_par.max_sample_points,
                                           NUM_NUCS,
                                           d);
-            }
+
             if (! ld->init.sample_data) {
                 pileup_current_data(s, &ld->sample_data);
                 ld->init.sample_data = 1;
             }
-
+            
             /* just-in-time initialization of ploc */
             if (ploc.pos == UINT_MAX)
                 pileup_current_info(&ploc);
-
+            
             print_basecomp_quantiles(comp_quantile_values,
                                      comp_means,
                                      g_ld_par.n_quantiles,
@@ -834,16 +820,9 @@ locus_diff_worker(const struct managed_buf *in_bufs,
     while (pileup_next_pos()) {
         /* this will strain the global mutex, but only during the hash
            loading phase. */
-        /* if (! tls_dw.bep.points_hash_frozen) */
-        /*     tls_dw.bep.points_hash_frozen = freeze_points_hash(); */
-
-        /* if (! tls_dw.bep.bounds_hash_frozen) */
-        /*     tls_dw.bep.bounds_hash_frozen = freeze_bounds_hash(); */
-
         reset_locus_data(&tls_dw.pseudo_sample);
         for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);
-
 
         if (dist_buf || comp_buf)
             distance_quantiles_aux(dist_buf);
@@ -859,28 +838,6 @@ locus_diff_worker(const struct managed_buf *in_bufs,
     /* frees statistics that have already been used in one of the
        distance calculations. */
     pileup_clear_stats();
-
-    if (tls_dw.do_print_progress &&
-        cmp_contig_pos(bsi->loaded_span.beg, bsi->loaded_span.end) != 0) {
-        struct timespec now;
-        clock_gettime(CLOCK_REALTIME, &now);
-        unsigned elapsed = now.tv_sec - start_time.tv_sec;
-
-        time_t cal = time(NULL);
-        char *ts = strdup(ctime(&cal));
-        ts[strlen(ts)-1] = '\0';
-        fprintf(stdout, 
-                "%s (%02i:%02i:%02i elapsed): Finished processing %s %i-%i\n", 
-                ts,
-                elapsed / 3600,
-                (elapsed % 3600) / 60,
-                elapsed % 60,
-                fasta_get_contig(bsi->loaded_span.end.tid),
-                bsi->loaded_span.beg.pos + 1,
-                bsi->loaded_span.end.pos + 1);
-        fflush(stdout);
-        free(ts);
-    }
 
     accumulate_pair_stats(tls_dw.pair_stats);
 

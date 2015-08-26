@@ -60,8 +60,7 @@ struct thread_queue {
     pthread_cond_t out_buf_avail;
     struct output_node *out_pool, *out_head, *out_tail;
 
-    unsigned pool_status[3]; /* number of output nodes in each of the states */
-
+    unsigned pool_status[4]; /* number of output nodes in each of the states */
 
     struct thread_comp_input *input;
     pthread_t *threads;

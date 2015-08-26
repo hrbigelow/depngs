@@ -169,7 +169,8 @@ void print_pair_stats(const char *stats_file)
     for (p = 0; p != bam_sample_pairs.n; ++p)
     {
         /* Print out statistics */
-        int s1 = bam_sample_pairs.m[p].s1,
+        unsigned
+            s1 = bam_sample_pairs.m[p].s1,
             s2 = bam_sample_pairs.m[p].s2;
         fprintf(fh, "%s\t%s", 
                 bam_samples.m[s1].label,

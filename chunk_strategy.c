@@ -20,6 +20,8 @@ chunk_strategy_init(unsigned n_files, unsigned n_threads,
 {
     cs_stats.n_files = n_files;
     cs_stats.n_threads = n_threads;
+    cs_stats.bytes_zone2 = bytes_zone2;
+    cs_stats.bytes_zone3 = bytes_zone3;
     cs_stats.query_regions =
         parse_locus_ranges(locus_range_file,
                            fasta_file,

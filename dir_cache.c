@@ -369,10 +369,10 @@ survey_worker(const struct managed_buf *in_bufs,
     kh_destroy(points_tuple_h, ptup_hash);
     kh_destroy(bounds_tuple_h, btup_hash);
 
-    fprintf(stdout, "Surveyed %u:%u-%u\t%u\n", 
-            bsi->loaded_span.beg.tid, bsi->loaded_span.beg.pos,
-            bsi->loaded_span.end.pos,
-            bsi->loaded_span.end.pos - bsi->loaded_span.beg.pos);
+    /* fprintf(stdout, "Surveyed %u:%u-%u\t%u\n",  */
+    /*         bsi->loaded_span.beg.tid, bsi->loaded_span.beg.pos, */
+    /*         bsi->loaded_span.end.pos, */
+    /*         bsi->loaded_span.end.pos - bsi->loaded_span.beg.pos); */
 }
 
 

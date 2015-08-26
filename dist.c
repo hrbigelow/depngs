@@ -8,6 +8,7 @@
 #include "locus.h"
 #include "dirichlet_points_gen.h"
 #include "dirichlet_diff_cache.h"
+#include "timer.h"
 
 static struct {
     struct bam_filter_params bf_par;
@@ -77,12 +78,14 @@ int dist_usage()
             "-P INT      MAX_POINTS, max # of sample point pairs for binomial test [%d]\n"
             "-p FLOAT    PRIOR_ALPHA, alpha value for dirichlet prior [%0.5g]\n"
             "-C STRING   dist/comp/indel quantiles to report [\"0.005,0.05,0.5,0.95,0.995\"]\n"
+            "-S INT      MAX_SURVEY_LOCI, number of loci to survey to build dirichlet statistics[%ld]\n"
             "\n",
             opts.be_par.min_dirichlet_dist,
             opts.be_par.post_confidence,
             opts.be_par.beta_confidence,
             opts.be_par.max_sample_points,
-            opts.ld_par.prior_alpha
+            opts.ld_par.prior_alpha,
+            opts.dc_par.n_max_survey_loci
             );
 
     fprintf(stderr,
@@ -138,6 +141,8 @@ extern int optind;
 int
 main_dist(int argc, char **argv)
 {
+    timer_init();
+    
     int n_max_reading_set = 0;
 
     const char *quantiles_string = "0.005,0.05,0.5,0.95,0.995";
@@ -152,7 +157,7 @@ main_dist(int argc, char **argv)
 #define SQRT2 1.41421356237309504880
 
     char c;
-    while ((c = getopt(argc, argv, "d:c:i:l:x:y:X:Z:P:p:C:Q:q:f:F:R:t:r:m:g")) >= 0) {
+    while ((c = getopt(argc, argv, "d:c:i:l:x:y:X:Z:P:S:p:C:Q:q:f:F:R:t:r:m:g")) >= 0) {
         switch(c) {
             /* files */
         case 'd': dist_file = optarg; break;
@@ -171,6 +176,7 @@ main_dist(int argc, char **argv)
             break;
         case 'p': opts.ld_par.prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
         case 'C': quantiles_string = optarg; break;
+        case 'S': opts.dc_par.n_max_survey_loci = strtod_errmsg(optarg, "-S (n_max_survey_loci)"); break;
 
             /* read-level filtering */
         case 'Q': opts.bf_par.min_base_quality = strtol_errmsg(optarg, "-Q (min_base_quality)"); break;

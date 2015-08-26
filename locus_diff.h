@@ -83,8 +83,6 @@ struct locus_diff_input
     double *weights_buf; /* holds weights from those square distances
                             (product of weights on individual
                             points) */
-    
-    unsigned do_print_progress;
 };
 
 

@@ -25,4 +25,14 @@
 #define PROGRESS_MSG(msg)
 #endif
 
+
+/* call at start of program to initialize the start time */
+void
+timer_init();
+
+/* return a statically allocated string showing current time and
+   elapsed time. */
+const char *
+timer_progress();
+
 #endif /* _TIMER_H */

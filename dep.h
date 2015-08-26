@@ -7,7 +7,7 @@
 
 int main_dist(int argc, char **argv);
 int main_pileup(int argc, char **argv);
-int main_pug(int argc, char **argv);
+/* int main_pug(int argc, char **argv); */
 
 /* int main_simp(int argc, char **argv); */
 

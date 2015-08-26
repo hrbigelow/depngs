@@ -2,12 +2,13 @@
 #include "chunk_strategy.h"
 // #include "virtual_bound.h"
 
+#include "defs.h"
+#include "timer.h"
 #include "sdg/kbtree.h"
 #include "sdg/khash.h"
 #include "htslib/sam.h"
 #include "htslib/hts.h"
 #include "htslib/hfile.h"
-#include "defs.h"
 
 #include <assert.h>
 
@@ -453,6 +454,18 @@ num_span_loci(struct bam_scanner_info *bsi)
 }
 
 
+void
+print_progress(bam_hdr_t *bam_hdr, struct contig_span span)
+{
+    fprintf(stdout, "%s: Starting %s:%i - %s:%i\n",
+            timer_progress(),
+            bam_hdr->target_name[span.beg.tid],
+            span.beg.pos + 1,
+            bam_hdr->target_name[span.end.tid],
+            span.end.pos + 1);
+}
+
+
 /* scans the bam index to find all chunks covering a range starting at
    cs_stats.span.beg.  scans forward until *close to* but less than
    bytes_wanted are found. stores the found chunks in par's fields,
@@ -475,7 +488,7 @@ bam_scanner(void *par, size_t bytes_wanted)
 
     struct contig_pos min_end = { UINT_MAX, UINT_MAX };
     struct contig_span target_span = { cs_stats.cur_pos, cs_stats.total_span.end };
-
+               
     while (n_tiles > 1 && max_bytes >= bytes_wanted) {
         max_bytes = 0;
         for (s = 0; s != bsi->n; ++s) {
@@ -501,6 +514,9 @@ bam_scanner(void *par, size_t bytes_wanted)
     bsi->loaded_span.end = min_end;
     cs_stats.n_all_loci_read += num_span_loci(bsi);
 
+    if (bsi->do_print_progress)
+        print_progress(bsi->m[0].hdr, bsi->loaded_span);
+    
     free(bytes);
 }
 
@@ -608,7 +624,7 @@ bam_inflate(const struct managed_buf *bgzf,
     unsigned c;
     int64_t c_beg, c_end; /* sub-regions in a chunk that we want */
     size_t n_copy;
-    uint64_t block_sz; /* compressed block size */
+    uint64_t block_sz = 0; /* compressed block size */
 
     bam->size = 0;
     /* pre-allocate a reasonable size.  this  */
