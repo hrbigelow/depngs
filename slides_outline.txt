@@ -1,0 +1,167 @@
+I. Concept: The 4-simplex representation of normalized 4-vector
+
+- A way to visualize normalized 4D coordinates symmetrically with
+respect to each component.  Compare with origin / axes representation.
+
+- Side length of 1 a convenient scale for representing maximum
+mutational distance.
+
+- (preview) the 10 known diploid points (unphased)
+
+
+- Marginals give single-base base composition estimates
+
+II. Concept: Sampling, marginals, and quantiles
+
+- Sample points generated from the density is one non-analytical way
+  to estimate quantiles
+
+- Estimating Quantile values simply involves counting dots.
+  > example of the relation between quantiles and quantile values
+
+- Marginals are easy -- just ignore 3 of the coordinates.
+
+III. Exploring examples of the 4-simplex
+
+- the 10 known diploid points (unphased)
+
+- technique for estimating distance between two distributions
+
+- the notion of a pseudo-sample.
+
+- technique for marginalizing
+
+
+
+
+III. Concept: Inversion from Probability to Likelihood.
+
+  Experiment to generate the multinomial:
+  Set up:
+   1. Choose a 4-sided die (of arbitrary side probabilities)
+   2. Choose a number N of roles to do.
+
+  Repeat many times:
+
+   1. Roll the die N times, and record the numbers of each of the four
+   roles { n1, n2, n3, n4 } as a 'tuple'
+   
+   2. Count the number of times you observe each possible tuple.
+
+   3. The histogram of these counts of each tuple converges to the
+      multinomial distribution.
+
+   4. The inverse question is: In the collection of all possible dice,
+      what is the likelihood of each die giving rise to the N rolls?
+
+
+IV. Priors.
+
+  1. Priors on the Dirichlet represent prior belief about the
+  likelihoods of base composition in the absence of data.
+
+  2. Although we *could* include reference genome identity in the
+  priors (position-specific priors), this also reduces the number of
+  detected differences from reference (both true and false positives).
+
+  3. It is my view that it is better to avoid position-specific
+  priors.
+
+
+V. Pure Dirichlet (perfect multinomial generation) vs. fuzzy model.
+
+  1. Pure dirichlet represents posterior if base calls were never wrong.
+
+  2. two-layer model is a multinomial followed by error generation.
+
+  3. Mathematically, the two-layer distribution will always be more
+     diffuse than the pure Dirichlet.
+
+
+VI. Heuristics
+
+  1. For difference estimation, we can start with the Pure dirichlet
+  model and only pursue the two-layer model if the difference is great enough.
+
+  2. There is no way to sample from the two-layer distribution.  But,
+  it can be shown that sample points drawn from ~Dir and each point x
+  weighted by the density ratio ~Post(x) / ~Dir(x), that in the limit,
+  quantiles can be estimated from weighted sample points.
+
+  3. Survey some number N (default 1e7) loci, collect the set of
+     counts of individual locus calls plus pairs of loci (whether
+     sample/pseudo-sample pair or sample/sample pair)
+
+VII. Indels
+
+  1. Events: Match, deletion of size 1,2,3,..., and indel of size and sequence.
+
+  2. The number of possible events that have zero counts in the
+     observed data are unbounded.  Pretend they don't exist.
+
+  3. Distance is estimated in the same way.
+
+  4. Not an indel realigner -- takes each indel on face value.
+
+  5. Assumes each match, insertion or deletion as-is.  Does not
+     calculate probability that the indel or match is incorrect.
+
+
+Section 2:
+
+The BAM reader and pileup APIs
+
+VIII. BAM reader API
+
+- inputs: 
+  1. list of S BAM sample files and sample labels
+  2. optional set of locus ranges
+  3. list of P sample pairs to compare
+
+each thread reserves its own disjoint range of loci to process
+independently.
+
+scans each .bai index file to find all BGZF blocks that contain
+alignment records overlapping the reserved range.
+
+reads and unzips the BGZF blocks
+
+client then may process the S buffers worth of bam1_t records.
+
+
+X.  Pileup API (built on top of BAM reader API)
+
+- inputs:
+  1. list of S BAM sample files and sample labels
+  2. optional set of locus ranges
+  3. list of P sample pairs to compare
+  4. filtering parameters for inclusion of BAM records / basecalls.
+
+traverses the entire chunk of bam1_t records for each BAM file,
+compiling counts of tuples of { contig, position, base, qual, strand }
+and indel counts of { contig, position, indel_type, indel_seq } for
+each sample.
+
+User calls 'current_{base,bqs,indel}' for each sample to get the
+compiled set of statistics at the 'current locus'.
+
+Other formatting functions provided.
+
+
+Some design principles:
+
+1. All multi-threaded using the worker paradigm (divide up input into
+chunks, each thread carries out read/process/write on different
+chunks)
+
+2. User may limit the number of concurrent reads allowed.  (Useful for
+avoiding overloading a filer or NIC card)
+
+3. User controls the amount of memory used.
+
+4. The chunking strategy automatically adjusts the workload size
+towards the end of input, to prevent thread starvation at the end.
+
+5. User writes worker and output functions with a fixed signature,
+then plugs them into the thread_queue.
+

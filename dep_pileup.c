@@ -259,14 +259,7 @@ pileup_worker(const struct managed_buf *in_bufs,
        distance calculations. */
     free(pdat.calls.buf);
     free(pdat.quals.buf);
-
     pileup_clear_stats();
-    fprintf(stdout, "Finished processing range [%s:%u, %s:%u)\n", 
-            fasta_get_contig(bsi->loaded_span.beg.tid),
-            bsi->loaded_span.beg.pos,
-            fasta_get_contig(bsi->loaded_span.end.tid),
-            bsi->loaded_span.end.pos);
-    fflush(stdout);
 }
 
 
@@ -321,8 +314,9 @@ pileup_init(const char *samples_file,
     unsigned t, s;
     for (t = 0; t != n_threads; ++t) {
         thread_params.scanner_info_buf[t] = (struct bam_scanner_info){
-            malloc(bam_samples.n * sizeof(struct bam_stats)),
-            bam_samples.n,
+            .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
+            .n = bam_samples.n,
+            .do_print_progress = 1
         };
         for (s = 0; s != bam_samples.n; ++s)
             bam_stats_init(bam_samples.m[s].bam_file, 

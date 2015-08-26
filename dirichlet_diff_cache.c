@@ -14,9 +14,6 @@
 
 static struct binomial_est_params g_be_par;
 
-
-
-
 /* Describes estimated distance between two Dirichlets with alphas equal to:
    { A1 + p, A2 + p, p, p }
    { B1 + p, B2 + p, p, p }
@@ -27,40 +24,8 @@ static struct binomial_est_params g_be_par;
    A1 for which it is deemed AMBIGUOUS (or UNCHANGED, where this
    interval overlaps the unchanged interval).  By construction: 
    0 <= A[0] <= U[0] <= U[1] <= A[1] <= MAX_COUNT1
-   
 */
-/* UNSET must be zero */
-/* enum init_phase { UNSET = 0, PENDING, SET }; */
-
-/* struct set_flag { */
-/*     pthread_mutex_t mtx; */
-/*     pthread_cond_t cond; */
-/* }; */
-
-KHASH_MAP_INIT_INT64(fuzzy_hash, enum fuzzy_state);
-/* KHASH_MAP_INIT_INT64(points_hash, struct counted_points); */
-KHASH_MAP_INIT_INT64(bounds_hash, struct binomial_est_bounds);
-
-struct dirichlet_diff_cache_t {
-    /* unsigned n_locks; */
-    /* struct set_flag *locks; */
-    /* khash_t(points_hash) *dir_points; */
-    /* unsigned n_vals_mtx; */
-    /* pthread_mutex_t *dir_points_vals_mtx; */
-    /* pthread_rwlock_t dir_points_rwlock; */
-    /* struct cache_counters c; */
-    /* unsigned disable_points_hash; */
-    /* khash_t(bounds_hash) *bounds; */
-    /* pthread_rwlock_t bounds_rwlock; */
-    /* unsigned locus_count; */
-    /* unsigned n_threads_bounds_active; */
-    /* pthread_mutex_t locus_mtx; */
-    /* pthread_cond_t locus_cond; */
-
-} cache;
-
-
-
+   
 unsigned alpha_packed_limits[] = {
     1<<24, 1<<20, 1<<12, 1<<8
 };
@@ -69,7 +34,7 @@ unsigned alpha_packed_limits[] = {
    success, 0 on failure. if counts do not fit within the packing
    limits, does not modify key. */
 unsigned 
-init_alpha_packed_large(unsigned *cts, khint64_t *key)
+init_alpha_packed_large(unsigned *cts, uint64_t *key)
 {
     unsigned packable = 
         cts[0] <= alpha_packed_limits[0]
@@ -90,12 +55,12 @@ union pair {
 };
 
 
-khint64_t
+uint64_t
 pack_alpha64(unsigned a0, unsigned a1, unsigned a2, unsigned a3)
 {
     union pair p;
-    p.c[0] = (a0<<8) | a3;
-    p.c[1] = (a1<<12) | a2;
+    p.c[0] = (uint32_t)a0<<8 | (uint32_t)a3;
+    p.c[1] = (uint32_t)a1<<12 | (uint32_t)a2;
     return p.v;
 }
 
@@ -125,15 +90,16 @@ static unsigned bounds_perm_limits[] = {
 };
 
 
-khint64_t
+/* pack 20|24|20 bits of a2|b1|b2 */
+uint64_t
 pack_bounds(unsigned a2, unsigned b1, unsigned b2)
 {
-    khint64_t k = (khint64_t)a2<<44 | (khint64_t)b1<<20 | (khint64_t)b2;
+    uint64_t k = (uint64_t)a2<<44 | (uint64_t)b1<<20 | (uint64_t)b2;
     return k;
 }
 
 unsigned
-try_pack_bounds(unsigned a2, unsigned b1, unsigned b2, khint64_t *key)
+try_pack_bounds(unsigned a2, unsigned b1, unsigned b2, uint64_t *key)
 {
     unsigned packable = 
         (a2 <= bounds_packed_limits[0]
@@ -146,13 +112,13 @@ try_pack_bounds(unsigned a2, unsigned b1, unsigned b2, khint64_t *key)
 }
 
 
-
+/* */
 void
-unpack_bounds(khint64_t k, unsigned *b)
+unpack_bounds(uint64_t k, unsigned *b)
 {
     b[0] = k>>44;
-    b[1] = (unsigned)(k>>20 & 0xffffff);
-    b[2] = (unsigned)(k & 0xffffff);
+    b[1] = (unsigned)(k>>20 & (uint64_t)0xffffff);
+    b[2] = (unsigned)(k & (uint64_t)0x0fffff);
 }
 
 
@@ -201,49 +167,6 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
 {
     g_dd_par = dd_par;
     g_be_par = be_par;
-    /* cache.n_locks = NUM_LOCKS; /\* this may need tuning *\/ */
-    /* cache.locks = malloc(cache.n_locks * sizeof(struct set_flag)); */
-    /* cache.dir_points = kh_init(points_hash); */
-    /* resize so h->upper_bound is greater than max_dir_cache_items */
-    /* unsigned long ub = max_dir_cache_items * (1.0 / __ac_HASH_UPPER); */
-    /* kh_resize(points_hash, cache.dir_points, kroundup32(ub)); */
-    /* cache.n_vals_mtx = n_threads * NUM_HASH_MTX_PER_THREAD; */
-    /* cache.dir_points_vals_mtx = malloc(cache.n_vals_mtx * sizeof(pthread_mutex_t)); */
-    /* pthread_rwlock_init(&cache.dir_points_rwlock, NULL); */
-    /* cache.c = (struct cache_counters){  */
-    /*     .n_items = 0,  */
-    /*     .n_permanent_items = 0,  */
-    /*     .max_items = max_dir_cache_items,  */
-    /*     .n_times_cleared = 0,  */
-    /*     .n_threads_points_active = n_threads,  */
-    /*     .min_n_hit_to_keep = 2 */
-    /* }; */
-
-    /* pthread_cond_init(&cache.c.cond, NULL); */
-    /* pthread_mutex_init(&cache.c.mtx, NULL);  */
-    /* cache.b = (struct cache_counters){ 0, max_bounds_items, ULONG_MAX, 0, n_threads }; */
-    /* pthread_cond_init(&cache.b.cond, NULL); */
-    /* pthread_mutex_init(&cache.b.mtx, NULL); */
-    /* cache.bounds = kh_init(bounds_hash); */
-    /* unsigned long ub_bounds_hash =  */
-    /*     (MAX_BOUNDS_PREPOP + MAX_ALPHA2_PSEUDO_PREPOP  */
-    /*      + N_LOCI_TO_FREEZE) * (1.0 / __ac_HASH_UPPER); */
-
-    /* kh_resize(bounds_hash, cache.bounds, kroundup32(ub_bounds_hash)); */
-
-    /* pthread_rwlock_init(&cache.bounds_rwlock, NULL); */
-    /* cache.locus_count = 0; */
-    /* cache.n_threads_bounds_active = n_threads; */
-    /* pthread_mutex_init(&cache.locus_mtx, NULL); */
-    /* pthread_cond_init(&cache.locus_cond, NULL); */
-
-    /* unsigned i; */
-    /* for (i = 0; i != cache.n_locks; ++i) { */
-    /*     pthread_mutex_init(&cache.locks[i].mtx, NULL); */
-    /*     pthread_cond_init(&cache.locks[i].cond, NULL); */
-    /* } */
-    /* for (i = 0; i != cache.n_vals_mtx; ++i) */
-    /*     pthread_mutex_init(&cache.dir_points_vals_mtx[i], NULL); */
 
     struct dirichlet_points_gen_params pg_par = {
         .min_base_quality = bf_par.min_base_quality,
@@ -260,7 +183,7 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     dir_cache_init(dc_par);
 
     printf("Collecting input statistics...");
-    run_survey(bf_par, reader_buf, dd_par.pseudo_depth, 
+    run_survey(bf_par, reader_buf, dd_par.pseudo_depth,
                dc_par.n_max_survey_loci, n_threads, n_max_reading, max_input_mem);
     printf("done.\n");
 
@@ -282,26 +205,6 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
 void
 dirichlet_diff_cache_free()
 {
-    /* unsigned i; */
-    /* for (i = 0; i != cache.n_locks; ++i) { */
-    /*     pthread_mutex_destroy(&cache.locks[i].mtx); */
-    /*     pthread_cond_destroy(&cache.locks[i].cond); */
-    /* } */
-    /* free(cache.locks); */
-    /* for (i = 0; i != cache.n_vals_mtx; ++i) */
-    /*     pthread_mutex_destroy(&cache.dir_points_vals_mtx[i]); */
-
-    /* free(cache.dir_points_vals_mtx); */
-
-    /* kh_destroy(points_hash, cache.dir_points); */
-    /* pthread_mutex_destroy(&cache.c.mtx); */
-    /* pthread_rwlock_destroy(&cache.dir_points_rwlock); */
-    /* kh_destroy(bounds_hash, cache.bounds); */
-    /* pthread_rwlock_destroy(&cache.bounds_rwlock); */
-
-    /* pthread_mutex_destroy(&cache.locus_mtx); */
-    /* pthread_cond_destroy(&cache.locus_cond); */
-
     binomial_est_free();
     dir_cache_free();
 }
@@ -483,8 +386,6 @@ get_est_state(struct bound_search_params *bpar)
             pb->p = pb->buf;
             pb->size = 0;
         }
-            /* sync_points(key[i], &bpar->dist[i]->points,  */
-            /*             bpar->points_hash_frozen); */
     }
 
     struct binomial_est_state rval =
@@ -492,13 +393,6 @@ get_est_state(struct bound_search_params *bpar)
                               &bpar->dist[0]->points, 
                               bpar->dist[1]->pgen,
                               &bpar->dist[1]->points);
-
-    /* for (i = 0; i != 2; ++i) { */
-    /*     if (packable[i]) */
-    /*     sync_points(key[i], &bpar->dist[i]->points,  */
-    /*                 bpar->points_hash_frozen); */
-    /* } */
-
     return rval;
 }
 

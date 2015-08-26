@@ -92,7 +92,7 @@ struct pos_indel_count {
 };
 
 
-/* */
+/* here, consider */
 static int
 less_indel(struct indel a, struct indel b)
 {
@@ -100,7 +100,7 @@ less_indel(struct indel a, struct indel b)
         || (a.is_ins == b.is_ins
             && (a.length < b.length
                 || (a.length == b.length
-                    && (a.ins_itr < b.ins_itr))));
+                    && (a.is_ins && strcmp(a.seq, b.seq) < 0))));
 }
 
 
@@ -113,8 +113,8 @@ KHASH_MAP_INIT_INT64(pbqt_h, unsigned);
    pos_key' as the key. */
 KHASH_MAP_INIT_INT64(pb_h, struct base_count);
 
-/* hash type for storing plain old strings (for the insertion
-   sequences) */
+/* hash type for storing plain old strings for insertion sequences.
+   needed just to provide a place to own the insertion sequences. */
 KHASH_SET_INIT_STR(str_h);
 
 /* hash type for tallying indel events. use   */
@@ -626,9 +626,7 @@ pileup_current_indel_seq(struct indel *idl)
     struct indel_seq *isq = malloc(sizeof(struct indel_seq) + idl->length + 1);
     isq->is_ins = idl->is_ins;
     if (isq->is_ins) {
-        const char *ins_seq = kh_key(tls.seq_hash, idl->ins_itr);
-        assert(strlen(ins_seq) == idl->length);
-        strcpy(isq->seq, ins_seq);
+        strcpy(isq->seq, idl->seq);
     } else {
         char *del_seq = fasta_fetch_iseq(tls.cur_pos.tid,
                                          tls.cur_pos.pos,
@@ -1108,9 +1106,11 @@ incr_indel_count_aux(struct tally_stats *ts,
                      unsigned bam_rec_start)
 {
     /* if insertion, extract insertion sequence and store in seq_hash */
-    int new_entry;
+    int new_entry = 100;
     char is_ins = (len >= 0), *seq, *seqp;
     khiter_t seq_itr = 0; /* to suppress warnings */
+
+    const char *stored_seq = NULL;
     if (is_ins) {
         seq = malloc(len + 1);
         seqp = seq;
@@ -1119,16 +1119,11 @@ incr_indel_count_aux(struct tally_stats *ts,
             *seqp++ = seq_nt16_str[bam_seqi(bam_seq, q)]; /* macro!  don't touch q */
             ++q;
         }
-        *seqp++ = '\0';
-        if ((seq_itr = kh_get(str_h, tls.seq_hash, seq)) == kh_end(tls.seq_hash)) {
-            seq_itr = kh_put(str_h, tls.seq_hash, seq, &new_entry);
-            assert(new_entry);
-        } else { new_entry = 0; }
-        // seq_itr = kh_put(str_h, tls.seq_hash, seq, &new_entry);
-        fprintf(stdout, "%u\t%s\t%u\t%u\n",
-                (unsigned)pthread_self(), seq, seq_itr, new_entry);
+        *seqp = '\0';
+        seq_itr = kh_put(str_h, tls.seq_hash, seq, &new_entry);
         if (! new_entry)
             free(seq);
+        stored_seq = kh_key(tls.seq_hash, seq_itr);
     }
 
     /* update the indel_count_ary item at this position by linear
@@ -1146,7 +1141,7 @@ incr_indel_count_aux(struct tally_stats *ts,
     while (ic != ice) {
         if (ic->idl.is_ins == is_ins) {
             if (is_ins) {
-                if (ic->idl.ins_itr == seq_itr) {
+                if (ic->idl.seq == stored_seq) {
                     ic->ct++;
                     break;
                 }
@@ -1164,15 +1159,13 @@ incr_indel_count_aux(struct tally_stats *ts,
         ALLOC_GROW(ica.i, ica.n + 1, ica.m);
         if (is_ins) {
             ica.i[ica.n] = (struct indel_count){ 
-                .idl = { .is_ins = 1, .length = ulen, .ins_itr = seq_itr },
+                .idl = { .is_ins = 1, .length = ulen, .seq = stored_seq },
                 .ct = 1
             };
-            const char *seq = kh_key(tls.seq_hash, seq_itr);
-            assert(strlen(seq) == ulen);
         }
         else
             ica.i[ica.n] = (struct indel_count){
-                .idl = { .is_ins = 0, .length = ulen, .ins_itr = 100000 },
+                .idl = { .is_ins = 0, .length = ulen, .seq = NULL },
                 .ct = 1
             };
         ica.n++;

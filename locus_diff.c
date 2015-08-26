@@ -165,8 +165,6 @@ dist_on_create()
     tls_dw.pair_stats = calloc(bam_sample_pairs.n, sizeof(struct pair_dist_stats));
     tls_dw.square_dist_buf = malloc(sizeof(double) * g_ld_par.max_sample_points);
     tls_dw.weights_buf = malloc(sizeof(double) * g_ld_par.max_sample_points);
-    /* tls_dw.do_print_progress = 1; /\* !!! how to choose which thread prints progress? *\/ */
-    /* tls_dw.bep.points_hash_frozen = 0; */
 
     batch_pileup_thread_init(bam_samples.n, 
                              thread_params.fasta_file);
@@ -191,10 +189,6 @@ dist_on_exit()
     free(tls_dw.weights_buf);
 
     batch_pileup_thread_free();
-
-    /* inactivate_shared_data(! tls_dw.bep.points_hash_frozen, */
-    /*                        ! tls_dw.bep.bounds_hash_frozen); */
-
 }
 
 
@@ -650,7 +644,6 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
                              malloc(buf_sz * sizeof(double))
         };
 
-#if 0        
         unsigned c;
         double *p, *pe;
         for (i = 0; i != 2; ++i) {
@@ -698,8 +691,6 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
                                            tls_dw.dist_quantile_values,
                                            indel_pairs, n_indel_pairs, buf);
         }
-#endif
-        
         free(points[0]);
         free(points[1]);
         free(alpha[0]);
@@ -838,19 +829,7 @@ locus_diff_worker(const struct managed_buf *in_bufs,
     /* frees statistics that have already been used in one of the
        distance calculations. */
     pileup_clear_stats();
-
     accumulate_pair_stats(tls_dw.pair_stats);
-
-    // struct timespec worker_end_time;
-    // clock_gettime(CLOCK_REALTIME, &worker_end_time);
-    // unsigned elapsed = worker_end_time.tv_sec - worker_start_time.tv_sec;
-
-    // fprintf(stderr, "%Zu\t%u\t%u\t%u\t%u\n", 
-    //         tls_dw.thread_num, elapsed, tls_dw.metrics.total,
-    //         tls_dw.metrics.cacheable, tls_dw.metrics.cache_was_set);
-    
-    // print_primary_cache_size();
-    // print_cache_stats();
 }
  
     

@@ -75,8 +75,7 @@ struct bqs_count {
 struct indel {
     char is_ins;
     unsigned length;
-    khiter_t ins_itr; /* iterator into tls.seq_hash, if this is an
-                         insertion. */
+    const char *seq;
 };
 
 struct indel_count {
