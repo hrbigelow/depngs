@@ -12,27 +12,28 @@
 extern "C" {
 #endif 
 
-/* compute marginal quantiles on a given dimension of the sample
-   points */
-void
-compute_marginal_quantiles(double *sample_points,
-                           size_t n_points,
-                           size_t n_dims,
-                           size_t sort_dimension,
-                           const double *quantiles,
-                           size_t n_quantiles,
-                           double *quantile_values)
-{
-    /* copy appropriate dimension */
-    double *dim_points = (double *)malloc(sizeof(double) * n_points);
-    double *start = dim_points, *end = start + n_points;
-    double *cut;
     
-    double *ps = sample_points + sort_dimension;
-    double *p = dim_points;
-    for ( ; p != end; ++p, ps += n_dims) *p = *ps;
+    /* compute marginal quantiles on a given dimension of the sample
+       points */
+    void
+    compute_marginal_quantiles(double *sample_points,
+                               size_t n_points,
+                               size_t n_dims,
+                               size_t sort_dimension,
+                               const double *quantiles,
+                               size_t n_quantiles,
+                               double *quantile_values)
+    {
+        /* copy appropriate dimension */
+        double *dim_points = (double *)malloc(sizeof(double) * n_points);
+        double *start = dim_points, *end = start + n_points;
+        double *cut;
+        
+        double *ps = sample_points + sort_dimension;
+        double *p = dim_points;
+        for ( ; p != end; ++p, ps += n_dims) *p = *ps;
     
-    size_t f;
+        size_t f;
     for (f = 0; f != n_quantiles; ++f) {
         cut = dim_points + (size_t)round(quantiles[f] * n_points);
         std::nth_element(start, cut, end);
@@ -107,6 +108,8 @@ weighted_quantiles_aux(struct weighted_coord *wgt_points,
     return weighted_quantiles_aux(wb, n_points, sum_wgt, quantile);
 }
 
+
+    
 
 /* computes the marginal quantiles from a set of weighted sample
    points, selecting the 'dim' component of the point. */

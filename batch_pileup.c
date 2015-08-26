@@ -16,6 +16,7 @@
 #include "locus_range.h"
 #include "chunk_strategy.h"
 
+#include <pthread.h>
 #include <stdint.h>
 #include <assert.h>
 #include <ctype.h>
@@ -1078,17 +1079,19 @@ pileup_prepare_indels(unsigned s)
     ts->indel_end = ts->indel_ct + i;
 
     /* check integrity of all indels */
+#if 0
     while (ts->indel_cur != ts->indel_end) {
         struct indel *id = &ts->indel_cur->ict.idl;
         if (id->is_ins) {
             const char *seq = kh_key(tls.seq_hash, id->ins_itr);
-            printf("id->length: %u\tstrlen: %Zu\tins_itr: %u\tseq: %s\n",
-                   id->length, strlen(seq), id->ins_itr, seq);
+            fprintf(stdout, "thread_id: %u\tid->length: %u\tins_itr: %u\tseq: %s\n",
+                    (unsigned)pthread_self(), id->length, id->ins_itr, seq);
             // assert(id->length == strlen(seq));
         }
         ++ts->indel_cur;
     }
     ts->indel_cur = ts->indel_ct;
+#endif
 }
 
 
@@ -1117,7 +1120,13 @@ incr_indel_count_aux(struct tally_stats *ts,
             ++q;
         }
         *seqp++ = '\0';
-        seq_itr = kh_put(str_h, tls.seq_hash, seq, &new_entry);
+        if ((seq_itr = kh_get(str_h, tls.seq_hash, seq)) == kh_end(tls.seq_hash)) {
+            seq_itr = kh_put(str_h, tls.seq_hash, seq, &new_entry);
+            assert(new_entry);
+        } else { new_entry = 0; }
+        // seq_itr = kh_put(str_h, tls.seq_hash, seq, &new_entry);
+        fprintf(stdout, "%u\t%s\t%u\t%u\n",
+                (unsigned)pthread_self(), seq, seq_itr, new_entry);
         if (! new_entry)
             free(seq);
     }
@@ -1155,7 +1164,7 @@ incr_indel_count_aux(struct tally_stats *ts,
         ALLOC_GROW(ica.i, ica.n + 1, ica.m);
         if (is_ins) {
             ica.i[ica.n] = (struct indel_count){ 
-                { .is_ins = 1, .length = ulen, .ins_itr = seq_itr },
+                .idl = { .is_ins = 1, .length = ulen, .ins_itr = seq_itr },
                 .ct = 1
             };
             const char *seq = kh_key(tls.seq_hash, seq_itr);
@@ -1163,7 +1172,7 @@ incr_indel_count_aux(struct tally_stats *ts,
         }
         else
             ica.i[ica.n] = (struct indel_count){
-                { .is_ins = 0, .length = ulen },
+                .idl = { .is_ins = 0, .length = ulen, .ins_itr = 100000 },
                 .ct = 1
             };
         ica.n++;
