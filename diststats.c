@@ -1,6 +1,6 @@
 #include "metropolis_sampling.h"
-#include "dirichlet_diff_cache.h"
-#include "dirichlet_points_gen.h"
+#include "dir_diff_cache.h"
+#include "dir_points_gen.h"
 #include "cache.h"
 #include "thread_queue.h"
 #include "yepLibrary.h"

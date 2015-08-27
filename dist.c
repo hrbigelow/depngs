@@ -5,9 +5,8 @@
 #include "locus_diff.h"
 #include "bam_sample_info.h"
 #include "dir_cache.h"
-#include "locus.h"
-#include "dirichlet_points_gen.h"
-#include "dirichlet_diff_cache.h"
+#include "dir_points_gen.h"
+#include "dir_diff_cache.h"
 #include "timer.h"
 
 static struct {

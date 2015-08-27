@@ -6,7 +6,7 @@
 #include "defs.h"
 #include "bam_reader.h"
 #include "dir_cache.h"
-#include "dirichlet_diff_cache.h"
+#include "dir_diff_cache.h"
 #include "thread_queue.h"
 
 struct locus_diff_params {

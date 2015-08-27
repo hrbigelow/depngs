@@ -1,4 +1,4 @@
-#include "dirichlet_points_gen.h"
+#include "dir_points_gen.h"
 
 #include <gsl/gsl_randist.h>
 #include <gsl/gsl_sf_exp.h>

@@ -2,7 +2,7 @@
    different, based on their two largest components, and various
    confidence thresholds. */
 
-#include "dirichlet_diff_cache.h"
+#include "dir_diff_cache.h"
 #include "virtual_bound.h"
 #include "chunk_strategy.h"
 

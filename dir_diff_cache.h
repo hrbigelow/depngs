@@ -1,5 +1,5 @@
-#ifndef _DIRICHLET_DIFF_CACHE_H
-#define _DIRICHLET_DIFF_CACHE_H
+#ifndef _DIR_DIFF_CACHE_H
+#define _DIR_DIFF_CACHE_H
 
 #include "binomial_est.h"
 #include "dir_cache.h"
@@ -128,4 +128,4 @@ cached_dirichlet_diff(unsigned *a_counts,
                       unsigned *cache_was_set);
 
 
-#endif /* _DIRICHLET_DIFF_CACHE_H */
+#endif /* _DIR_DIFF_CACHE_H */

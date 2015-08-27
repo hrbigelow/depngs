@@ -2,7 +2,7 @@
 #define _BINOMIAL_EST_H
 
 #include "defs.h"
-#include "dirichlet_points_gen.h"
+#include "dir_points_gen.h"
 #include <stdlib.h>
 
 struct binomial_est_params {

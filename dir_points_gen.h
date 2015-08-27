@@ -1,5 +1,5 @@
-#ifndef _DIRICHLET_POINTS_GEN_H
-#define _DIRICHLET_POINTS_GEN_H
+#ifndef _DIR_POINTS_GEN_H
+#define _DIR_POINTS_GEN_H
 
 #include "defs.h"
 #include <gsl/gsl_rng.h>
@@ -150,4 +150,4 @@ batch_scaled_exponentiate(double *val, unsigned n_val);
 
 
 
-#endif /* _DIRICHLET_POINTS_GEN_H */
+#endif /* _DIR_POINTS_GEN_H */

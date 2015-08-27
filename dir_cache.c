@@ -5,9 +5,9 @@
 #include "thread_queue.h"
 #include "bam_reader.h"
 #include "bam_sample_info.h"
-#include "dirichlet_diff_cache.h"
+#include "dir_diff_cache.h"
 #include "batch_pileup.h"
-#include "dirichlet_points_gen.h"
+#include "dir_points_gen.h"
 #include "chunk_strategy.h"
 
 #include <pthread.h>
