@@ -170,6 +170,8 @@ run_survey(struct bam_filter_params bf_par,
                               cs_stats.query_regions + cs_stats.n_query_regions,
                               target_span.beg, max_n_loci_loop, &n_found_loci);
 
+        if (cmp_contig_pos(target_span.beg, target_span.end) == 0) break;
+        
         n_loci_left -= n_found_loci;
         chunk_strategy_set_span(target_span);
             

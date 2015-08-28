@@ -50,11 +50,11 @@ pileup_usage()
             "-R  INT    number of concurrent readers to allow (<= -t option) [%d]\n"
             "-m  INT    number bytes of memory to use [%ld]\n"
             "-F  INT    Output Phred Quality Encoding offset (33 or 64) [%d]\n"
-            "-A  FLAG   do not discard anomalous read pairs\n"
-            "-B  FLAG   disable BAQ (per-Base Alignment Quality)\n"
-            "-C  INT    adjust mapping quality; recommended:50, disable:0 [0]\n"
-            "-E  FLAG   recalculate BAQ on the fly, ignore existing BQs\n"
-            "-G  STR    file list of read groups to exclude\n"
+            /* "-A  FLAG   do not discard anomalous read pairs\n" */
+            /* "-B  FLAG   disable BAQ (per-Base Alignment Quality)\n" */
+            /* "-C  INT    adjust mapping quality; recommended:50, disable:0 [0]\n" */
+            /* "-E  FLAG   recalculate BAQ on the fly, ignore existing BQs\n" */
+            /* "-G  STR    file list of read groups to exclude\n" */
             "-l  STR    file with locus ranges (chr start end) to process [empty = process all input]\n"
             "-q  INT    min mapping quality to include alignments [%d]\n"
             "-Q  INT    min base_quality/BAQ to include in pileup [%d]\n"
