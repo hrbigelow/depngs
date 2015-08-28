@@ -153,7 +153,7 @@ run_survey(struct bam_filter_params bf_par,
     
 #define N_LOCI_PER_CHUNK 1e7
 
-    unsigned max_n_loci_loop = N_LOCI_PER_CHUNK;
+    unsigned max_n_loci_loop = N_LOCI_PER_CHUNK / bam_samples.n;
     unsigned long n_found_loci;
     void **reader_pars = malloc(n_threads * sizeof(void *));
     for (t = 0; t != n_threads; ++t)

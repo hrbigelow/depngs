@@ -89,13 +89,29 @@ parse_locus_ranges(const char *locus_range_file,
                     __func__, locus_range_file);
             exit(1);
         }
+        if (beg_pos == 0 || beg_pos > end_pos) {
+            fprintf(stderr, "Error: \"%s %u %u\" is not a valid range.  "
+                    "Ranges must be ones based and forwards\n",
+                    contig, beg_pos, end_pos);
+            exit(1);
+        }
         int tid = fasta_get_tid(contig);
+        if (tid == -1) {
+            fprintf(stderr,
+                    "Error: %s: contig \"%s\", mentioned in locus regions file %s, "
+                    "not found in fasta index file %s.fai\n", 
+                    __func__, contig, locus_range_file, fasta_file);
+            exit(1);
+        }
+        int seq_len = fasta_seq_ilen(tid);
+        end_pos = MIN(end_pos, seq_len);
+
         if (tid == -1) {
             fprintf(stderr, "%s:%u: Error: Couldn't find contig %s in fasta index\n",
                     __FILE__, __LINE__, contig);
             exit(1);
         }
-        queries[nq++] = (struct contig_region){ tid, beg_pos - 1, end_pos - 1 };
+        queries[nq++] = (struct contig_region){ tid, beg_pos - 1, end_pos };
         ALLOC_GROW(queries, nq + 1, n_alloc);
     }   
     fclose(locus_range_fh);

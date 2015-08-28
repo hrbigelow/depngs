@@ -104,7 +104,7 @@ int dist_usage()
     fprintf(stderr,
             "GENERAL\n"
             "-t INT      number of threads to use [%u]\n"
-            "-r INT      number of readers to use [same as -t](See NOTE)\n"
+            "-r INT      max number of threads allowed to read input concurrently [same as -t](See NOTE)\n"
             "-m INT      number bytes of memory to use [%lu]\n"
             "-g FLAG     if present, print extra pileup fields in the output distance file [absent]\n"
             "\n"

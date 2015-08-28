@@ -1,6 +1,5 @@
 #include "bam_reader.h"
 #include "chunk_strategy.h"
-// #include "virtual_bound.h"
 
 #include "defs.h"
 #include "timer.h"
@@ -9,6 +8,7 @@
 #include "htslib/sam.h"
 #include "htslib/hts.h"
 #include "htslib/hfile.h"
+#include "khash.h"
 
 #include <assert.h>
 
@@ -457,12 +457,16 @@ num_span_loci(struct bam_scanner_info *bsi)
 void
 print_progress(bam_hdr_t *bam_hdr, struct contig_span span)
 {
-    fprintf(stdout, "%s: Starting %s:%i - %s:%i\n",
+    if (cmp_contig_pos(span.beg, span.end) == 0) 
+        return;
+
+    fprintf(stdout, 
+            "%s: Starting %s:%i - %s:%i\n",
             timer_progress(),
             bam_hdr->target_name[span.beg.tid],
             span.beg.pos + 1,
             bam_hdr->target_name[span.end.tid],
-            span.end.pos + 1);
+            span.end.pos);
 }
 
 
@@ -783,6 +787,71 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs)
     bs->hdr = bam_hdr_read(bs->bgzf);
     bs->chunks = NULL;
     bs->n_chunks = 0;
+    free(bam_index_file);
+}
+
+
+static hts_idx_t *
+hts_idx_dup(const hts_idx_t *idx)
+{
+    struct __hts_idx_t *dup = malloc(sizeof(struct __hts_idx_t));
+    memcpy((void *)dup, (void *)idx, sizeof(struct __hts_idx_t));
+    dup->bidx = malloc(idx->m * sizeof(bidx_t *));
+    unsigned i;
+    khiter_t itr;
+    khash_t(bin) *dh, *ih;
+    bins_t *ib;
+    for (i = 0; i != idx->n; ++i) {
+        dup->bidx[i] = kh_init(bin);
+        dh = dup->bidx[i];
+        ih = idx->bidx[i];
+        kh_resize(bin, dh, ih->n_buckets);
+        for (itr = kh_begin(ih); itr != kh_end(ih); ++itr) {
+            if (kh_exist(ih, itr)) {
+                kh_key(dh, itr) = kh_key(ih, itr);
+                bins_t db;
+                ib = &kh_val(ih, itr);
+                memcpy((void *)&db, ib, sizeof(db));
+                db.list = malloc(ib->m * sizeof(ib->list[0]));
+                memcpy(db.list, ib->list, ib->m * sizeof(ib->list[0]));
+                kh_val(dh, itr) = db;
+            }
+        }
+    }
+
+    dup->lidx = malloc(idx->m * sizeof(lidx_t));
+    lidx_t *ix;
+    for (i = 0; i != idx->n; ++i) {
+        ix = &idx->lidx[i];
+        dup->lidx[i] = (lidx_t){ .n = ix->n, .m = ix->m, 
+                                 .offset = malloc(ix->m * sizeof(ix->offset[0])) };
+        memcpy((void *)dup->lidx[i].offset, 
+               (void *)ix->offset,
+               ix->n * sizeof(ix->offset[0]));
+    }
+    assert(idx->meta == NULL);
+    dup->meta = NULL;
+    return dup;
+}
+
+
+
+/* duplicate the bam_stats object (allocating as necessary) */
+struct bam_stats
+bam_stats_dup(const struct bam_stats bs, const char *bam_file)
+{
+    struct bam_stats obs;
+    obs.idx = hts_idx_dup(bs.idx);
+    obs.hdr = bam_hdr_dup(bs.hdr);
+    obs.bgzf = bgzf_open(bam_file, "r");
+    if (! bs.bgzf) {
+        fprintf(stderr, "Error: Couldn't load bam file %s\n", bam_file);
+        exit(1);
+    }
+    obs.chunks = malloc(bs.n_chunks * sizeof(hts_pair64_t));
+    obs.n_chunks = bs.n_chunks;
+    obs.more_input = bs.more_input;
+    return obs;
 }
 
 

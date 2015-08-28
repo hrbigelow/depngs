@@ -92,15 +92,12 @@ struct pos_indel_count {
 };
 
 
-/* here, consider */
 static int
-less_indel(struct indel a, struct indel b)
+cmp_indel(struct indel a, struct indel b)
 {
-    return a.is_ins < b.is_ins
-        || (a.is_ins == b.is_ins
-            && (a.length < b.length
-                || (a.length == b.length
-                    && (a.is_ins && strcmp(a.seq, b.seq) < 0))));
+    return ((int)a.is_ins - (int)b.is_ins)
+        || ((int)a.length - (int)b.length)
+        || (a.is_ins && strcmp(a.seq, b.seq));
 }
 
 
@@ -573,7 +570,7 @@ pileup_make_indel_pairs(struct indel_count *cts1, unsigned n_cts1,
            1 : second-in-pair only */
         cmp = (ic1 == ie1 ? -1
                : (ic0 == ie0 ? 1 
-                  : (less_indel(ic0->idl, ic1->idl) ? -1 : 1)));
+                  : cmp_indel(ic0->idl, ic1->idl)));
         switch (cmp) {
         case -1: 
             ip->count[0] = ic0->ct;
@@ -1039,8 +1036,7 @@ pos_iter_indel_count_less(struct pos_indel_count a, struct pos_indel_count b)
 {
     int cmp;
     return (cmp = cmp_contig_pos(a.cpos, b.cpos)) == -1
-        || (cmp == 0
-            && less_indel(a.ict.idl, b.ict.idl));
+        || (cmp == 0 && cmp_indel(a.ict.idl, b.ict.idl) == -1);
 }
 
 KSORT_INIT(pi_sort, struct pos_indel_count, pos_iter_indel_count_less);

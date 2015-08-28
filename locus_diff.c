@@ -84,12 +84,20 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
             .n = bam_samples.n,
             .do_print_progress = 0
         };
-        for (s = 0; s != bam_samples.n; ++s)
-            bam_stats_init(bam_samples.m[s].bam_file, 
-                           &thread_params.reader_buf[t].m[s]);
-        
         thread_params.reader_pars[t] = &thread_params.reader_buf[t];
     }
+    for (s = 0; s != bam_samples.n; ++s)
+        bam_stats_init(bam_samples.m[s].bam_file, 
+                       &thread_params.reader_buf[0].m[s]);
+
+    /* initialize remaining bam_stats by duplication. */
+    for (t = 1; t != n_threads; ++t)
+        for (s = 0; s != bam_samples.n; ++s)
+            thread_params.reader_buf[t].m[s] = 
+                bam_stats_dup(thread_params.reader_buf[0].m[s],
+                              bam_samples.m[s].bam_file);
+
+    
     thread_params.fasta_file = fasta_file;
 
     dirichlet_diff_cache_init(dd_par, be_par, dc_par, bf_par,

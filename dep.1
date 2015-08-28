@@ -266,7 +266,7 @@ only samples samP and 3 are different from reference.
 The tab-delimited fields are:
 
 .RS
-
+.PD 0
 .IP <sample1_label> 24
 The label for the first sample in the pair, as specified in
 \fBsamples.rdb\fP
@@ -284,11 +284,14 @@ Value of first quantile as specified in \fIquantiles_string\fP
 Value of second quantile specified in \fIquantiles_string\fP
 .IP <quantileN_value>
 Value of last quantile specified in \fIquantiles_string\fP
+.RE
 
-(These fields are only optionally output if the \fI\-g
-print_pileup_fields\fP is used)
+These fields are output only if the \fI\-g print_pileup_fields\fP is
+used.
 
-.IP [sample1_read_depth]
+.RS
+.PD 0
+.IP [sample1_read_depth] 24
 total depth-of-coverage at this locus for first sample
 .IP [sample1_bases_raw]
 pileup bases of first sample
@@ -308,12 +311,12 @@ reference
 .TP
 .B output.comp
 While output.dist gives 1-dimensional mutational distance, base
-composition is 4-dimensional.  Thus, output.comp provides 4 lines per
-locus per sample: one line each for the marginal composition estimate
-of each of the four nucleotides.  The 8th column gives the estimated
-base identity.  The 10th column gives the mean estimated fraction.
-For instance, samP is given a mean estimate of 79% T.  The next five
-numbers are quantiles chosen by the user.
+composition is 4-dimensional.  \fBoutput.comp\fP provides 4 lines per
+locus per sample.  Each line gives the composition estimate for one
+base, shown in the 8th column.  The mean estimate is given in the 10th
+column, while confidence intervals of the user's chosing are given in
+remaining columns. For instance, samP is given a mean estimate of 79%
+T.
 
 samP  1  462258  A  2  0  0  A  1  0.071  0.000  0.000  0.011  0.372  0.716
 .br
@@ -323,6 +326,7 @@ samP  1  462258  A  2  0  0  G  2  0.071  0.000  0.000  0.009  0.362  0.717
 .br
 samP  1  462258  A  2  0  0  T  0  0.787  0.124  0.341  0.855  0.997  1.000
 .br
+
 samQ  1  462258  A  5  0  0  A  0  0.895  0.425  0.649  0.939  0.999  1.000
 .br
 samQ  1  462258  A  5  0  0  C  3  0.034  0.000  0.000  0.004  0.177  0.427
@@ -331,6 +335,7 @@ samQ  1  462258  A  5  0  0  G  1  0.036  0.000  0.000  0.004  0.184  0.421
 .br
 samQ  1  462258  A  5  0  0  T  2  0.035  0.000  0.000  0.004  0.178  0.420
 .br
+
 samR  1  462258  A  7  0  0  A  1  0.152  0.001  0.012  0.124  0.386  0.580
 .br
 samR  1  462258  A  7  0  0  C  0  0.797  0.367  0.541  0.821  0.970  0.995
@@ -360,11 +365,10 @@ Total number of reads with CIGAR match state and qual <
 .IP <indel_depth>
 Number of reads with an indel state at this locus
 .IP <inferred_base>
-The hypothesis base whose composition is estimated by the
-quantiles. A '+' is supplied for the summary line.
+The base whose composition is estimated.
 .IP <rank_order>
 Order of abundance of each <inferred_base> for this locus.  Rank 0
-means 'most abundant'. A '+' is supplied for the summary line.
+means 'most abundant'.
 .IP <mean>
 The mean value among all posterior sample points.
 .IP <quantile_value1>
@@ -380,24 +384,95 @@ Value of the Nth quantile...
 .TP
 .B output.idist
 This is the same idea as \fBoutput.dist\fP, but reports differences in
-indel content rather than basecalls.  To illustrate, in estimating
-difference in base composition, there are counts of four 'events', one
-for each possible base.  Estimating difference in indel content also
-considers 'events'.  But, now the events are 'match' (a read without
-an indel), 'insertion' (a read with a particular inserted sequence)
-and 'deletion' (a read that is missing genomic content).
-
-Insertions are distinguished by the exact inserted sequence present.
-Deletions are, by definition distinguished only by the length of
-deleted sequence present, because there is no way to distinguish what
-was deleted.  Finally, the 'match' state is not distinguished by the
-actual base there, since that sort of difference is covered by the
-\fBoutput.dist\fP file.
-
-
-
+indel composition rather than basecalls.  The approach is the same as
+estimating base composition difference, and treats both samples as
+having a multinomial distribution of distinct events.  But, instead of
+the four base 'events' for base composition, the indel events are
+match event, insertion events and deletion events. Insertions are
+distinguished by the inserted sequence and considered distinct events.
+Deletions of different lengths are also distinct. There is only one
+match event, regardless of the base present.
 
 .RS
+
+As in previous examples, samP, samQ, and samR are pairwise compared
+with each other and with REF.  Columns 1 and 2 show the pair of sample
+labels.  Columns 3-5 show the locus and reference base.  Columns 6-10
+show distance quantiles. Column 13 gives a comma-separated list of the
+events.  The '@' represents the match event, insertions are shown with
+a '+', deletions with '-'.  Column 11 gives counts of these events for
+the first sample, while column 12 gives them for the second. It is
+these counts, together with a Dirichlet prior, that are used to
+parameterize two Dirichlet distributions to calculate the distance
+quantiles shown.
+
+It should be noted that, unlike with basecalls, there is no 'quality
+score' given to an indel in an alignment.  Thus we see many indels
+that are obvious mis-alignments, even after filtering the input for
+high read alignment quality score.  So, unfortunately, without
+accurate indel alignments, this output is mostly false differences.
+
+samP  REF   1  C  1323144   0.3162  0.3599  0.4413  0.5271  0.5729  53,42            1000000,0        @,-CT
+.br
+samQ  REF   1  C  1323144   0.9802  0.9937  1.0000  1.0000  1.0000  0,95             1000000,0        @,-CT
+.br
+samR  REF   1  C  1323144   0.9522  0.9713  0.9927  0.9993  0.9999  1,109            1000000,0        @,-CT
+.br
+samP  samQ  1  C  1323144   0.4253  0.4730  0.5568  0.6382  0.6767  53,42            0,95             @,-CT
+.br
+samP  samR  1  C  1323144   0.4092  0.4606  0.5481  0.6305  0.6723  53,42            1,109            @,-CT
+.br
+
+samP  REF   1  T  5640149   0.2609  0.7018  0.9996  1.0000  1.0000  0,2              1000000,0        @,-TG
+.br
+samP  samQ  1  T  5640149   0.1717  0.5461  0.9885  1.0000  1.0000  0,2              2,0              @,-TG
+.br
+samP  samR  1  T  5640149   0.1673  0.5335  0.9876  1.0000  1.0000  0,2              2,0              @,-TG
+.br
+
+samQ  REF   1  C  11582676  0.2240  0.2918  0.4447  0.5996  0.6910  15,12            1000000,0        @,-CCCAGCCAGAG
+.br
+samR  REF   1  C  11582676  0.3788  0.4349  0.5460  0.6554  0.7169  25,30            1000000,0        @,-CCCAGCCAGAG
+.br
+samP  samQ  1  C  11582676  0.1942  0.2782  0.4363  0.5928  0.6821  11,0             15,12            @,-CCCAGCCAGAG
+.br
+samP  samR  1  C  11582676  0.3195  0.4150  0.5392  0.6497  0.7066  11,0             25,30            @,-CCCAGCCAGAG
+.br
+
+samP  REF   1  A  15023653  0.3052  0.7121  0.9997  1.0000  1.0000  0,2              1000000,0        @,-AG
+.br
+samP  samQ  1  A  15023653  0.2152  0.5943  0.9891  1.0000  1.0000  0,2              3,0              @,-AG
+.br
+samP  samR  1  A  15023653  0.2154  0.6097  0.9905  1.0000  1.0000  0,2              3,0              @,-AG
+.br
+
+samR  REF   1  C  15480300  0.1549  0.1767  0.2249  0.2799  0.3141  137,40           1000000,0        @,+CCACTG
+.br
+samP  samR  1  C  15480300  0.1497  0.1761  0.2242  0.2792  0.3118  114,0            137,40           @,+CCACTG
+.br
+samQ  samR  1  C  15480300  0.1511  0.1759  0.2245  0.2798  0.3110  153,0            137,40           @,+CCACTG
+.br
+
+samP  REF   1  T  16795170  0.3711  0.3961  0.4450  0.4924  0.5239  159,1,1,127      1000000,0,0,0    @,+TA,+TT,+TG
+.br
+samQ  REF   1  T  16795170  0.3670  0.3963  0.4467  0.4979  0.5264  139,1,112        1000000,0,0      @,+G,+TG
+.br
+samR  REF   1  T  16795170  0.2049  0.2277  0.2732  0.3209  0.3509  179,1,67         1000000,0,0      @,+G,+TG
+.br
+samP  samQ  1  T  16795170  0.3892  0.4082  0.4433  0.4786  0.4995  159,0,0,1,1,127  139,1,112,0,0,0  @,+G,+TG,+TA,+TT,+TG
+.br
+samP  samR  1  T  16795170  0.3284  0.3492  0.3862  0.4263  0.4515  159,0,0,1,1,127  179,1,67,0,0,0   @,+G,+TG,+TA,+TT,+TG
+.br
+
+samP  REF   1  T  17733268  0.6687  0.6971  0.7433  0.7878  0.8119  65,188           1000000,0        @,-TGT
+.br
+samR  REF   1  T  17733268  0.7362  0.7617  0.8049  0.8441  0.8634  51,210           1000000,0        @,-TGT
+.br
+samP  samQ  1  T  17733268  0.6446  0.6751  0.7238  0.7705  0.7930  65,188           255,5            @,-TGT
+.br
+samQ  samR  1  T  17733268  0.7146  0.7398  0.7855  0.8261  0.8463  255,5            51,210           @,-TGT
+
+The full set of columns are defined as follows.
 
 .IP <sample1_label> 28
 The label for the first sample in the pair, as specified in
@@ -454,88 +529,10 @@ quality codes for second sample
 
 .RE
 
-.RS
-
-.B Example output
-
-Below shows a few of the most differing loci in a run that included
-comparing sample pairs (2, 3), and (1, 2).  Five distance quantiles
-are shown, the default values of 0.005, 0.05, 0.5, 0.95, 0.995.  The
-values are euclidean distance in the Dirichlet event space of
-frequencies.  In the first line it can be seen that sample 2 had 13
-reads with a '-C' deletion, and only 3 reads with no indel.  Sample 3
-exhibited all 32 reads with no indel.
-
-2   3   chr6    93472344     0.6449  0.7927  1.0726  1.2604  1.3375  13,3    0,32    -C,@      [pileup fields...]
-.br
-2   3   chrX    131889532    0.5633  0.7273  1.0000  1.1978  1.2788  0,17    17,5    -T,@      [pileup fields...]
-.br
-1   2   chrX    146524484    0.5630  0.7680  1.1155  1.3178  1.3729  10,0    1,10    -TATA,@   [pileup fields...]
-.br
-2   3   chrX    53616185     0.5504  0.7041  0.9897  1.1985  1.2905  12,4    0,27    +CCCC,@   [pileup fields...]
-.br
-2   3   chrX    98048653     0.5405  0.6985  0.9522  1.1504  1.2403  18,7    0,26    -C,@      [pileup fields...]
-
-Here are shown just the \fBbases\fP pileup field, transposed for
-clarity in this documentation.  The actual format includes bases,
-quals, and depth, as specified below.
-
-2   3   chr6    93472344    ,-1c,-1c,-1c.-1C,-1c,-1c.-1C.-1C,-1c,-1c,-1c.,-1c.,,-1c                  ,,,,,..,....,....,,,,....,.,.,.^],
-.br
-2   3   chrX    131889532   ,$.,.,.,..,......,                                                       ,,,-1t,-1t,-1t,-1t,-1t.-1T.,-1t,-1t,-1t,,.-1T.-1T,-1t.-1T.-1T.-1T.-1T.-1T
-.br
-1   2   chrX    146524484   .-4TATA,-4tata,-4tata.-4TATA,-4tata.-4TATA,-4tata.-4TATA.-4TATA.-4TATA   .,**,-4tata**...^].
-.br
-2   3   chrX    53616185    .+4CCCC.+4CCCC,+4ccccG.+4CCCC.+4CCCC*,+4cccc.+4CCCC,.+4CCC \fB[truncated]\fP   .,,.A,.,,,,,,.......,,,,,^],^],
-.br
-2   3   chrX    98048653    ,-1c,-1c.,-1c,-1c.-1C.-1C,-1c.-1C.-1C..-1C,,-1c,-1c.-1C,-1 \fB[truncated]\fP   ,,,.,..,,,.,.,.,..,,..,..,
-
-.RE
-
-.TP
-.B output.points
-Optional sample points and numerical CDFs output from \fBdep dist\fP.
-Warning: very large file, will contain 10000 lines (or the value of
-\fImax_sample_points\fP) for each locus processed. Useful for plotting
-and visualizing the shape of the posterior as a cloud of points in
-3-D, or for plotting the individual base CDFs using their ranks. Also,
-the lines do NOT have information in them that denotes which locus the
-points are from. So, this output should be used either with
-single-locus input, or else the N lines need to be split out into
-groups. Tab-separated fields are:
-
-.RS
-.PD 0
-.IP <i> 20
-This is the i in "the i'th sample point" among the sample points taken
-from the posterior. It is just an arbitrary index of the point
-(zero-based)
-.IP <sample_label>
-sample label as specified in \fBlabel\fP flag or \fBsamples.rdb\fP
-file.
-.IP <a_i>
-Coordinate of the i'th sample point cooresponding to base 'a'
-(resp. c, g, or t)
-.IP <c_i>
-etc
-.IP <g_i>
-etc
-.IP <g_i>
-etc
-.IP <ra_i>
-Ranking of the i'th sample point in order of increasing abundance of
-base 'a' (resp. c, g, or t)
-.IP <ra_i>
-etc
-.IP <ra_i>
-etc
-.IP <ra_i>
-etc
-
-.RE
-
 
 .SH LONG DESCRIPTION
+
+
 
 Estimates mutational distance at each locus and for each pair of
 samples specified in \fBsamples.rdb\fP, reporting loci that differ by
@@ -561,8 +558,8 @@ true posteriors.  Thus, if the approximations do not differ above
 threshold, then the true posteriors will not differ either, and thus
 the more expensive calculations of true posteriors may be skipped.
 The approximating distribution is a pure Dirichlet parameterized by
-the prior plus the four counts of each basecall.  The space of 4
-smallish integer counts is a relatively small space, thus sample
+the prior plus the number of reads for each possible base.  The space
+of 4 smallish integer counts is a relatively small space, thus sample
 points from the most common of these distributions may be
 pre-calculated and cached.
 
