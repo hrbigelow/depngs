@@ -16,6 +16,7 @@
 #include "chunk_strategy.h"
 #include "geometry.h"
 #include "fasta.h"
+#include "timer.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -123,6 +124,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     thread_params.reader_pars = malloc(n_threads * sizeof(void *));
 
     /* initialize bam_stats */
+    fprintf(stdout, "%s: Starting reading BAM indices\n", timer_progress());   
     unsigned t;
     struct work_unit *stats_init_input = malloc(n_threads * sizeof(struct work_unit));
     pthread_t *bam_init_th = malloc(n_threads * sizeof(pthread_t));
@@ -143,6 +145,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     
     free(bam_init_th);
     free(stats_init_input);
+    fprintf(stdout, "%s: Finished reading BAM indices.\n", timer_progress());
     
     thread_params.fasta_file = fasta_file;
 
