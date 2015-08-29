@@ -41,6 +41,51 @@ void
 dist_on_exit();
 
 
+struct work_unit {
+    unsigned n_threads, nth;
+};
+
+
+/* */
+void *
+stats_init_worker(void *arg)
+{
+    struct work_unit *wu = arg;
+    unsigned t = wu->nth;
+
+    /* once-per-thread initialization */
+    thread_params.reader_buf[t] = (struct bam_scanner_info){
+        .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
+        .n = bam_samples.n,
+        .do_print_progress = 0
+    };
+    thread_params.reader_pars[t] = &thread_params.reader_buf[t];
+    
+    /* work (possibly more than once per thread */
+    unsigned s;
+    for (s = wu->nth; s < bam_samples.n; s += wu->n_threads)
+        bam_stats_init(bam_samples.m[s].bam_file, 
+                       &thread_params.reader_buf[0].m[s]);
+    return NULL;
+}
+
+
+/* duplicate across samples, just for this thread */
+void *
+stats_dup_worker(void *arg)
+{
+    struct work_unit *wu = arg;
+    unsigned s, t = wu->nth;
+    for (s = 0; s != bam_samples.n; ++s)
+        thread_params.reader_buf[t].m[s] = 
+            bam_stats_dup(thread_params.reader_buf[0].m[s],
+                          bam_samples.m[s].bam_file);
+    
+    return NULL;
+}
+
+
+
 struct thread_queue *
 locus_diff_init(const char *samples_file, const char *sample_pairs_file, 
                 const char *locus_range_file, const char *fasta_file,
@@ -77,26 +122,27 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     thread_params.reader_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
     thread_params.reader_pars = malloc(n_threads * sizeof(void *));
 
-    unsigned t, s;
+    /* initialize bam_stats */
+    unsigned t;
+    struct work_unit *stats_init_input = malloc(n_threads * sizeof(struct work_unit));
+    pthread_t *bam_init_th = malloc(n_threads * sizeof(pthread_t));
     for (t = 0; t != n_threads; ++t) {
-        thread_params.reader_buf[t] = (struct bam_scanner_info){
-            .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
-            .n = bam_samples.n,
-            .do_print_progress = 0
-        };
-        thread_params.reader_pars[t] = &thread_params.reader_buf[t];
+        stats_init_input[t] = (struct work_unit){ n_threads, t };
+        (void)pthread_create(&bam_init_th[t], NULL,
+                             stats_init_worker, &stats_init_input[t]);
     }
-    for (s = 0; s != bam_samples.n; ++s)
-        bam_stats_init(bam_samples.m[s].bam_file, 
-                       &thread_params.reader_buf[0].m[s]);
-
-    /* initialize remaining bam_stats by duplication. */
-    for (t = 1; t != n_threads; ++t)
-        for (s = 0; s != bam_samples.n; ++s)
-            thread_params.reader_buf[t].m[s] = 
-                bam_stats_dup(thread_params.reader_buf[0].m[s],
-                              bam_samples.m[s].bam_file);
-
+    for (t = 0; t != n_threads; ++t)
+        pthread_join(bam_init_th[t], NULL);
+        
+    for (t = 0; t != n_threads; ++t)
+        (void)pthread_create(&bam_init_th[t], NULL,
+                             stats_dup_worker, &stats_init_input[t]);
+    
+    for (t = 0; t != n_threads; ++t)
+        pthread_join(bam_init_th[t], NULL);
+    
+    free(bam_init_th);
+    free(stats_init_input);
     
     thread_params.fasta_file = fasta_file;
 

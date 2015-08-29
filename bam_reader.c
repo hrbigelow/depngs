@@ -791,46 +791,13 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs)
 }
 
 
+/* not a deep copy. it appears that all fields except z are
+   constant. */
 static hts_idx_t *
 hts_idx_dup(const hts_idx_t *idx)
 {
-    struct __hts_idx_t *dup = malloc(sizeof(struct __hts_idx_t));
-    memcpy((void *)dup, (void *)idx, sizeof(struct __hts_idx_t));
-    dup->bidx = malloc(idx->m * sizeof(bidx_t *));
-    unsigned i;
-    khiter_t itr;
-    khash_t(bin) *dh, *ih;
-    bins_t *ib;
-    for (i = 0; i != idx->n; ++i) {
-        dup->bidx[i] = kh_init(bin);
-        dh = dup->bidx[i];
-        ih = idx->bidx[i];
-        kh_resize(bin, dh, ih->n_buckets);
-        for (itr = kh_begin(ih); itr != kh_end(ih); ++itr) {
-            if (kh_exist(ih, itr)) {
-                kh_key(dh, itr) = kh_key(ih, itr);
-                bins_t db;
-                ib = &kh_val(ih, itr);
-                memcpy((void *)&db, ib, sizeof(db));
-                db.list = malloc(ib->m * sizeof(ib->list[0]));
-                memcpy(db.list, ib->list, ib->m * sizeof(ib->list[0]));
-                kh_val(dh, itr) = db;
-            }
-        }
-    }
-
-    dup->lidx = malloc(idx->m * sizeof(lidx_t));
-    lidx_t *ix;
-    for (i = 0; i != idx->n; ++i) {
-        ix = &idx->lidx[i];
-        dup->lidx[i] = (lidx_t){ .n = ix->n, .m = ix->m, 
-                                 .offset = malloc(ix->m * sizeof(ix->offset[0])) };
-        memcpy((void *)dup->lidx[i].offset, 
-               (void *)ix->offset,
-               ix->n * sizeof(ix->offset[0]));
-    }
-    assert(idx->meta == NULL);
-    dup->meta = NULL;
+    hts_idx_t *dup = malloc(sizeof(hts_idx_t));
+    *dup = *idx;
     return dup;
 }
 
