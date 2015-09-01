@@ -5,6 +5,7 @@
 #include "dir_diff_cache.h"
 #include "virtual_bound.h"
 #include "chunk_strategy.h"
+#include "timer.h"
 
 #include <float.h>
 #include <assert.h>
@@ -26,61 +27,10 @@ static struct binomial_est_params g_be_par;
    0 <= A[0] <= U[0] <= U[1] <= A[1] <= MAX_COUNT1
 */
    
-unsigned alpha_packed_limits[] = {
-    1<<24, 1<<20, 1<<12, 1<<8
-};
-
-/* attempts to initialize the key from the counts. returns 1 on
-   success, 0 on failure. if counts do not fit within the packing
-   limits, does not modify key. */
-unsigned 
-init_alpha_packed_large(unsigned *cts, uint64_t *key)
-{
-    unsigned packable = 
-        cts[0] <= alpha_packed_limits[0]
-        && cts[1] <= alpha_packed_limits[1]
-        && cts[2] <= alpha_packed_limits[2]
-        && cts[3] <= alpha_packed_limits[3];
-
-    if (packable)
-        *key = pack_alpha64(cts[0], cts[1], cts[2], cts[3]);
-    return packable;
-}
 
 
-/* component sizes (24, 20, 12, 8) in bits */
-union pair {
-    uint32_t c[2];
-    uint64_t v;
-};
 
 
-uint64_t
-pack_alpha64(unsigned a0, unsigned a1, unsigned a2, unsigned a3)
-{
-    union pair p;
-    p.c[0] = (uint32_t)a0<<8 | (uint32_t)a3;
-    p.c[1] = (uint32_t)a1<<12 | (uint32_t)a2;
-    return p.v;
-}
-
-
-void
-unpack_alpha64(uint64_t k, unsigned *c)
-{
-    union pair p;
-    p.v = k;
-    c[0] = p.c[0]>>8;
-    c[3] = p.c[0] & 0xff;
-    c[1] = p.c[1]>>12;
-    c[2] = p.c[1] & 0xfff;
-}
-
-
-/* defines the limits for using pack_bounds. */
-static unsigned bounds_packed_limits[] = {
-    1<<20, 1<<24, 1<<20
-};
 
 
 /* use to find a joint permutation between a and b, such that a2, b1,
@@ -88,38 +38,8 @@ static unsigned bounds_packed_limits[] = {
 static unsigned bounds_perm_limits[] = { 
     (1<<24) + 1, (1<<20) + 1, 1, 1 
 };
+    
 
-
-/* pack 20|24|20 bits of a2|b1|b2 */
-uint64_t
-pack_bounds(unsigned a2, unsigned b1, unsigned b2)
-{
-    uint64_t k = (uint64_t)a2<<44 | (uint64_t)b1<<20 | (uint64_t)b2;
-    return k;
-}
-
-unsigned
-try_pack_bounds(unsigned a2, unsigned b1, unsigned b2, uint64_t *key)
-{
-    unsigned packable = 
-        (a2 <= bounds_packed_limits[0]
-         && b1 <= bounds_packed_limits[1]
-         && b2 <= bounds_packed_limits[2]);
-
-    if (packable)
-        *key = pack_bounds(a2, b1, b2);
-    return packable;
-}
-
-
-/* */
-void
-unpack_bounds(uint64_t k, unsigned *b)
-{
-    b[0] = k>>44;
-    b[1] = (unsigned)(k>>20 & (uint64_t)0xffffff);
-    b[2] = (unsigned)(k & (uint64_t)0x0fffff);
-}
 
 
 struct alpha_packed {
@@ -176,29 +96,30 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
 
     dirichlet_points_gen_init(pg_par);
 
-    printf("Precomputing confidence interval statistics...");
-    binomial_est_init(be_par, be_par.max_sample_points, n_threads);
-    printf("done.\n");
+    fprintf(stdout, "%s: Start computing confidence interval statistics.\n", timer_progress());
+    // binomial_est_init(be_par, be_par.max_sample_points, n_threads);
+    binomial_est_init(be_par, 12000, n_threads);
+    fprintf(stdout, "%s: Finished computing confidence interval statistics.\n", timer_progress());
 
     dir_cache_init(dc_par);
 
-    printf("Collecting input statistics...");
+    fprintf(stdout, "%s: Start collecting input statistics.\n", timer_progress());
     run_survey(bf_par, reader_buf, dd_par.pseudo_depth,
                dc_par.n_max_survey_loci, n_threads, n_max_reading, max_input_mem);
-    printf("done.\n");
+    fprintf(stdout, "%s: Finished collecting input statistics.\n", timer_progress());
 
     /* This is needed to return batch_pileup back to the beginning
        state. */
     pileup_reset_pos();
     chunk_strategy_reset();
 
-    printf("Generating dirichlet point sets...");
+    fprintf(stdout, "%s: Generating dirichlet point sets.\n", timer_progress());
     generate_point_sets(n_threads);
-    printf("done.\n");
+    fprintf(stdout, "%s: Finished generating dirichlet point sets.\n", timer_progress());
 
-    printf("Calculating bounds...");
+    fprintf(stdout, "%s: Start calculating pair-dirichlet bounds.\n", timer_progress());
     generate_est_bounds(n_threads);
-    printf("done.\n");
+    fprintf(stdout, "%s: Finished calculating pair-dirichlet bounds.\n", timer_progress());
 }
 
 
@@ -250,6 +171,7 @@ struct ipoint {
     unsigned x;
     double y;
     struct ipoint *left, *right, *down;
+    struct binomial_est_state est;
 };
 
 
@@ -290,74 +212,8 @@ struct ipoint {
 
 
 
-/* Interpolate the interval in the beb row */
-enum fuzzy_state locate_cell(struct binomial_est_bounds *beb, unsigned a1)
-{
-    if (beb->unchanged[0] <= a1 && a1 < beb->unchanged[1])
-        return UNCHANGED;
-    else if (beb->ambiguous[0] <= a1 && a1 < beb->ambiguous[1])
-        return AMBIGUOUS;
-    else return CHANGED;
-}
 
 
-
-/* Given a[4], b[4], and lim[4], find a permutation of {(a[p_1],
-   b[p_1]), (a[p_2], b[p_2]), (a[p_3], b[p_3]), (a[p_4], b[p_4]) }
-   such that both a[p_i] and b[p_i] are less than lim[p_i], if such
-   permutation exists. 
-   
-   Modification: Given lim[2] == 1 and lim[3] == 1, The permutation of
-   the last two elements does not matter.  So, we only need to specify
-   p_1 and p_2 in this case.
-
-   Also, if there is no permutation that suffices, set a flag
-   appropriately.
-
-   Assumes that lim is descending.  lim[i] >= lim[i+1]
-*/
-unsigned
-find_cacheable_permutation(const unsigned *a, const unsigned *b, 
-                           const unsigned *lim, unsigned *permutation)
-{
-    unsigned perm_found = 1;
-    /* mpi[i] (max permutation index) is the maximum position in the
-       permutation (described above) that the (a, b) pair may attain
-       and still stay below the limits. */
-    /* min value, min_index */
-    int i, j;
-    int min_mpi, mpi[] = { -1, -1, -1, -1 };
-    
-    unsigned tot[] = { a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
-    
-    for (i = 0; i != 4; ++i)
-        for (j = 0; j != 4; ++j) {
-            if (a[i] >= lim[j] || b[i] >= lim[j]) break;
-            mpi[i] = j;
-        }
-    
-    /* p[i], (the permutation of mpi), s.t. mpi[p[i]] <= mpi[p[i+1]] */
-
-    /* mpi[j] = -1 means the value j has been placed in the
-       permutation */
-    for (i = 0; i != 4; ++i) {
-        unsigned max_v = 0, max_i = 4;
-        min_mpi = 5;
-        for (j = 0; j != 4; ++j)
-            if (mpi[j] >= i && mpi[j] <= min_mpi && tot[j] >= max_v) {
-                max_v = tot[j];
-                max_i = j;
-                min_mpi = mpi[j];
-            }
-        if (max_i != 4)
-            permutation[i] = max_i, mpi[max_i] = -1;
-        else {
-            perm_found = 0;
-            break;
-        }
-    }
-    return perm_found;
-}
 
 
 /* estimate distance between two initialized 4D dirichlet
@@ -397,7 +253,7 @@ get_est_state(struct bound_search_params *bpar)
 }
 
 
-/* The main distance function.  This will modify dist[0]'s alpha
+/* The main distance function.  This will modify dist[0]'s alpha[0]
    parameters and thus discard its points. It will assume all 7 other
    alpha components are set as intended.  */
 static struct binomial_est_state
@@ -458,6 +314,7 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
     y = pair_dist_aux(xmin, bpar);
     a->x = xmin;
     a->y = y.beta_qval_lo;
+    a->est = y;
     a->left = NULL;
     a->right = b;
     a->down = (void *)0xDEADBEEF;
@@ -465,6 +322,7 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
     y = pair_dist_aux(xmax, bpar);
     b->x = xmax;
     b->y = y.beta_qval_lo;
+    b->est = y;
     b->left = a;
     b->right = NULL;
     b->down = (void *)0xDEADBEEF;
@@ -492,6 +350,7 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
                 nn->x = x;
                 y = pair_dist_aux(nn->x, bpar);
                 nn->y = y.beta_qval_lo;
+                nn->est = y;
                 INSERT_NODE_HORZ(cen->left, nn, cen);
                 nn->down = (void *)0xDEADBEEF;
                 newnodes[i * 2] = nn;
@@ -505,6 +364,7 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
                 nn->x = x;
                 y = pair_dist_aux(nn->x, bpar);
                 nn->y = y.beta_qval_lo;
+                nn->est = y;
                 INSERT_NODE_HORZ(cen, nn, cen->right);
                 nn->down = (void *)0xDEADBEEF;
                 newnodes[i * 2 + 1] = nn;
@@ -526,6 +386,26 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
         if (lx == 1 && rx == 1) break;
     }
     unsigned topx = hd->x;
+
+    /* print out nodes from left to right */
+    struct ipoint *tp = hd;
+    while (tp->left) tp = tp->left;
+    unsigned a_cts[4], b_cts[4];
+    struct bound_search_params *bsp = bpar;
+    memcpy(a_cts, ((struct points_gen_par *)bsp->dist[0]->pgen.points_gen_par)->alpha_counts, sizeof(a_cts));
+    memcpy(b_cts, ((struct points_gen_par *)bsp->dist[1]->pgen.points_gen_par)->alpha_counts, sizeof(b_cts));
+    while (tp) {
+        fprintf(stdout, 
+                "%5s[%u,%u,%u,%u]\t[%u,%u,%u,%u]\t%u\t"
+                "%8u\t%8u\t%20.18g\t%20.18g\n", 
+                (tp == hd ? "***" : "   "),
+                a_cts[0], a_cts[1], a_cts[2], a_cts[3],
+                b_cts[0], b_cts[1], b_cts[2], b_cts[3],
+                tp->x, 
+                tp->est.n_trials, tp->est.n_success, 
+                tp->est.beta_qval_lo, tp->est.beta_qval_hi);
+        tp = tp->right;
+    }
 
     /* clean up */
     struct ipoint *p;
@@ -605,24 +485,22 @@ get_fuzzy_state(unsigned a1, unsigned a2,
    is cacheable, 'cacheable' is set to 1, and the cache is queried for
    the entry, and cache_was_set is set to 1 if found. */
 enum fuzzy_state
-cached_dirichlet_diff(unsigned *a,
-                      unsigned *b,
+cached_dirichlet_diff(unsigned *a, unsigned *b,
                       struct bound_search_params *bpar,
-                      unsigned *cacheable,
                       unsigned *cache_was_set)
 {
     unsigned p[4];
     enum fuzzy_state state = UNCHANGED;
     int state_set = 0;
-    *cache_was_set = 0;
-    *cacheable = find_cacheable_permutation(a, b, bounds_perm_limits, p);
-    if (*cacheable) {
-        unsigned a1 = a[p[0]], a2 = a[p[1]], b1 = b[p[0]], b2 = b[p[1]];
-        state_set = get_fuzzy_state(a1, a2, b1, b2, &state);
-        *cache_was_set = state_set;
-    }
+    *cache_was_set = dir_cache_try_get_diff(a, b, &state);
+
+    if (*cache_was_set) return state;
+    else {
+        /* */
+        
     if (! state_set) {
-        *cacheable = find_cacheable_permutation(a, b, alpha_packed_limits, p);
+        *cacheable = find_cacheable_permutation(a, alpha_packed_limits,
+                                                b, alpha_packed_limits, p);
         assert(*cacheable);
         update_points_gen_params(bpar->dist[0], a, p);
         update_points_gen_params(bpar->dist[1], b, p);

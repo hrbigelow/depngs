@@ -354,6 +354,8 @@ binomial_quantile_est(struct points_gen pgen1,
         compute_square_dist((const double *)pcur1, 
                             (const double *)pcur2, 
                             g_be_par.batch_size, NUM_NUCS, square_dist_buf);
+        pcur1 += g_be_par.batch_size;
+        pcur2 += g_be_par.batch_size;
 
         /* tallying number of 'successes' (pairs of points that are
            below the distance threshold, i.e. non-changed) */
@@ -396,7 +398,21 @@ binomial_quantile_est(struct points_gen pgen1,
         exit(1);
     }
     free(square_dist_buf);
+    est.n_trials = n;
+    est.n_success = s;
     return est;
+}
+
+
+/* Interpolate the interval in the beb row */
+enum fuzzy_state
+locate_cell(struct binomial_est_bounds *beb, unsigned a1)
+{
+    if (beb->unchanged[0] <= a1 && a1 < beb->unchanged[1])
+        return UNCHANGED;
+    else if (beb->ambiguous[0] <= a1 && a1 < beb->ambiguous[1])
+        return AMBIGUOUS;
+    else return CHANGED;
 }
 
 

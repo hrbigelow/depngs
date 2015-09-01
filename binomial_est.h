@@ -27,6 +27,7 @@ extern const char *fuzzy_state_strings[];
 struct binomial_est_state {
     enum fuzzy_state state;
     double beta_qval_lo, beta_qval_hi;
+    unsigned n_trials, n_success;
 };
 
 
@@ -60,5 +61,11 @@ binomial_quantile_est(struct points_gen pgen1,
                       struct points_buf *points1,
                       struct points_gen pgen2,
                       struct points_buf *points2);
+
+
+/* Interpolate the interval in the beb row */
+enum fuzzy_state
+locate_cell(struct binomial_est_bounds *beb, unsigned a1);
+
 
 #endif /* _BINOMIAL_EST_H */

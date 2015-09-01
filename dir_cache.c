@@ -7,43 +7,53 @@
 #include "bam_sample_info.h"
 #include "dir_diff_cache.h"
 #include "batch_pileup.h"
-#include "dir_points_gen.h"
 #include "chunk_strategy.h"
 
 #include <pthread.h>
 #include <assert.h>
 
-/* use union alpha_large_key as key */
-KHASH_MAP_INIT_INT64(points_tuple_h, unsigned);
+/* Will hold all cached points */
+static POINT *g_point_sets_buf;
 
-/* use union bounds_key as key */
-KHASH_MAP_INIT_INT64(bounds_tuple_h, unsigned);
+/* use union alpha_large_key as key */
+KHASH_MAP_INIT_INT64(counts_h, unsigned);
+static khash_t(counts_h) *g_ptup_hash;
+static khash_t(counts_h) *g_btup_hash;
 
 /* protect global hashes */
 static pthread_mutex_t merge_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-/* Survey */
-static khash_t(points_tuple_h) *g_ptup_hash;
-static khash_t(bounds_tuple_h) *g_btup_hash;
+/* use {pack,unpack}_alpha64 to convert khint64_t key */
+KHASH_MAP_INIT_INT64(points_h, POINT *);
+khash_t(points_h) *g_points_hash;
 
-/* Will hold all cached points */
-static POINT *g_point_sets_buf;
+/* use {pack,unpack}_bounds to convert khint64_t key */
+KHASH_MAP_INIT_INT64(bounds_h, struct binomial_est_bounds);
+khash_t(bounds_h) *g_bounds_hash;
+
+/* use {pack,unpack}_alpha64 to convert khint64_t key.  the key
+   represents the alpha counts of the sample, and its fuzzy_state
+   relationship with the alpha counts { pseudo_depth, 0, 0, 0 } */
+KHASH_MAP_INIT_INT64(ref_change_h, enum fuzzy_state);
+khash_t(ref_change_h) *g_ref_change_hash;
+
                                                                                           
-                               // {};
 
 static struct dir_cache_params g_dc_par;
 
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
 
 void
 dir_cache_init(struct dir_cache_params dc_par)
 {
     g_dc_par = dc_par;
-    g_ptup_hash = kh_init(points_tuple_h);
-    g_btup_hash = kh_init(bounds_tuple_h);
+    g_ptup_hash = kh_init(counts_h);
+    g_btup_hash = kh_init(counts_h);
     g_points_hash = kh_init(points_h);
     g_bounds_hash = kh_init(bounds_h);
+    g_ref_change_hash = kh_init(ref_change_h);
     size_t buf_sz = 
         (size_t)g_dc_par.n_point_sets
         * (size_t)g_dc_par.max_sample_points
@@ -61,11 +71,183 @@ dir_cache_init(struct dir_cache_params dc_par)
 void
 dir_cache_free()
 {
-    kh_destroy(points_tuple_h, g_ptup_hash);
-    kh_destroy(bounds_tuple_h, g_btup_hash);
+    kh_destroy(counts_h, g_ptup_hash);
+    kh_destroy(counts_h, g_btup_hash);
     kh_destroy(points_h, g_points_hash);
     kh_destroy(bounds_h, g_bounds_hash);
+    kh_destroy(ref_change_h, g_ref_change_hash);
     free(g_point_sets_buf);
+}
+
+
+
+/* component sizes (24, 20, 12, 8) in bits */
+union pair {
+    uint32_t c[2];
+    uint64_t v;
+};
+
+
+uint64_t
+pack_alpha64(unsigned a0, unsigned a1, unsigned a2, unsigned a3)
+{
+    union pair p;
+    p.c[0] = (uint32_t)a0<<8 | (uint32_t)a3;
+    p.c[1] = (uint32_t)a1<<12 | (uint32_t)a2;
+    return p.v;
+}
+
+
+void
+unpack_alpha64(uint64_t k, unsigned *c)
+{
+    union pair p;
+    p.v = k;
+    c[0] = p.c[0]>>8;
+    c[3] = p.c[0] & 0xff;
+    c[1] = p.c[1]>>12;
+    c[2] = p.c[1] & 0xfff;
+}
+
+
+
+static const unsigned alpha_packed_limits[] = {
+    1<<24, 1<<20, 1<<12, 1<<8
+};
+
+/* defines the limits for using pack_bounds. */
+static const unsigned bounds_packed_limits[] = {
+    1<<20, 1<<24, 1<<20
+};
+
+
+/* pack 20|24|20 bits of a2|b1|b2.  */
+uint64_t
+pack_bounds(unsigned a2, unsigned b1, unsigned b2)
+{
+    uint64_t k = (uint64_t)a2<<44 | (uint64_t)b1<<20 | (uint64_t)b2;
+    return k;
+}
+
+
+unsigned
+try_pack_bounds(unsigned a2, unsigned b1, unsigned b2, uint64_t *key)
+{
+    unsigned packable = 
+        (a2 <= bounds_packed_limits[0]
+         && b1 <= bounds_packed_limits[1]
+         && b2 <= bounds_packed_limits[2]);
+
+    if (packable)
+        *key = pack_bounds(a2, b1, b2);
+    return packable;
+}
+
+
+/* */
+void
+unpack_bounds(uint64_t k, unsigned *b)
+{
+    b[0] = k>>44;
+    b[1] = (unsigned)(k>>20 & (uint64_t)0xffffff);
+    b[2] = (unsigned)(k & (uint64_t)0x0fffff);
+}
+
+
+/* attempts to initialize the key from the counts. returns 1 on
+   success, 0 on failure. if counts do not fit within the packing
+   limits, does not modify key. */
+static unsigned 
+try_pack_alpha_aux(unsigned *cts, uint64_t *key)
+{
+    unsigned packable = 
+        cts[0] <= alpha_packed_limits[0]
+        && cts[1] <= alpha_packed_limits[1]
+        && cts[2] <= alpha_packed_limits[2]
+        && cts[3] <= alpha_packed_limits[3];
+
+    if (packable)
+        *key = pack_alpha64(cts[0], cts[1], cts[2], cts[3]);
+    return packable;
+}
+
+
+/* Given a[4], a_lim[4], b[4], and b_lim[4], find a permutation of
+   {(a[p_1], b[p_1]), (a[p_2], b[p_2]), (a[p_3], b[p_3]), (a[p_4],
+   b[p_4]) } such that both a[p_i] and b[p_i] are less than their
+   corresponding lim[p_i], if such permutation exists.
+   
+   Assumes that lim[i] >= lim[i+1].  Return 1 if permutation found, 0
+   otherwise.  */
+static unsigned
+find_cacheable_perm_aux(const unsigned *a, const unsigned *a_lim, 
+                        const unsigned *b, const unsigned *b_lim,
+                        unsigned *permutation)
+{
+    unsigned perm_found = 1;
+    /* mpi[i] (max permutation index) is the maximum position in the
+       permutation (described above) that the (a, b) pair may attain
+       and still stay below the limits. */
+    /* min value, min_index */
+    int i, j;
+    int min_mpi, mpi[] = { -1, -1, -1, -1 };
+    
+    unsigned tot[] = { a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
+    
+    for (i = 0; i != 4; ++i)
+        for (j = 0; j != 4; ++j) {
+            if (a[i] >= a_lim[j] || b[i] >= b_lim[j]) break;
+            mpi[i] = j;
+        }
+    
+    /* p[i], (the permutation of mpi), s.t. mpi[p[i]] <= mpi[p[i+1]] */
+
+    /* mpi[j] = -1 means the value j has been placed in the
+       permutation */
+    for (i = 0; i != 4; ++i) {
+        unsigned max_v = 0, max_i = 4;
+        min_mpi = 5;
+        for (j = 0; j != 4; ++j)
+            if (mpi[j] >= i && mpi[j] <= min_mpi && tot[j] >= max_v) {
+                max_v = tot[j];
+                max_i = j;
+                min_mpi = mpi[j];
+            }
+        if (max_i != 4)
+            permutation[i] = max_i, mpi[max_i] = -1;
+        else {
+            perm_found = 0;
+            break;
+        }
+    }
+    return perm_found;
+}
+
+
+/* find the permutation of the sample-to-REF alpha pair. if a
+   permutation is found, it is safe to apply pack_alpha64 or
+   pack_bounds on the permuted 'a' and/or 'b'. */
+unsigned
+sample_to_ref_perm(const unsigned *a, const unsigned *b, unsigned *perm)
+{
+    unsigned pseudo_limits[] = { g_dd_par.pseudo_depth, 1, 1, 1 };
+    return 
+        find_cacheable_perm_aux(a, alpha_packed_limits,
+                                b, pseudo_limits,
+                                perm);
+}
+
+
+/* find the permutation of the sample-to-sample alpha pair. if a
+   permutation is found, it is safe to apply pack_alpha64 or
+   pack_bounds on the permuted 'a' and/or 'b'. */
+unsigned
+sample_to_sample_perm(const unsigned *a, const unsigned *b, unsigned *perm)
+{
+    return 
+        find_cacheable_perm_aux(a, alpha_packed_limits,
+                                b, alpha_packed_limits,
+                                perm);
 }
 
 
@@ -91,6 +273,46 @@ dir_cache_try_get_bounds(unsigned a2, unsigned b1, unsigned b2)
         return &kh_val(g_bounds_hash, itr);
     else return NULL;
 }
+
+
+
+
+enum fuzzy_state *
+dir_cache_try_get_refchange(unsigned *alpha)
+{
+    khint64_t key = pack_alpha64(alpha[0], alpha[1], alpha[2], alpha[3]);
+    khiter_t itr = kh_get(ref_change_h, g_ref_change_hash, key);
+    if (itr != kh_end(g_ref_change_hash) && kh_exist(g_ref_change_hash, itr))
+        return &kh_val(g_ref_change_hash, itr);
+    else return NULL;
+}
+
+
+/* set the fuzzy state from the cache and return 1.  or, return 0 if
+   no cache entry is found. */
+unsigned
+dir_cache_try_get_diff(unsigned *a, unsigned *b, enum fuzzy_state *state)
+{
+    unsigned i, c, perm[4], pa[4];
+    c = sample_to_ref_perm(a, b, perm);
+    if (c) {
+        for (i = 0; i != 4; ++i) pa[i] = a[perm[i]];
+        *state = *dir_cache_try_get_refchange(pa);
+        return 1;
+    }
+    c = sample_to_sample_perm(a, b, perm);
+    if (c) {
+        struct binomial_est_bounds *beb =
+            dir_cache_try_get_bounds(a[perm[1]], b[perm[0]], b[perm[1]]);
+        if (beb) {
+            *state = locate_cell(beb, a[perm[0]]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+
 
 
 static void
@@ -149,11 +371,15 @@ run_survey(struct bam_filter_params bf_par,
 
     struct contig_span target_span;
     target_span.beg = CONTIG_REGION_BEG(cs_stats.query_regions[0]);
-    unsigned long n_loci_left = n_max_survey_loci;
+    unsigned long n_loci_left = n_max_survey_loci / bam_samples.n;
     
 #define N_LOCI_PER_CHUNK 1e7
 
-    unsigned max_n_loci_loop = N_LOCI_PER_CHUNK / bam_samples.n;
+    /* need at least min_n_loci in order to keep all threads
+       occupied. 16384 is the minimum loci parseable from a BAM
+       file. */
+    unsigned min_n_loci = 16384 * n_threads;
+    unsigned max_n_loci_loop = MAX(min_n_loci, N_LOCI_PER_CHUNK / bam_samples.n);
     unsigned long n_found_loci;
     void **reader_pars = malloc(n_threads * sizeof(void *));
     for (t = 0; t != n_threads; ++t)
@@ -210,8 +436,8 @@ run_survey(struct bam_filter_params bf_par,
 
 /* merge */
 static void
-survey_merge(khash_t(points_tuple_h) *ptup_hash,
-             khash_t(bounds_tuple_h) *btup_hash)
+survey_merge(khash_t(counts_h) *ptup_hash,
+             khash_t(counts_h) *btup_hash)
 {
     khiter_t itr1, itr2;
     khint64_t key;
@@ -221,7 +447,7 @@ survey_merge(khash_t(points_tuple_h) *ptup_hash,
         if (! kh_exist(ptup_hash, itr1)) continue;
         key = kh_key(ptup_hash, itr1);
         ct = kh_val(ptup_hash, itr1);
-        itr2 = kh_put(points_tuple_h, g_ptup_hash, key, &ret);
+        itr2 = kh_put(counts_h, g_ptup_hash, key, &ret);
         if (ret == 0)
             kh_val(g_ptup_hash, itr2) += ct;
         else
@@ -232,7 +458,7 @@ survey_merge(khash_t(points_tuple_h) *ptup_hash,
         key = kh_key(btup_hash, itr1);
 
         ct = kh_val(btup_hash, itr1);
-        itr2 = kh_put(bounds_tuple_h, g_btup_hash, key, &ret);
+        itr2 = kh_put(counts_h, g_btup_hash, key, &ret);
         if (ret == 0)
             kh_val(g_btup_hash, itr2) += ct;
         else
@@ -251,12 +477,12 @@ winnow_ptup_hash()
 {
     unsigned ct, cur_min = 1, nxt_min = UINT_MAX;
     khiter_t itr;
-    while (1) {
+    while (kh_size(g_ptup_hash)) {
         for (itr = kh_begin(g_ptup_hash); itr != kh_end(g_ptup_hash); ++itr) {
             if (kh_size(g_ptup_hash) <= g_dc_par.n_point_sets) return;
             if (! kh_exist(g_ptup_hash, itr)) continue;
             ct = kh_val(g_ptup_hash, itr);
-            if (ct == cur_min) kh_del(points_tuple_h, g_ptup_hash, itr);
+            if (ct == cur_min) kh_del(counts_h, g_ptup_hash, itr);
             else nxt_min = MIN(ct, nxt_min);
         }
         cur_min = nxt_min;
@@ -301,12 +527,13 @@ survey_worker(const struct managed_buf *in_bufs,
     alloc_locus_data(&pseudo_data);
 
     khint64_t key;
-    unsigned perm[4], perm_found, *cts;
+    unsigned perm[4], perm_found;
     khiter_t itr;
     int ret;
     unsigned i, pi;
-    khash_t(points_tuple_h) *ptup_hash = kh_init(points_tuple_h);
-    khash_t(bounds_tuple_h) *btup_hash = kh_init(bounds_tuple_h);
+    unsigned *ct[2];
+    khash_t(counts_h) *ptup_hash = kh_init(counts_h);
+    khash_t(counts_h) *btup_hash = kh_init(counts_h);
 
     while (pileup_next_pos()) {
         reset_locus_data(&pseudo_data);
@@ -326,34 +553,30 @@ survey_worker(const struct managed_buf *in_bufs,
                     ld[i]->init.base_ct = 1;
                 }
 
-            /* tally the dirichlet base count */
-            perm_found = 
-                find_cacheable_permutation(ld[0]->base_ct.ct_filt,
-                                           ld[1]->base_ct.ct_filt,
-                                           alpha_packed_limits,
-                                           perm);
-            if (! perm_found) continue;
-            
-            for (i = 0; i != 2; ++i) {
-                cts = ld[i]->base_ct.ct_filt;
-                key = pack_alpha64(cts[perm[0]], cts[perm[1]], cts[perm[2]], cts[perm[3]]);
-                itr = kh_put(points_tuple_h, ptup_hash, key, &ret);
-                if (ret == 0)
-                    kh_val(ptup_hash, itr)++;
-                else
-                    kh_val(ptup_hash, itr) = 1;
+            ct[0] = ld[0]->base_ct.ct_filt;
+            ct[1] = ld[1]->base_ct.ct_filt;
+
+            if (sp[1] != PSEUDO_SAMPLE) {
+                perm_found = sample_to_sample_perm(ct[0], ct[1], perm);
+                if (perm_found) {
+                    /* tally the bounds tuple */
+                    key = pack_bounds(ct[0][perm[1]], ct[1][perm[0]], ct[1][perm[1]]);
+                    itr = kh_put(counts_h, btup_hash, key, &ret);
+                    if (ret == 0) kh_val(btup_hash, itr)++;
+                    else kh_val(btup_hash, itr) = 1;
+                }
             }
 
-            /* tally the bounds tuple */
-            key = pack_bounds(ld[0]->base_ct.ct_filt[perm[1]],
-                              ld[1]->base_ct.ct_filt[perm[0]],
-                              ld[1]->base_ct.ct_filt[perm[1]]);
-            
-            itr = kh_put(bounds_tuple_h, btup_hash, key, &ret);
-            if (ret == 0)
-                kh_val(btup_hash, itr)++;
-            else
-                kh_val(btup_hash, itr) = 1;
+            /* store individual sample alphas. */
+            if (perm_found)
+                for (i = 0; i != 2; ++i) {
+                    key = pack_alpha64(ct[i][perm[0]], ct[i][perm[1]], 
+                                       ct[i][perm[2]], ct[i][perm[3]]);
+                    itr = kh_put(counts_h, ptup_hash, key, &ret);
+                    if (ret == 0) kh_val(ptup_hash, itr)++;
+                    else kh_val(ptup_hash, itr) = 1;
+                }
+
         }
 
     }
@@ -368,8 +591,8 @@ survey_worker(const struct managed_buf *in_bufs,
     survey_merge(ptup_hash, btup_hash);
     pthread_mutex_unlock(&merge_mtx);
 
-    kh_destroy(points_tuple_h, ptup_hash);
-    kh_destroy(bounds_tuple_h, btup_hash);
+    kh_destroy(counts_h, ptup_hash);
+    kh_destroy(counts_h, btup_hash);
 
     /* fprintf(stdout, "Surveyed %u:%u-%u\t%u\n",  */
     /*         bsi->loaded_span.beg.tid, bsi->loaded_span.beg.pos, */
@@ -543,3 +766,6 @@ generate_est_bounds(unsigned n_threads)
     free(geb);
     free(threads);
 }
+
+
+/* populate g_ref_change_hash with computed fuzzy_states */

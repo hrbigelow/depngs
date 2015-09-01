@@ -8,17 +8,6 @@
 #include "khash.h"
 #include "binomial_est.h"
 
-/* use {pack,unpack}_alpha64 to convert khint64_t key */
-KHASH_MAP_INIT_INT64(points_h, POINT *);
-
-/* use {pack,unpack}_bounds to convert khint64_t key */
-KHASH_MAP_INIT_INT64(bounds_h, struct binomial_est_bounds);
-
-khash_t(points_h) *g_points_hash;
-khash_t(bounds_h) *g_bounds_hash;
-
-                  // {};
-
 struct dir_cache_params {
     unsigned n_bounds;
     unsigned min_ct_keep_bound;

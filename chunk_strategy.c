@@ -9,7 +9,7 @@ struct chunk_strategy cs_stats;
 /* in order to simplify the interface, we choose a reasonable default
    value for this. it may be off by a factor of 10 or so, but that
    won't matter for large input. */
-#define DEFAULT_BYTES_PER_LOCUS 100
+#define DEFAULT_BYTES_PER_LOCUS 10
 
 void
 chunk_strategy_init(unsigned n_files, unsigned n_threads,
@@ -66,7 +66,11 @@ chunk_strategy_set_span(struct contig_span span)
 
 
 /* return the estimated maximum number of bytes that we should attempt
-   to parse per thread. */
+   to parse per thread.  divide each zone into N_PIECES_PER_THREAD *
+   n_threads.  This is enough pieces so that each thread is exposed to
+   10 pieces on average, allowing the stochastic differences in piece
+   size to average out.  */
+#define N_PIECES_PER_THREAD 10
 unsigned long
 cs_max_bytes_wanted()
 {
@@ -93,17 +97,18 @@ cs_max_bytes_wanted()
 
     /* the most bytes that are left in any one sample */
     unsigned long most_bytes_left = n_loci_left * max_bytes_per_locus;
+    unsigned long n_pieces = cs_stats.n_threads * N_PIECES_PER_THREAD;
 
     /* return the size of the zone, divided by the number of threads */
     if (most_bytes_left > cs_stats.bytes_zone2 + cs_stats.bytes_zone3) {
         /* in zone 1 */
         unsigned long n_est_bytes_zone1 = cs_stats.n_total_loci * max_bytes_per_locus;
-        return n_est_bytes_zone1 / cs_stats.n_threads;
+        return n_est_bytes_zone1 / n_pieces;
     } else if (most_bytes_left > cs_stats.bytes_zone3) {
         /* in zone 2 */
-        return cs_stats.bytes_zone2 / cs_stats.n_threads;
+        return cs_stats.bytes_zone2 / n_pieces;
     } else {
         /* in zone 3 */
-        return cs_stats.bytes_zone3 / cs_stats.n_threads;
+        return cs_stats.bytes_zone3 / n_pieces;
     }
 }

@@ -398,21 +398,6 @@ hts_size_to_range(const struct contig_region *qbeg,
 
         int ti, b;
         for (ti = ti_beg; ti != ti_end; ++ti) {
-            /* boundary position (one greater than last position
-               covered by ti)*/
-            cpos.pos = (ti + 1)<<ms; 
-            /* at the ends of contigs, the last 16kb window may run
-               off the end.  correct for this. */
-            cpos.pos = MIN(cpos.pos, qlo->end);
-
-            if (*n_tiles == n_max_tiles
-                || bgzf_bytes >= min_wanted_bytes 
-                || cmp_contig_pos(cpos, CONTIG_REGION_END(creg)) == 1) {
-                /* break if window touches end, or we have enough
-                   content */
-                goto END;
-            }
-            
             /* process this 16kb window */
             min_off = find_min_offset(cpos.tid, ti, idx);
             if (ti == ti_beg)
@@ -423,6 +408,20 @@ hts_size_to_range(const struct contig_region *qbeg,
                 bgzf_bytes += 
                     add_bin_chunks_aux(bins[b], idx->bidx[creg.tid], min_off, itree);
             ++(*n_tiles);
+
+            /* update cpos.  (cpos is the end position of tile ti, or
+               the end of the current query region qlo->end) */
+            cpos.pos = (ti + 1)<<ms; 
+            cpos.pos = MIN(cpos.pos, qlo->end);
+
+            if (*n_tiles == n_max_tiles
+                || bgzf_bytes >= min_wanted_bytes 
+                || cmp_contig_pos(cpos, CONTIG_REGION_END(creg)) == 1) {
+                /* break if window touches end, or we have enough
+                   content */
+                goto END;
+            }
+            
         }
         ++qlo;
     }
@@ -457,8 +456,8 @@ num_span_loci(struct bam_scanner_info *bsi)
 void
 print_progress(bam_hdr_t *bam_hdr, struct contig_span span)
 {
-    if (cmp_contig_pos(span.beg, span.end) == 0) 
-        return;
+    /* if (cmp_contig_pos(span.beg, span.end) == 0)  */
+    /*     return; */
 
     fprintf(stdout, 
             "%s: Starting %s:%i - %s:%i\n",
