@@ -36,10 +36,10 @@ static __thread struct locus_diff_input tls_dw;
 #define NUM_EXTRA_BUFS_PER_THREAD 50
 
 void
-dist_on_create();
+locus_diff_thread_init();
 
 void
-dist_on_exit();
+locus_diff_thread_free();
 
 
 struct work_unit {
@@ -181,8 +181,8 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
                           locus_diff_worker,
                           locus_diff_offload, 
                           &thread_params.offload_par,
-                          dist_on_create,
-                          dist_on_exit,
+                          locus_diff_thread_init,
+                          locus_diff_thread_free,
                           n_threads, n_extra, n_max_reading, bam_samples.n,
                           n_output_files, max_input_mem);
     return tqueue;
@@ -213,7 +213,7 @@ locus_diff_free(struct thread_queue *tq)
 
 /* called just after this thread is created */
 void
-dist_on_create()
+locus_diff_thread_init()
 {
     tls_dw.randgen = gsl_rng_alloc(gsl_rng_taus);
     alloc_locus_data(&tls_dw.pseudo_sample);
@@ -228,14 +228,16 @@ dist_on_create()
 
     batch_pileup_thread_init(bam_samples.n, 
                              thread_params.fasta_file);
+    dir_diff_cache_thread_init();
 }
 
 
 /* when a worker thread exits, it must inform the rest of the program
    that it will not be modifying shared data anymore. */
 void
-dist_on_exit()
+locus_diff_thread_free()
 {
+    dir_diff_cache_thread_free();
     gsl_rng_free(tls_dw.randgen);
 
     free_locus_data(&tls_dw.pseudo_sample);
@@ -399,8 +401,7 @@ void
 distance_quantiles_aux(struct managed_buf *out_buf)
 {
     enum fuzzy_state diff_state = AMBIGUOUS;
-
-    unsigned cacheable, cache_was_set;
+    unsigned cache_hit;
     struct locus_data *ld[2];
     unsigned pi, i;
 
@@ -413,9 +414,8 @@ distance_quantiles_aux(struct managed_buf *out_buf)
         tls_dw.metrics.total++;
         tls_dw.pair_stats[pi].total++;
 
-        /* load this particular pair of distp into the bep */
         for (i = 0; i != 2; ++i) {
-            tls_dw.bep.dist[i] = &ld[i]->distp;
+            tls_dw.bsp.dist[i] = &ld[i]->dist;
             if (! ld[i]->init.base_ct) {
                 ld[i]->base_ct = pileup_current_basecalls(sp[i]);
                 ld[i]->init.base_ct = 1;
@@ -425,16 +425,14 @@ distance_quantiles_aux(struct managed_buf *out_buf)
         diff_state =
             cached_dirichlet_diff(ld[0]->base_ct.ct_filt,
                                   ld[1]->base_ct.ct_filt,
-                                  &tls_dw.bep,
-                                  &cacheable,
-                                  &cache_was_set);
+                                  &tls_dw.bsp, &cache_hit);
 
         tls_dw.pair_stats[pi].dist_count[diff_state]++;
-        tls_dw.pair_stats[pi].cacheable += cacheable;
-        tls_dw.pair_stats[pi].cache_was_set += cache_was_set;
+        /* tls_dw.pair_stats[pi].cacheable += cacheable; */
+        tls_dw.pair_stats[pi].cache_was_set += cache_hit;
 
-        tls_dw.metrics.cacheable += cacheable;
-        tls_dw.metrics.cache_was_set += cache_was_set;
+        /* tls_dw.metrics.cacheable += cacheable; */
+        tls_dw.metrics.cache_was_set += cache_hit;
 
         if (diff_state == CHANGED) {
 
@@ -447,32 +445,14 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                     pileup_current_bqs(sp[i], &ld[i]->bqs_ct, &ld[i]->n_bqs_ct);
                     ld[i]->init.bqs_ct = 1;
                 }
+                dir_points_update_alpha(ld[i]->base_ct.ct_filt, NULL, &ld[i]->dist);
+                dir_points_fill(&ld[i]->dist);
 
-                struct distrib_points *dst = tls_dw.bep.dist[i];
-                struct points_gen_par *pgp = dst->pgen.points_gen_par;
-                pgp->observed = ld[i]->bqs_ct;
-                pgp->n_observed = ld[i]->n_bqs_ct;
-
-                /* Generate all points */
-                unsigned perm[] = { 0, 1, 2, 3 };
-                update_points_gen_params(dst, ld[i]->base_ct.ct_filt, perm);
-                if (! dst->points.size)
-                    dirichlet_refresh_points(dst);
-
-                if (! dst->weights.size)
-                    dirichlet_refresh_weights(dst);
+                dir_weights_update_terms(ld[i]->bqs_ct, ld[i]->n_bqs_ct, &ld[i]->dist);
+                dir_weights_fill(&ld[i]->dist);
             }
-            /* Compute weighted square distances (max value of 2).
-               e.g.
-               minimum simplex distance on [0,1.00] scale is 0.25.
-               minimum real    distance on [0,1.41] scale is 0.35355
-               minimum sq_real distance on [0,2.00] scale is 0.12499
-            */
-
-            compute_wsq_dist((const double *)tls_dw.bep.dist[0]->points.p, 
-                             tls_dw.bep.dist[0]->weights.buf,
-                             (const double *)tls_dw.bep.dist[1]->points.p, 
-                             tls_dw.bep.dist[1]->weights.buf,
+            compute_wsq_dist((const double *)ld[0]->dist.data, ld[0]->dist.weights,
+                             (const double *)ld[1]->dist.data, ld[1]->dist.weights,
                              g_ld_par.max_sample_points,
                              tls_dw.square_dist_buf,
                              tls_dw.weights_buf);
@@ -775,20 +755,22 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
     unsigned d, s;
     for (s = 0; s != bam_samples.n; ++s) {
         struct locus_data *ld = &tls_dw.ldat[s];
+        assert(ld->dist.n_points == g_ld_par.max_sample_points);
+        assert(ld->dist.n_weights == g_ld_par.max_sample_points);
         
         if (ld->confirmed_changed) {
-            compute_marginal_wgt_quantiles((double *)ld->distp.points.p,
-                                           ld->distp.weights.buf,
-                                           g_ld_par.max_sample_points,
+            compute_marginal_wgt_quantiles((double *)ld->dist.data,
+                                           ld->dist.weights,
+                                           ld->dist.n_points,
                                            NUM_NUCS,
                                            g_ld_par.quantiles,
                                            g_ld_par.n_quantiles,
                                            (quantile_vals_t *)&comp_quantile_values[0][0]);
             for (d = 0; d != NUM_NUCS; ++d)
                 comp_means[d] = 
-                    compute_marginal_mean((double *)ld->distp.points.p,
-                                          ld->distp.weights.buf,
-                                          g_ld_par.max_sample_points,
+                    compute_marginal_mean((double *)ld->dist.data,
+                                          ld->dist.weights,
+                                          ld->dist.n_points,
                                           NUM_NUCS,
                                           d);
 

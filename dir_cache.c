@@ -38,6 +38,7 @@ KHASH_MAP_INIT_INT64(ref_change_h, enum fuzzy_state);
 khash_t(ref_change_h) *g_ref_change_hash;
 
                                                                                           
+                      // {};
 
 static struct dir_cache_params g_dc_par;
 
@@ -110,9 +111,35 @@ unpack_alpha64(uint64_t k, unsigned *c)
 }
 
 
+/* component sizes (2, 22, 20, 12, 8) in bits, for 
+ ref_index,  */
+uint64_t
+pack_ref_alpha64(unsigned ref_index,
+                 unsigned a0, unsigned a1,
+                 unsigned a2, unsigned a3)
+{
+    union pair p;
+    p.c[0] = (uint32_t)ref_index<<30 | (uint32_t)a0<<8 | (uint32_t)a3;
+    p.c[1] = (uint32_t)a1<<12 | (uint32_t)a2;
+    return p.v;
+}
 
+
+void
+unpack_ref_alpha64(uint64_t k, unsigned *c, unsigned *ref_index)
+{
+    union pair p;
+    p.v = k;
+    *ref_index = p.c[0]>>30;
+    c[0] = p.c[0]>>8 & 0xbfffff;
+    c[3] = p.c[0] & 0xff;
+    c[1] = p.c[1]>>12;
+    c[2] = p.c[1] & 0xfff;
+}
+
+/* leaves two bits free for ref_index packing. */
 static const unsigned alpha_packed_limits[] = {
-    1<<24, 1<<20, 1<<12, 1<<8
+    1<<22, 1<<20, 1<<12, 1<<8
 };
 
 /* defines the limits for using pack_bounds. */
@@ -157,6 +184,7 @@ unpack_bounds(uint64_t k, unsigned *b)
 /* attempts to initialize the key from the counts. returns 1 on
    success, 0 on failure. if counts do not fit within the packing
    limits, does not modify key. */
+#if 0
 static unsigned 
 try_pack_alpha_aux(unsigned *cts, uint64_t *key)
 {
@@ -170,6 +198,7 @@ try_pack_alpha_aux(unsigned *cts, uint64_t *key)
         *key = pack_alpha64(cts[0], cts[1], cts[2], cts[3]);
     return packable;
 }
+#endif
 
 
 /* Given a[4], a_lim[4], b[4], and b_lim[4], find a permutation of
@@ -252,9 +281,12 @@ sample_to_sample_perm(const unsigned *a, const unsigned *b, unsigned *perm)
 
 
 POINT *
-dir_cache_try_get_points(unsigned *alpha)
+dir_cache_try_get_points(unsigned *alpha_perm)
 {
-    khint64_t key = pack_alpha64(alpha[0], alpha[1], alpha[2], alpha[3]);
+    khint64_t key =
+        pack_alpha64(alpha_perm[0], alpha_perm[1],
+                     alpha_perm[2], alpha_perm[3]);
+    
     khiter_t itr = kh_get(points_h, g_points_hash, key);
     return 
         (itr != kh_end(g_points_hash) && kh_exist(g_points_hash, itr))
@@ -278,9 +310,12 @@ dir_cache_try_get_bounds(unsigned a2, unsigned b1, unsigned b2)
 
 
 enum fuzzy_state *
-dir_cache_try_get_refchange(unsigned *alpha)
+dir_cache_try_get_refchange(unsigned ref_ind, unsigned *alpha_perm)
 {
-    khint64_t key = pack_alpha64(alpha[0], alpha[1], alpha[2], alpha[3]);
+    khint64_t key =
+        pack_ref_alpha64(ref_ind, alpha_perm[0], alpha_perm[1],
+                         alpha_perm[2], alpha_perm[3]);
+    
     khiter_t itr = kh_get(ref_change_h, g_ref_change_hash, key);
     if (itr != kh_end(g_ref_change_hash) && kh_exist(g_ref_change_hash, itr))
         return &kh_val(g_ref_change_hash, itr);
@@ -290,26 +325,35 @@ dir_cache_try_get_refchange(unsigned *alpha)
 
 /* set the fuzzy state from the cache and return 1.  or, return 0 if
    no cache entry is found. */
-unsigned
-dir_cache_try_get_diff(unsigned *a, unsigned *b, enum fuzzy_state *state)
+enum diff_cache_status
+dir_cache_try_get_diff(const unsigned *alpha1, const unsigned *alpha2,
+                       unsigned *perm, enum fuzzy_state *state)
 {
-    unsigned i, c, perm[4], pa[4];
-    c = sample_to_ref_perm(a, b, perm);
+    unsigned i, c, alpha_perm[4];
+    c = sample_to_ref_perm(alpha1, alpha2, perm);
     if (c) {
-        for (i = 0; i != 4; ++i) pa[i] = a[perm[i]];
-        *state = *dir_cache_try_get_refchange(pa);
-        return 1;
+        unsigned ref_ind = perm[0];
+        for (i = 0; i != 4; ++i)
+            alpha_perm[i] = alpha1[perm[i]];
+        enum fuzzy_state *state_tmp =
+            dir_cache_try_get_refchange(ref_ind, alpha_perm);
+        if (state_tmp) {
+            *state = *state_tmp;
+            return CACHE_HIT;
+        } else
+            return CACHE_MISS_PERM;
     }
-    c = sample_to_sample_perm(a, b, perm);
+    c = sample_to_sample_perm(alpha1, alpha2, perm);
     if (c) {
         struct binomial_est_bounds *beb =
-            dir_cache_try_get_bounds(a[perm[1]], b[perm[0]], b[perm[1]]);
+            dir_cache_try_get_bounds(alpha1[perm[1]], alpha2[perm[0]], alpha2[perm[1]]);
         if (beb) {
-            *state = locate_cell(beb, a[perm[0]]);
-            return 1;
-        }
+            *state = locate_cell(beb, alpha1[perm[0]]);
+            return CACHE_HIT;
+        } else
+            return CACHE_MISS_PERM;
     }
-    return 0;
+    return CACHE_MISS_NO_PERM;
 }
 
 
@@ -601,31 +645,45 @@ survey_worker(const struct managed_buf *in_bufs,
 }
 
 
-struct gen_points_par {
+struct thread_part {
     unsigned n_threads, nth;
 };
+
+
+/* Populate g_points_hash with the total set of point sets from the
+   dirichlets of g_ptup_hash */
+void
+run_worker_aux(unsigned n_threads, void *(*worker)(void *par))
+{
+    pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
+    struct thread_part *part = malloc(n_threads * sizeof(struct thread_part));
+    unsigned t;
+    for (t = 0; t != n_threads; ++t) {
+        part[t] = (struct thread_part){ n_threads, t };
+        pthread_create(&threads[t], NULL, worker, &part[t]);
+    }
+    for (t = 0; t != n_threads; ++t)
+        pthread_join(threads[t], NULL);
+
+    free(part);
+    free(threads);
+}
 
 
 static void *
 generate_points_worker(void *par)
 {
-    struct gen_points_par gp = *(struct gen_points_par *)par;
-    struct points_gen_par pgp = {
-        .alpha_perm = { 0, 1, 2, 3 },
-        .randgen = gsl_rng_alloc(gsl_rng_taus)
-    };
-    
+    struct thread_part *part = par;
     khiter_t itr, itr2;
-    unsigned i;
+    unsigned i, perm_alpha[4];
     khint64_t key;
-    POINT *points, *pend;
+    POINT *points;
     size_t block_ct = g_dc_par.max_sample_points;
     int ret;
-
     khash_t(points_h) *ph = kh_init(points_h);
     for (i = 0, itr = kh_begin(g_ptup_hash); itr != kh_end(g_ptup_hash); ++itr) {
         if (! kh_exist(g_ptup_hash, itr)) continue;
-        if (i % gp.n_threads == gp.nth) {
+        if (i % part->n_threads == part->nth) {
             /* create the hash entry */
             key = kh_key(g_ptup_hash, itr);
             points = g_point_sets_buf + (i * block_ct);
@@ -633,19 +691,11 @@ generate_points_worker(void *par)
             assert(ret != 0);
             kh_val(ph, itr2) = points;
 
-            /* prepare for points generation */
-            unpack_alpha64(key, pgp.alpha_counts);
-
-            /* generate the points */
-            pend = points + block_ct;
-            while (points != pend) {
-                gen_dirichlet_points_wrapper(&pgp, points);
-                points += GEN_POINTS_BATCH;
-            }
+            unpack_alpha64(key, perm_alpha);
+            gen_dir_points(perm_alpha, points, block_ct);
         }
         ++i;
     }
-    gsl_rng_free(pgp.randgen);
 
     /* merge into final points hash */
     pthread_mutex_lock(&merge_mtx);
@@ -669,29 +719,14 @@ generate_points_worker(void *par)
 void
 generate_point_sets(unsigned n_threads)
 {
-    pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
-    struct gen_points_par *gpp = malloc(n_threads * sizeof(struct gen_points_par));
-    unsigned t;
-    for (t = 0; t != n_threads; ++t) {
-        gpp[t] = (struct gen_points_par){ n_threads, t };
-        pthread_create(&threads[t], NULL, generate_points_worker, &gpp[t]);
-    }
-    for (t = 0; t != n_threads; ++t)
-        pthread_join(threads[t], NULL);
-
-    free(gpp);
-    free(threads);
+    return run_worker_aux(n_threads, generate_points_worker);
 }
 
-
-struct gen_est_bounds_par {
-    unsigned n_threads, nth;
-};
 
 static void *
 generate_est_bounds_worker(void *par)
 {
-    struct gen_est_bounds_par geb = *(struct gen_est_bounds_par *)par;
+    struct thread_part *part = par;
     khiter_t itr, itr2;
     khash_t(bounds_h) *bh = kh_init(bounds_h);
     khint64_t key;
@@ -701,16 +736,20 @@ generate_est_bounds_worker(void *par)
     struct binomial_est_bounds beb;
     
     struct bound_search_params bpar = {
-        .dist = { malloc(sizeof(struct distrib_points)),
-                  malloc(sizeof(struct distrib_points)) }
+        .dist = { malloc(sizeof(struct dir_points)),
+                  malloc(sizeof(struct dir_points)) }
     };
-
-    alloc_distrib_points(bpar.dist[0]);
-    alloc_distrib_points(bpar.dist[1]);
-
+    unsigned msp = g_dc_par.max_sample_points;
+    
+    for (i = 0; i != 2; ++i) 
+        *bpar.dist[i] = (struct dir_points){
+            .points_buf = malloc(sizeof(POINT) * msp),
+            .weights = malloc(sizeof(double) * msp)
+        };
+    
     for (i = 0, itr = kh_begin(g_btup_hash); itr != kh_end(g_btup_hash); ++itr) {
         if (! kh_exist(g_btup_hash, itr)) continue;
-        if (i % geb.n_threads == geb.nth) {
+        if (i % part->n_threads == part->nth) {
             /* create key */
             key = kh_key(g_btup_hash, itr);
             itr2 = kh_put(bounds_h, bh, key, &ret);
@@ -724,10 +763,11 @@ generate_est_bounds_worker(void *par)
         ++i;
     }
 
-    free_distrib_points(bpar.dist[0]);
-    free_distrib_points(bpar.dist[1]);
-    free(bpar.dist[0]);
-    free(bpar.dist[1]);
+    for (i = 0; i != 2; ++i) {
+        free(bpar.dist[i]->points_buf);
+        free(bpar.dist[i]->weights);
+        free(bpar.dist[i]);
+    }
 
     /* add to global hash */
     pthread_mutex_lock(&merge_mtx);
@@ -751,21 +791,88 @@ generate_est_bounds_worker(void *par)
 void
 generate_est_bounds(unsigned n_threads)
 {
-    pthread_t *threads = malloc(n_threads * sizeof(pthread_t));
-    struct gen_est_bounds_par *geb = 
-        malloc(n_threads * sizeof(struct gen_est_bounds_par));
-
-    unsigned t;
-    for (t = 0; t != n_threads; ++t) {
-        geb[t] = (struct gen_est_bounds_par){ n_threads, t };
-        pthread_create(&threads[t], NULL, generate_est_bounds_worker, &geb[t]);
-    }
-    for (t = 0; t != n_threads; ++t)
-        pthread_join(threads[t], NULL);
-
-    free(geb);
-    free(threads);
+    return run_worker_aux(n_threads, generate_est_bounds_worker);
 }
 
 
 /* populate g_ref_change_hash with computed fuzzy_states */
+static void *
+generate_ref_change_worker(void *par)
+{
+    struct thread_part *part = par;
+    khiter_t itr1, itr2;
+    khint64_t key, prev_key;
+    unsigned r, i, *b_cts;
+    unsigned ref_cts[][4] = {
+        { g_dd_par.pseudo_depth, 0, 0, 0 },
+        { 0, g_dd_par.pseudo_depth, 0, 0 },
+        { 0, 0, g_dd_par.pseudo_depth, 0 },
+        { 0, 0, 0, g_dd_par.pseudo_depth }
+    };        
+    unsigned msp = g_dc_par.max_sample_points;
+    struct dir_points
+        ap = { .points_buf = malloc(sizeof(POINT) * msp),
+               .n_points = 0,
+               .data = NULL },
+        bp = { .points_buf = malloc(sizeof(POINT) * msp),
+               .n_points = 0,
+               .data = NULL };
+    
+    struct binomial_est_state est;
+    khash_t(ref_change_h) *rc_hash = kh_init(ref_change_h);
+    int was_empty;
+    for (i = 0, itr1 = kh_begin(g_ptup_hash); itr1 != kh_end(g_ptup_hash); ++itr1) {
+        if (! kh_exist(g_ptup_hash, itr1)) continue;
+        if (i % part->n_threads == part->nth) {
+            key = kh_key(g_ptup_hash, itr1);
+            if (prev_key != key) {
+                unpack_alpha64(key, ap.perm_alpha);
+                ap.data = dir_cache_try_get_points(ap.perm_alpha);
+                if (! ap.data) {
+                    gen_dir_points(ap.perm_alpha, ap.points_buf, msp);
+                    ap.data = ap.points_buf;
+                }
+                ap.n_points = msp;
+                prev_key = key;
+            }
+        }
+        for (r = 0; r != 4; ++r) {
+            b_cts = ref_cts[r];
+            bp.data = dir_cache_try_get_points(b_cts);
+            assert(bp.data);
+            bp.n_points = msp;
+            est = binomial_quantile_est(&ap, &bp, msp);
+            key = pack_ref_alpha64(r, ap.perm_alpha[0], ap.perm_alpha[1],
+                                   ap.perm_alpha[2], ap.perm_alpha[3]);
+            itr2 = kh_put(ref_change_h, rc_hash, key, &was_empty);
+            assert(was_empty);
+            kh_val(rc_hash, itr2) = est.state;
+        }
+    }
+    free(ap.points_buf);
+    free(bp.points_buf);
+
+    enum fuzzy_state state;
+    pthread_mutex_lock(&merge_mtx);
+    for (itr2 = kh_begin(rc_hash); itr2 != kh_end(rc_hash); ++itr2) {
+        if (! kh_exist(rc_hash, itr2)) continue;
+        key = kh_key(rc_hash, itr2);
+        state = kh_val(rc_hash, itr2);
+        itr1 = kh_put(ref_change_h, g_ref_change_hash, key, &was_empty);
+        assert(was_empty);
+        kh_val(g_ref_change_hash, itr2) = state;
+    }
+    pthread_mutex_unlock(&merge_mtx);
+    kh_destroy(ref_change_h, rc_hash);
+
+    return NULL;
+}
+
+
+/* populate g_bounds_hash with computed est bounds for all of the
+   bounds tuples surveyed. */
+void
+generate_ref_change(unsigned n_threads)
+{
+    return run_worker_aux(n_threads, generate_ref_change_worker);
+}

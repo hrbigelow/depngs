@@ -19,13 +19,11 @@ void compute_square_dist(const double *points1,
 
     unsigned p, c;
     double *pt = diffsq;
-    for (p = 0; p != n_points; ++p)
-    {
+    for (p = 0; p != n_points; ++p) {
         square_dist_buf[p] = 0;
         for (c = 0; c != n_dims; ++c)
             square_dist_buf[p] += *pt++;
     }
-
     free(diff);
     free(diffsq);
 }

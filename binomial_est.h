@@ -57,10 +57,9 @@ void binomial_est_free();
    distribution to estimate the true binomial probability.  Use dist1
    and dist2 to generate more points as needed. */
 struct binomial_est_state
-binomial_quantile_est(struct points_gen pgen1,
-                      struct points_buf *points1,
-                      struct points_gen pgen2,
-                      struct points_buf *points2);
+binomial_quantile_est(struct dir_points *dp1,
+                      struct dir_points *dp2,
+                      unsigned batch_sz);
 
 
 /* Interpolate the interval in the beb row */

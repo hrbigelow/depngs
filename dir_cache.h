@@ -37,6 +37,18 @@ struct binomial_est_bounds *
 dir_cache_try_get_bounds(unsigned a2, unsigned b1, unsigned b2);
 
 
+enum diff_cache_status {
+    CACHE_HIT,
+    CACHE_MISS_PERM,
+    CACHE_MISS_NO_PERM
+};
+
+/* try to get the fuzzy_state status from cache.   */
+enum diff_cache_status
+dir_cache_try_get_diff(const unsigned *alpha1, const unsigned *alpha2,
+                       unsigned *perm, enum fuzzy_state *state);
+
+
 /* main routine for running the survey.  read chunks of input until
    accumulating at least n_bounds and n_point_sets.  The number of
    occurrences of each bound is recorded as well, and only those with
@@ -64,6 +76,12 @@ generate_point_sets(unsigned n_threads);
    tuples surveyed. */
 void
 generate_est_bounds(unsigned n_threads);
+
+
+/* populate g_ref_change_hash with computed bounds for sample-to-REF
+   comparisons. */
+void
+generate_ref_change(unsigned n_threads);
 
 
 #endif /* _DIR_CACHE_H */

@@ -15,43 +15,6 @@ struct dirichlet_points_gen_params {
     double alpha_prior;
 };
 
-struct points_gen_par
-{
-    unsigned alpha_counts[NUM_NUCS];
-    unsigned alpha_perm[NUM_NUCS]; /* the permutation that was applied to get alpha_counts */
-    gsl_rng *randgen;
-    struct bqs_count *observed;
-    unsigned n_observed;
-};
-
-struct points_buf {
-    POINT *buf, *p; /* p will point to either buf or a hash entry */
-    size_t size;
-};
-
-struct weights_buf {
-    double *buf;
-    size_t size, alloc;
-};
-
-
-struct points_gen
-{
-    void *points_gen_par;
-    void (*gen_point)(const void *par, POINT *points);
-    void (*weight)(POINT *points, const void *par,
-                   double *weights);
-};
-
-
-/* (one instance per (thread x sample))*/
-struct distrib_points {
-    struct points_gen pgen;
-    struct points_buf points;
-    struct weights_buf weights;
-};
-
-
 /* initializes error_probability and alpha_prior.  (no allocation
    needed) */
 void
@@ -62,20 +25,53 @@ void
 dirichlet_points_gen_free();
 
 
-void alloc_distrib_points(struct distrib_points *dpts);
-
-void free_distrib_points(struct distrib_points *dpts);
-
-/* populate points buffer, either by cache retrieval or
-   computation. */
 void
-dirichlet_refresh_points(struct distrib_points *dpts);
+dir_points_thread_init();
 
 
-/* populate weights buffer by computation.  requires a populated
-   points buffer. */
 void
-dirichlet_refresh_weights(struct distrib_points *dpts);
+dir_points_thread_free();
+
+
+
+/* points and weights are allocated to max_sample_points.  n_points
+   and n_weights indicate the number of points or weights that are
+   current w.r.t alpha. when perm_alpha is updated, n_points and n_weights
+   are set to zero to signal that the existing data are out of
+   date. */
+struct dir_points {
+    unsigned perm_alpha[4], perm[4];
+    POINT *points_buf, *data;
+    size_t n_points;
+
+    struct bqs_count *bqs_ct;
+    unsigned n_bqs_ct;
+    double *weights;
+    size_t n_weights;
+};
+
+
+/* update dp->alpha and dp->perm.  if a change is detected, updates
+   data, n_points, and n_weights as appropriate.  after the call, dp
+   may be used for on-demand points generation. */
+void
+dir_points_update_alpha(unsigned *alpha, unsigned *perm,
+                        struct dir_points *dp);
+
+
+/* fully populate the points buffer if necessary */
+void
+dir_points_fill(struct dir_points *dp);
+
+
+/* */
+void
+dir_weights_update_terms(struct bqs_count *bqs_ct, unsigned n_bqs_ct,
+                         struct dir_points *dp);
+
+/* fully populate the weights buffer if necessary */
+void
+dir_weights_fill(struct dir_points *dp);
 
 
 /* caches locus-specific summary data for an individual sample, so
@@ -83,7 +79,6 @@ dirichlet_refresh_weights(struct distrib_points *dpts);
 struct locus_data {
     unsigned char confirmed_changed;
     struct {
-        unsigned char distp: 1;
         unsigned char base_ct: 1;
         unsigned char bqs_ct: 1;
         unsigned char indel_ct: 1;
@@ -91,7 +86,8 @@ struct locus_data {
     } init; /* if these flags are set, means the following fields are
                initialized */
 
-    struct distrib_points distp;
+    struct dir_points dist;
+
     struct base_count base_ct;
     struct bqs_count *bqs_ct;
     unsigned n_bqs_ct;
@@ -110,22 +106,31 @@ void
 reset_locus_data(struct locus_data *ld);
 
 
-double get_alpha_prior();
+double
+get_alpha_prior();
+
+
+/* generate a complete set of dirichlet points according to cts. */
+void
+gen_dir_points(unsigned *cts, POINT *points, unsigned n_points);
+
 
 /* Generate GEN_POINTS_BATCH points using par to parameterize the
    distribution */
-void gen_dirichlet_points_wrapper(const void *par, POINT *points);
+void
+gen_dirichlet_points_wrapper(const void *par, POINT *points);
 
 /* generate GEN_POINTS_BATCH 'reference' points, representing the
    corner of the simplex corresponding to the reference base, or a
    point outside the simplex for reference 'N'.  This external point
    will serve as an 'always different' point. */
-void gen_reference_points_wrapper(const void *par, POINT *points);
+void
+gen_reference_points_wrapper(const void *par, POINT *points);
 
 
 /* Generate GEN_POINTS_BATCH weights (ratio of posterior to dirichlet) */
 void
-calc_post_to_dir_logratio(POINT *points, const void *par, double *weights);
+calc_post_to_dir_logratio(struct dir_points *dp);
 
 
 /* populates square_dist_buf with squares of euclidean distances

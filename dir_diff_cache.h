@@ -17,10 +17,9 @@ struct dirichlet_diff_params {
 struct bound_search_params {
     unsigned use_low_beta;
     double query_beta;
-
     /* these two are set to point to instances owned in struct
        locus_sampling. */
-    struct distrib_points *dist[2];
+    struct dir_points *dist[2];
 };
 
 
@@ -46,16 +45,20 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
 void
 dirichlet_diff_cache_free();
 
+
+void
+dir_diff_cache_thread_init();
+
+
+void
+dir_diff_cache_thread_free();
+
+
 // void prepopulate_bounds_keys(unsigned n_threads);
 
 unsigned
 find_cacheable_permutation(const unsigned *a, const unsigned *b, 
                            const unsigned *lim, unsigned *permutation);
-
-void
-update_points_gen_params(struct distrib_points *dpts,
-                         unsigned *alpha_counts,
-                         unsigned *permutation);
 
 
 /* For two dirichlet distributions A = { x+p, a2+p, p, p } and B = {
@@ -74,11 +77,9 @@ initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
    caching mechanism to update the cache as necessary. sets cache_hit
    if the cache was used. */
 enum fuzzy_state
-cached_dirichlet_diff(unsigned *a_counts,
-                      unsigned *b_counts,
-                      struct bound_search_params *bpar,
-                      unsigned *cacheable,
-                      unsigned *cache_was_set);
+cached_dirichlet_diff(unsigned *alpha1, unsigned *alpha2,
+                      struct bound_search_params *bsp,
+                      unsigned *cache_hit);
 
 
 #endif /* _DIR_DIFF_CACHE_H */

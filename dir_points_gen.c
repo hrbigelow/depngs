@@ -30,6 +30,7 @@ static double g_log_dbl_max, g_log_dbl_min, g_log_dbl_range;
 
 static struct dirichlet_points_gen_params g_pg_par;
 
+static __thread gsl_rng *tls_rng;
 
 void
 dirichlet_points_gen_init(struct dirichlet_points_gen_params pg_par)
@@ -58,70 +59,92 @@ dirichlet_points_gen_free()
 }
 
 
+void
+dir_points_thread_init()
+{
+    tls_rng = gsl_rng_alloc(gsl_rng_taus);
+}
 
-void alloc_distrib_points(struct distrib_points *dpts)
+
+void
+dir_points_thread_free()
+{
+    gsl_rng_free(tls_rng);
+}
+
+
+void
+dir_points_update_alpha(unsigned *alpha, unsigned *perm,
+                        struct dir_points *dp)
+{
+    /* update the alphas and record whether there was a change */
+    static unsigned perm_default[] = { 0, 1, 2, 3 };
+    if (! perm) perm = perm_default;
+    unsigned i, change = 0;
+    for (i = 0; i != NUM_NUCS; ++i) {
+        if (dp->perm_alpha[i] != alpha[perm[i]])
+            change = 1;
+        dp->perm_alpha[i] = alpha[perm[i]];
+        dp->perm[i] = perm[i];
+    }
+    if (change) {
+        dp->n_weights = 0;
+        POINT *p = dir_cache_try_get_points(dp->perm_alpha);
+        if (p) {
+            dp->data = p;
+            dp->n_points = g_pg_par.max_sample_points;
+        } else {
+            dp->data = dp->points_buf;
+            dp->n_points = 0;
+        }
+    }
+}
+
+
+/* fully populate the points buffer if not full. call this after
+   calling dir_points_update_alpha. */
+void
+dir_points_fill(struct dir_points *dp)
 {
     unsigned msp = g_pg_par.max_sample_points;
-    dpts->pgen = (struct points_gen){ 
-        malloc(sizeof(struct points_gen_par)),
-        gen_dirichlet_points_wrapper, 
-        calc_post_to_dir_logratio
-    };
-    ((struct points_gen_par *)dpts->pgen.points_gen_par)->randgen = 
-        gsl_rng_alloc(gsl_rng_taus);
-    dpts->points = (struct points_buf){ (POINT *)malloc(sizeof(POINT) * msp), NULL, 0 };
-    dpts->weights = (struct weights_buf){ (double *)malloc(sizeof(double) * msp), 0, msp };
-}
-
-
-void free_distrib_points(struct distrib_points *dpts)
-{
-    gsl_rng_free(((struct points_gen_par *)dpts->pgen.points_gen_par)->randgen);
-    free((struct points_gen_par *)dpts->pgen.points_gen_par);
-    free(dpts->points.buf);
-    free(dpts->weights.buf);
-}
-
-
-void
-dirichlet_refresh_points(struct distrib_points *dpts)
-{
-    struct points_gen_par *pgp = dpts->pgen.points_gen_par;
-    POINT *p = dir_cache_try_get_points(pgp->alpha_counts);
-    if (p) dpts->points.p = p;
-    else {
-        dpts->points.p = dpts->points.buf;
-        POINT 
-            *pb = dpts->points.p,
-            *pe = dpts->points.p + g_pg_par.max_sample_points;
-        for (p = pb; p != pe; p += GEN_POINTS_BATCH)
-            dpts->pgen.gen_point(pgp, p);
+    if (dp->n_points != msp) {
+        gen_dir_points(dp->perm_alpha, dp->points_buf, msp);
+        dp->data = dp->points_buf;
+        dp->n_points = msp;
+        dp->n_weights = 0;
     }
-    dpts->points.size = g_pg_par.max_sample_points;
 }
 
 
 void
-dirichlet_refresh_weights(struct distrib_points *dpts)
+dir_weights_update_terms(struct bqs_count *bqs_ct, unsigned n_bqs_ct,
+                         struct dir_points *dp)
 {
-    struct points_gen_par *pgp = dpts->pgen.points_gen_par;
-    POINT *p;
+    dp->bqs_ct = bqs_ct;
+    dp->n_bqs_ct = n_bqs_ct;
+}
 
-    double *w, *we = dpts->weights.buf + g_pg_par.max_sample_points;
-    for (w = dpts->weights.buf, p = dpts->points.p; 
-         w != we; 
-         w += GEN_POINTS_BATCH, p += GEN_POINTS_BATCH)
-        dpts->pgen.weight(p, pgp, w);
+
+void
+dir_weights_fill(struct dir_points *dp)
+{
+    unsigned msp = g_pg_par.max_sample_points;
+    assert(dp->n_points == msp);
+    while (dp->n_weights != msp)
+        calc_post_to_dir_logratio(dp);
     
-    dpts->weights.size = g_pg_par.max_sample_points;
-    batch_scaled_exponentiate(dpts->weights.buf, dpts->weights.size);
+    batch_scaled_exponentiate(dp->weights, dp->n_weights);
 }
 
 
 void
 alloc_locus_data(struct locus_data *ld)
 {
-    alloc_distrib_points(&ld->distp);
+    ld->dist.points_buf = malloc(sizeof(ld->dist.points_buf[0]) * g_pg_par.max_sample_points);
+    ld->dist.n_points = 0;
+    ld->dist.data = NULL;
+    ld->dist.weights = malloc(sizeof(ld->dist.weights[0]) * g_pg_par.max_sample_points);
+    ld->dist.n_weights = 0;
     ld->bqs_ct = NULL;
     ld->indel_ct = NULL;
     init_pileup_data(&ld->sample_data);
@@ -131,7 +154,8 @@ alloc_locus_data(struct locus_data *ld)
 void
 free_locus_data(struct locus_data *ld)
 {
-    free_distrib_points(&ld->distp);
+    free(ld->dist.points_buf);
+    free(ld->dist.weights);
     if (ld->bqs_ct != NULL) free(ld->bqs_ct);
     if (ld->indel_ct != NULL) free(ld->indel_ct);
     free_pileup_data(&ld->sample_data);
@@ -142,13 +166,12 @@ free_locus_data(struct locus_data *ld)
 void
 reset_locus_data(struct locus_data *ld)
 {
-    ld->init.distp = 0;
     ld->init.base_ct = 0;
     ld->init.bqs_ct = 0;
     ld->init.indel_ct = 0;
     ld->init.sample_data = 0;
-    ld->distp.points.size = 0;
-    ld->distp.weights.size = 0;
+    ld->dist.n_points = 0;
+    ld->dist.n_weights = 0;
     ld->confirmed_changed = 0;
     if (ld->bqs_ct != NULL) {
         free(ld->bqs_ct);
@@ -194,80 +217,60 @@ void ran_dirichlet_lnpdf_unnormalized(double *alpha, double *points, double *lnd
 }
 
 
-/* the following four functions can be used with binomial_est's struct
-   points_gen. */
-void gen_dirichlet_points_wrapper(const void *par, POINT *points)
+/* generate a complete set of dirichlet points */
+void
+gen_dir_points(unsigned *cts, POINT *points, unsigned n_points)
 {
-    int i;
-    const struct points_gen_par *gd = par;
-    double alpha[] = { 
-        gd->alpha_counts[0] + g_pg_par.alpha_prior,
-        gd->alpha_counts[1] + g_pg_par.alpha_prior,
-        gd->alpha_counts[2] + g_pg_par.alpha_prior,
-        gd->alpha_counts[3] + g_pg_par.alpha_prior 
+    double alpha[] = {
+        cts[0] + g_pg_par.alpha_prior,
+        cts[1] + g_pg_par.alpha_prior,
+        cts[2] + g_pg_par.alpha_prior,
+        cts[3] + g_pg_par.alpha_prior
     };
-
-    for (i = 0; i != GEN_POINTS_BATCH; ++i) {
-        gsl_ran_dirichlet(gd->randgen, NUM_NUCS, alpha, *points);
+    while (n_points-- != 0) {
+        gsl_ran_dirichlet(tls_rng, 4, alpha, (double *)points);
         ++points;
     }
-}
-
-
-/* generate a 'reference' point, representing the corner of the
-   simplex corresponding to the reference base, or a point outside the
-   simplex for reference 'N'.  This external point will serve as an
-   'always different' point. */
-void gen_reference_points_wrapper(const void *par, POINT *points)
-{
-    static POINT ref_points[] = {
-        { 1, 0, 0, 0 },
-        { 0, 1, 0, 0 },
-        { 0, 0, 1, 0 },
-        { 0, 0, 0, 1 },
-        { -1, -1, -1, -1 }
-    };
-    char refbase = *(char *)par;
-    static char nucs[] = "ACGT";
-    int ref_ind = index(nucs, refbase) - nucs;
-    
-    int i;
-    for (i = 0; i != GEN_POINTS_BATCH; ++i, ++points)
-        memcpy(*points, ref_points[ref_ind], sizeof(ref_points[0]));
 }
 
 
 /* calculates log(likelihood) - log(dirichlet).  In this, the
    dirichlet prior is a common factor and so cancels.  */
 void
-calc_post_to_dir_logratio(POINT *points, const void *par, double *weights)
-{
-    int i;
-    const struct points_gen_par *pd = par;
-    const struct bqs_count *trm = pd->observed, *trm_end = trm + pd->n_observed;
-
+calc_post_to_dir_logratio(struct dir_points *dp)
+{ 
+   int i;
+    const struct bqs_count
+        *term = dp->bqs_ct,
+        *term_end = term + dp->n_bqs_ct;
+    
     double 
         dotp[GEN_POINTS_BATCH], ldotp[GEN_POINTS_BATCH],
         llh[GEN_POINTS_BATCH], ldir[GEN_POINTS_BATCH];
 
     memset(llh, 0, sizeof(llh));
+    POINT
+        *p,
+        *points = dp->data + dp->n_weights,
+        *pe = points + GEN_POINTS_BATCH;
 
-    POINT *p, *pe = points + GEN_POINTS_BATCH;
-
+    /* start populating weights at the end */
+    double *w = dp->weights + dp->n_weights;
+    
     /* llh will not include the prior Dirichlet.  Only the effect of
        the data itself. To correct for this, we must use a
        'residual_alpha' for the equivalent, perfect-quality Dirichlet
        proposal.*/
     struct phred ph;
     unsigned base_code;
-    while (trm != trm_end) {
-        if (trm->qual < g_pg_par.min_base_quality) {
-            ++trm;
+    while (term != term_end) {
+        if (term->qual < g_pg_par.min_base_quality) {
+            ++term;
             continue;
         }
-        ph = error_probability[trm->qual];
+        ph = error_probability[term->qual];
         double prob[] = { ph.prob_wrong, ph.prob_wrong, ph.prob_wrong, ph.prob_wrong };
-        base_code = seq_nt16_int[(int)trm->base];
+        base_code = seq_nt16_int[(int)term->base];
         assert(base_code < 4);
         prob[base_code] = ph.prob_right;
         for (p = points, i = 0; p != pe; ++p, ++i)
@@ -276,24 +279,27 @@ calc_post_to_dir_logratio(POINT *points, const void *par, double *weights)
                 + (*p)[2] * prob[2] + (*p)[3] * prob[3];
 
         (void)yepMath_Log_V64f_V64f(dotp, ldotp, GEN_POINTS_BATCH);
-        if (trm->ct > 1) 
-            (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)trm->ct, GEN_POINTS_BATCH);
+        if (term->ct > 1) 
+            (void)yepCore_Multiply_IV64fS64f_IV64f(ldotp, (double)term->ct, GEN_POINTS_BATCH);
         (void)yepCore_Add_V64fV64f_V64f(llh, ldotp, llh, GEN_POINTS_BATCH);
-        ++trm;
+        ++term;
     }
 
     /* This is the residual Dirichlet correction. */
     POINT residual_alpha;
     for (i = 0; i != NUM_NUCS; ++i)
-        residual_alpha[i] = (double)pd->alpha_counts[i] - g_pg_par.alpha_prior + 1.0;
+        residual_alpha[i] = (double)dp->perm_alpha[i] - g_pg_par.alpha_prior + 1.0;
     ran_dirichlet_lnpdf_unnormalized(residual_alpha, (double *)points, ldir);
 
     /* for (i = 0; i != GEN_POINTS_BATCH; ++i) */
     /*     fprintf(stderr, "%7.5g\t%7.5g\t%7.5g\t%7.5g\t%7.5g\t%7.5g\n", */
     /*             points[i][0], points[i][1], points[i][2], points[i][3], llh[i], ldir[i]); */
     enum YepStatus stat =
-        yepCore_Subtract_V64fV64f_V64f(llh, ldir, weights, GEN_POINTS_BATCH);
+        yepCore_Subtract_V64fV64f_V64f(llh, ldir, w, GEN_POINTS_BATCH);
     assert(stat == YepStatusOk);
+
+    /* update the claim of number of valid weights */
+    dp->n_weights += GEN_POINTS_BATCH;
 }
 
 
@@ -347,38 +353,3 @@ compute_wsq_dist(const double *points1, const double *weights1,
     compute_square_dist(points1, points2, n_points, 4, square_dist_buf);
     (void)yepCore_Multiply_V64fV64f_V64f(weights1, weights2, weights_buf, n_points);
 }
-
-
-void calc_dummy_logratio(POINT *point, const void *par, double *weights)
-{
-    int i;
-    for (i = 0; i != GEN_POINTS_BATCH; ++i)
-        weights[i] = 0;
-}
-
-
-
-
-#if 0
-void gsl_ran_dirichlet_batched(const gsl_rng *r, 
-                               const double *alpha, double *theta)
-{
-    size_t i;
-    double norm = 0.0, norm_inv;
-
-    for (i = 0; i != NUM_NUCS; i++)
-        theta[i] = gsl_ran_gamma(r, alpha[i], 1.0);
-    
-    for (i = 0; i != NUM_NUCS; i++)
-        norm += theta[i];
-    
-    if (norm < GSL_SQRT_DBL_MIN)  /* Handle underflow */
-    {
-        ran_dirichlet_small(r, NUM_NUCS, alpha, theta);
-        return;
-    }
-
-    norm_inv = 1.0 / norm;
-    for (i = 0; i != NUM_NUCS; i++) theta[i] *= norm_inv;
-}
-#endif

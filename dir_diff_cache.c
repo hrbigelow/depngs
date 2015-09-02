@@ -5,6 +5,7 @@
 #include "dir_diff_cache.h"
 #include "virtual_bound.h"
 #include "chunk_strategy.h"
+#include "dir_points_gen.h"
 #include "timer.h"
 
 #include <float.h>
@@ -27,53 +28,6 @@ static struct binomial_est_params g_be_par;
    0 <= A[0] <= U[0] <= U[1] <= A[1] <= MAX_COUNT1
 */
    
-
-
-
-
-
-
-/* use to find a joint permutation between a and b, such that a2, b1,
-   b2 could be packable. */
-static unsigned bounds_perm_limits[] = { 
-    (1<<24) + 1, (1<<20) + 1, 1, 1 
-};
-    
-
-
-
-struct alpha_packed {
-    unsigned a0 :12; /* 4,096 */
-    unsigned a1 :10; /* 1,024 */
-    unsigned a2 :6;  /*    64 */
-    unsigned a3 :4;  /*    16 */
-};
-
-
-union alpha_key {
-    struct alpha_packed c[2];
-    uint64_t raw;
-};
-
-
-static unsigned primary_cache_size;
-
-void print_primary_cache_size()
-{
-    fprintf(stderr, "Primary cache size: %u\n", primary_cache_size);
-}
-
-#define INIT_ALPHA_KEY(a1, a2, prm)                                         \
-    { .c = {                                                            \
-        { (a1)[(prm)[0]], (a1)[(prm)[1]], (a1)[(prm)[2]], (a1)[(prm)[3]] }, \
-        { (a2)[(prm)[0]], (a2)[(prm)[1]], (a2)[(prm)[2]], (a2)[(prm)[3]] } \
-        }                                                               \
-    }                                                                   \
-        
-
-/* number of loci to process before freezing the bounds hash. */
-#define N_LOCI_TO_FREEZE 1e8
-
 /* bounds_cache[a2][b2][b1].  sets each element to have 'state' = UNSET */
 void
 dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
@@ -130,37 +84,29 @@ dirichlet_diff_cache_free()
     dir_cache_free();
 }
 
-/* update dpts parameters and discard existing points.  if alpha is
-   identical to existing parameters, do nothing. */
-void
-update_points_gen_params(struct distrib_points *dpts,
-                         unsigned *alpha_counts,
-                         unsigned *perm)
-{
-    struct points_gen_par *dp = dpts->pgen.points_gen_par;
-    unsigned i, change = 0;
-    for (i = 0; i != NUM_NUCS; ++i) {
-        if (dp->alpha_counts[i] != alpha_counts[perm[i]]
-            || dp->alpha_perm[i] != perm[i]) change = 1;
-        dp->alpha_counts[i] = alpha_counts[perm[i]];
-        dp->alpha_perm[i] = perm[i];
-    }
 
-    if (change) {
-        dpts->points.size = 0;
-        dpts->weights.size = 0;
-    }
+void
+dir_diff_cache_thread_init()
+{
+    dir_points_thread_init();
 }
 
-/* set a single alpha, and discard points if there is a change */
-void set_dirichlet_alpha_single(struct distrib_points *dpts, unsigned i, unsigned v)
+
+void
+dir_diff_cache_thread_free()
 {
-    struct points_gen_par *dp = dpts->pgen.points_gen_par;
-    if (dp->alpha_counts[i] != v) {
-        dp->alpha_counts[i] = v;
-        dpts->points.size = 0;
-        dpts->weights.size = 0;
-    }
+    dir_points_thread_free();
+}
+
+
+/* convenience function for just updating a single alpha component. */
+void
+set_dir_alpha_single(unsigned i, unsigned v, struct dir_points *dp)
+{
+    unsigned cts[4];
+    memcpy(cts, dp->perm_alpha, sizeof(cts));
+    cts[i] = v;
+    dir_points_update_alpha(cts, NULL, dp);
 }
 
 
@@ -208,77 +154,21 @@ struct ipoint {
         p->down = (N);                                          \
         (HEAD) = pre.down;                                      \
     } while (0)                                                 \
-        
 
-
-
-
-
-
-
-/* estimate distance between two initialized 4D dirichlet
-   distributions. Assume bpar->dist[0] and bpar->dist[1] have already
-   had alpha_counts initialized, and have their size field set
-   appropriately (to zero if the points buffer is invalid). Use
-   caching of individual dirichlet distributions whenever possible. */
-struct binomial_est_state 
-get_est_state(struct bound_search_params *bpar)
-{
-    khiter_t itr;
-    unsigned i;
-    for (i = 0; i != 2; ++i) {
-        khint64_t key;
-        struct points_gen_par *pgp = bpar->dist[i]->pgen.points_gen_par;
-        unsigned *cts = pgp->alpha_counts;
-        unsigned packable = init_alpha_packed_large(cts, &key);
-        struct points_buf *pb = &bpar->dist[i]->points;
-        if (pb->size == 0 
-            && packable
-            && (itr = kh_get(points_h, g_points_hash, key)) != kh_end(g_points_hash)
-            && kh_exist(g_points_hash, itr)) {
-            pb->p = kh_val(g_points_hash, itr);
-            pb->size = g_be_par.max_sample_points;
-        } else {
-            pb->p = pb->buf;
-            pb->size = 0;
-        }
-    }
-
-    struct binomial_est_state rval =
-        binomial_quantile_est(bpar->dist[0]->pgen,
-                              &bpar->dist[0]->points, 
-                              bpar->dist[1]->pgen,
-                              &bpar->dist[1]->points);
-    return rval;
-}
 
 
 /* The main distance function.  This will modify dist[0]'s alpha[0]
    parameters and thus discard its points. It will assume all 7 other
    alpha components are set as intended.  */
 static struct binomial_est_state
-pair_dist_aux(unsigned a1, void *par)
+    pair_dist_aux(struct dir_points *dp1,
+                  struct dir_points *dp2,
+                  unsigned a1)
 {
-    struct bound_search_params *bpar = par;
-    set_dirichlet_alpha_single(bpar->dist[0], 0, a1);
-    return get_est_state(bpar);
+    set_dir_alpha_single(0, a1, dp1);
+    return binomial_quantile_est(dp1, dp2, GEN_POINTS_BATCH);
 }
                                 
-
-/* depends on the ordering of enum fuzzy_state in a gradient from
-   CHANGED to UNCHANGED.
-   */
-/*
-static int
-query_is_less(unsigned pos, void *par)
-{
-    struct bound_search_params *b = par;
-    struct binomial_est_state est = pair_dist_aux(pos, par);
-    return b->use_low_beta
-        ? (b->query_beta < est.beta_qval_lo ? 1 : 0)
-        : (b->query_beta < est.beta_qval_hi ? 1 : 0);
-}
-*/
 
 /* USAGE: virtual_lower_bound(beg, end, elem_is_less, par).  Assumes
    all elements in [beg, end) are in ascending order.  Return the
@@ -286,11 +176,13 @@ query_is_less(unsigned pos, void *par)
 static int 
 elem_is_less(unsigned pos, void *par)
 {
-    struct bound_search_params *b = par;
-    struct binomial_est_state est = pair_dist_aux(pos, par);
-    return b->use_low_beta
-        ? (est.beta_qval_lo < b->query_beta ? 1 : 0)
-        : (est.beta_qval_hi < b->query_beta ? 1 : 0);
+    struct bound_search_params *bsp = par;
+    struct binomial_est_state est =
+        pair_dist_aux(bsp->dist[0], bsp->dist[1], pos);
+    
+    return bsp->use_low_beta
+        ? (est.beta_qval_lo < bsp->query_beta ? 1 : 0)
+        : (est.beta_qval_hi < bsp->query_beta ? 1 : 0);
 }
 
 
@@ -300,18 +192,19 @@ elem_is_less(unsigned pos, void *par)
 
 /* find the mode in a semi-robust way.  for the 'down' member,
    0xDEADBEEF is used to mean 'uninitialized', while NULL means 'last
-   in the chain'
-*/
+   in the chain' */
 static unsigned
-noisy_mode(unsigned xmin, unsigned xend, void *bpar)
+noisy_mode(unsigned xmin, unsigned xend, void *par)
 {
     /* create the two anchors */
     struct ipoint *a = malloc(sizeof(struct ipoint));
     struct ipoint *b = malloc(sizeof(struct ipoint));
     struct binomial_est_state y;
+    struct bound_search_params *bsp = par;
+    
     unsigned xmax = xend - 1;
 
-    y = pair_dist_aux(xmin, bpar);
+    y = pair_dist_aux(bsp->dist[0], bsp->dist[1], xmin);
     a->x = xmin;
     a->y = y.beta_qval_lo;
     a->est = y;
@@ -319,7 +212,7 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
     a->right = b;
     a->down = (void *)0xDEADBEEF;
 
-    y = pair_dist_aux(xmax, bpar);
+    y = pair_dist_aux(bsp->dist[0], bsp->dist[1], xmax);
     b->x = xmax;
     b->y = y.beta_qval_lo;
     b->est = y;
@@ -348,7 +241,7 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
                 && x != cen->left->x) {
                 nn = malloc(sizeof(struct ipoint));
                 nn->x = x;
-                y = pair_dist_aux(nn->x, bpar);
+                y = pair_dist_aux(bsp->dist[0], bsp->dist[1], nn->x);
                 nn->y = y.beta_qval_lo;
                 nn->est = y;
                 INSERT_NODE_HORZ(cen->left, nn, cen);
@@ -362,7 +255,7 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
                 && x != cen->right->x) {
                 nn = malloc(sizeof(struct ipoint));
                 nn->x = x;
-                y = pair_dist_aux(nn->x, bpar);
+                y = pair_dist_aux(bsp->dist[0], bsp->dist[1], nn->x);
                 nn->y = y.beta_qval_lo;
                 nn->est = y;
                 INSERT_NODE_HORZ(cen, nn, cen->right);
@@ -391,9 +284,8 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
     struct ipoint *tp = hd;
     while (tp->left) tp = tp->left;
     unsigned a_cts[4], b_cts[4];
-    struct bound_search_params *bsp = bpar;
-    memcpy(a_cts, ((struct points_gen_par *)bsp->dist[0]->pgen.points_gen_par)->alpha_counts, sizeof(a_cts));
-    memcpy(b_cts, ((struct points_gen_par *)bsp->dist[1]->pgen.points_gen_par)->alpha_counts, sizeof(b_cts));
+    memcpy(a_cts, bsp->dist[0]->perm_alpha, sizeof(a_cts));
+    memcpy(b_cts, bsp->dist[1]->perm_alpha, sizeof(b_cts));
     while (tp) {
         fprintf(stdout, 
                 "%5s[%u,%u,%u,%u]\t[%u,%u,%u,%u]\t%u\t"
@@ -427,85 +319,64 @@ noisy_mode(unsigned xmin, unsigned xend, void *bpar)
    fuzzy_state in binomial_est.h) */
 void
 initialize_est_bounds(unsigned a2, unsigned b1, unsigned b2,
-                      struct bound_search_params *bpar,
+                      struct bound_search_params *bsp,
                       struct binomial_est_bounds *beb)
 {
     beb->ambiguous[0] = beb->ambiguous[1] = 0;
     beb->unchanged[0] = beb->unchanged[1] = 0;
 
-    unsigned perm[] = { 0, 1, 2, 3 };
     unsigned alpha1_cts[] = { 0, a2, 0, 0 };
-    update_points_gen_params(bpar->dist[0], alpha1_cts, perm);
+    dir_points_update_alpha(alpha1_cts, NULL, bsp->dist[0]);
 
     unsigned alpha2_cts[] = { b1, b2, 0, 0 };
-    update_points_gen_params(bpar->dist[1], alpha2_cts, perm);
+    dir_points_update_alpha(alpha2_cts, NULL, bsp->dist[1]);
 
     /* Find Mode.  (consider [0, xmode) and [xmode, cache.max1) as the
        upward and downward phase intervals */
-    unsigned xmode = noisy_mode(0, g_dd_par.pseudo_depth, bpar);
+    unsigned xmode = noisy_mode(0, g_dd_par.pseudo_depth, bsp);
 
-    bpar->use_low_beta = 0;
-    bpar->query_beta = 1.0 - g_be_par.post_confidence;
-    beb->ambiguous[0] = virtual_lower_bound(0, xmode, elem_is_less, bpar);
+    bsp->use_low_beta = 0;
+    bsp->query_beta = 1.0 - g_be_par.post_confidence;
+    beb->ambiguous[0] = virtual_lower_bound(0, xmode, elem_is_less, bsp);
 
     /* find position in the virtual array of distances [xmode, g_dd_par.pseudo_depth) */
     /* the range [xmode, g_dd_par.pseudo_depth) is monotonically
        DECREASING. virtual_upper_bound assumes monotonically
        increasing range, so we must use elem_is_less as the function
        rather than query_is_less. */
-    beb->ambiguous[1] = virtual_upper_bound(xmode, g_dd_par.pseudo_depth, elem_is_less, bpar);
+    beb->ambiguous[1] = virtual_upper_bound(xmode, g_dd_par.pseudo_depth, elem_is_less, bsp);
 
-    bpar->use_low_beta = 1;
-    bpar->query_beta = g_be_par.post_confidence;
-    beb->unchanged[0] = virtual_lower_bound(beb->ambiguous[0], xmode, elem_is_less, bpar);
+    bsp->use_low_beta = 1;
+    bsp->query_beta = g_be_par.post_confidence;
+    beb->unchanged[0] = virtual_lower_bound(beb->ambiguous[0], xmode, elem_is_less, bsp);
 
-    beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], elem_is_less, bpar);
+    beb->unchanged[1] = virtual_upper_bound(xmode, beb->ambiguous[1], elem_is_less, bsp);
     
 }
 
 
-/* attempt to retrieve a cached distance classification of { a1, a2,
-   0, 0 } and { b1, b2, 0, 0 }.  if the cache contained this entry,
-   set *state and return 1.  otherwise, return 0 */
-int
-get_fuzzy_state(unsigned a1, unsigned a2, 
-                unsigned b1, unsigned b2,
-                enum fuzzy_state *state)
-{
-    struct binomial_est_bounds *beb = dir_cache_try_get_bounds(a2, b1, b2);
-    if (beb) {
-        *state = locate_cell(beb, a1);
-        return 1;
-    } else 
-        return 0;
-}
-
-
-/* test two dirichlets based on their counts. if the pattern of counts
-   is cacheable, 'cacheable' is set to 1, and the cache is queried for
-   the entry, and cache_was_set is set to 1 if found. */
+/* attempt to retrieve the fuzzy_state alpha1 vs alpha2 distance from
+   the dir_cache, or calculate it if not found */
 enum fuzzy_state
-cached_dirichlet_diff(unsigned *a, unsigned *b,
-                      struct bound_search_params *bpar,
-                      unsigned *cache_was_set)
+cached_dirichlet_diff(unsigned *alpha1, unsigned *alpha2,
+                      struct bound_search_params *bsp,
+                      unsigned *cache_hit)
 {
-    unsigned p[4];
+    unsigned perm[4], *perm_used;
     enum fuzzy_state state = UNCHANGED;
-    int state_set = 0;
-    *cache_was_set = dir_cache_try_get_diff(a, b, &state);
-
-    if (*cache_was_set) return state;
-    else {
-        /* */
-        
-    if (! state_set) {
-        *cacheable = find_cacheable_permutation(a, alpha_packed_limits,
-                                                b, alpha_packed_limits, p);
-        assert(*cacheable);
-        update_points_gen_params(bpar->dist[0], a, p);
-        update_points_gen_params(bpar->dist[1], b, p);
-        struct binomial_est_state est = get_est_state(bpar);
+    enum diff_cache_status status;
+    
+    status = dir_cache_try_get_diff(alpha1, alpha2, perm, &state);
+    if (status == CACHE_HIT) {
+        *cache_hit = 1;
+        return state;
+    } else {
+        perm_used = (status == CACHE_MISS_PERM) ? perm : NULL;
+        dir_points_update_alpha(alpha1, perm_used, bsp->dist[0]);
+        dir_points_update_alpha(alpha2, perm_used, bsp->dist[1]);
+        struct binomial_est_state est =
+            binomial_quantile_est(bsp->dist[0], bsp->dist[1], GEN_POINTS_BATCH);
         state = est.state;
+        return state;
     }
-    return state;
 }

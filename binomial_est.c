@@ -230,7 +230,8 @@ binomial_est_init(struct binomial_est_params be_par,
 }
 
 
-void binomial_est_free()
+void
+binomial_est_free()
 {
     free(beta_cache.lo_buf);
     free(beta_cache.lo);
@@ -239,7 +240,8 @@ void binomial_est_free()
 }
 
 /* safe function for obtaining a beta value */
-static inline double jeffreys_beta_lo(int n, int s)
+static inline double
+jeffreys_beta_lo(int n, int s)
 {
     assert(n % beta_cache.batch_sz == 0);
     return n < beta_cache.max_n
@@ -247,7 +249,8 @@ static inline double jeffreys_beta_lo(int n, int s)
         : beta_Pinv(1 - beta_cache.conf, (double)s + 0.5, (double)(n - s) + 0.5);
 }
 
-static inline double jeffreys_beta_hi(int n, int s)
+static inline double
+jeffreys_beta_hi(int n, int s)
 {
     assert(n % beta_cache.batch_sz == 0);
     return n < beta_cache.max_n
@@ -267,11 +270,13 @@ enum bound_class {
 
 
 
-/* Sample pairs of points from dist_pair up to max_points, classifying
-   each pair as 'success' if distance is less than min_dist, 'failure'
-   otherwise.  From the set of successes and failures, use the Beta
-   distribution to estimate the true binomial probability.  Use pgen1
-   and pgen2 to generate more points (and weights) as needed. 
+/* Sample pairs of points from dp1 and dp2 up to the maximum number of
+   points, generating new batches of points as needed.  measure
+   euclidean distance of each pair of points, and threshold to get
+   'success' if distance is less than min_dist, 'failure' otherwise.
+
+   From the set of successes and failures, use the Beta distribution
+   to estimate the true binomial probability.
    
    Stopping criteria: 
 
@@ -281,16 +286,14 @@ enum bound_class {
    (tight_spread). It makes some sense for loose_spread to be the same
    as post_qmin on a vague intuitive level.  */
 struct binomial_est_state
-binomial_quantile_est(struct points_gen pgen1,
-                      struct points_buf *points1,
-                      struct points_gen pgen2,
-                      struct points_buf *points2)
+binomial_quantile_est(struct dir_points *dp1,
+                      struct dir_points *dp2,
+                      unsigned batch_sz)
 {
-    
     int n = 0, s = 0; /* # samples taken, # successes */
 
     enum bound_class lo_tag = BOUND_CHANGED, hi_tag = BOUND_UNCHANGED;
-
+    
     /* min and max quantiles for posterior */
     float
         post_qmin = 1.0 - g_be_par.post_confidence, 
@@ -302,28 +305,18 @@ binomial_quantile_est(struct points_gen pgen1,
     est.beta_qval_lo = 0;
     est.beta_qval_hi = 1;
     double min_dist_squared = gsl_pow_2(g_be_par.min_dirichlet_dist);
-    double *square_dist_buf = malloc(g_be_par.batch_size * sizeof(double));
+    double *square_dist_buf = malloc(batch_sz * sizeof(double));
 
-    assert(g_be_par.max_sample_points % g_be_par.batch_size == 0);
+    assert(g_be_par.max_sample_points % batch_sz == 0);
 
     /* cur: next point to be used for distance calculation.
        end: next point to be drawn from distribution */
     POINT 
-        *pcur1 = points1->p, *pend1 = points1->p + points1->size,
-        *pcur2 = points2->p, *pend2 = points2->p + points2->size;
+        *pcur1 = dp1->data, *pend1 = pcur1 + dp1->n_points,
+        *pcur2 = dp2->data, *pend2 = pcur2 + dp2->n_points;
 
     assert(pcur1 != NULL);
     assert(pcur2 != NULL);
-
-    /* invariant: pcur <= pend */
-    /*
-    unsigned *alpha1_cts = ((struct points_gen_par *)pgen1.points_gen_par)->alpha_counts;
-    unsigned *alpha2_cts = ((struct points_gen_par *)pgen2.points_gen_par)->alpha_counts;
-
-    fprintf(stderr, "binomial_est_state: %u,%u,%u,%u\t%u,%u,%u,%u\n",
-            alpha1_cts[0], alpha1_cts[1], alpha1_cts[2], alpha1_cts[3],
-            alpha2_cts[0], alpha2_cts[1], alpha2_cts[2], alpha2_cts[3]);
-    */
 
     /* See NOTE above on stopping criteria. */
     unsigned p;
@@ -337,29 +330,29 @@ binomial_quantile_est(struct points_gen pgen1,
     {
         /* process another batch of samples, generating sample
            points as needed. */
-        n += g_be_par.batch_size;
-        while (points1->size < n) {
-            pgen1.gen_point(pgen1.points_gen_par, pend1);
-            points1->size += g_be_par.batch_size;
-            pend1 += g_be_par.batch_size;
+        n += batch_sz;
+        while (dp1->n_points < n) {
+            gen_dir_points(dp1->perm_alpha, pend1, batch_sz);
+            dp1->n_points += batch_sz;
+            pend1 += batch_sz;
         }
-        while (points2->size < n) {
-            pgen2.gen_point(pgen2.points_gen_par, pend2);
-            points2->size += g_be_par.batch_size;
-            pend2 += g_be_par.batch_size;
+        while (dp2->n_points < n) {
+            gen_dir_points(dp2->perm_alpha, pend2, batch_sz);
+            dp2->n_points += batch_sz;
+            pend2 += batch_sz;
         }
         
         /* measure distances, threshold, and classify successes.
            NOTE:  success means non-change */
         compute_square_dist((const double *)pcur1, 
                             (const double *)pcur2, 
-                            g_be_par.batch_size, NUM_NUCS, square_dist_buf);
-        pcur1 += g_be_par.batch_size;
-        pcur2 += g_be_par.batch_size;
+                            batch_sz, NUM_NUCS, square_dist_buf);
+        pcur1 += batch_sz;
+        pcur2 += batch_sz;
 
         /* tallying number of 'successes' (pairs of points that are
            below the distance threshold, i.e. non-changed) */
-        for (p = 0; p != g_be_par.batch_size; ++p)
+        for (p = 0; p != batch_sz; ++p)
             s += (square_dist_buf[p] < min_dist_squared ? 1 : 0);
 
         /* regardless of est, we need to calculate est.beta_qval_lo */

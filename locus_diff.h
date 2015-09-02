@@ -66,7 +66,7 @@ void locus_diff_tq_free();
    well, held in sample_attributes. */
 struct locus_diff_input
 {
-    struct bound_search_params bep;
+    struct bound_search_params bsp;
     size_t thread_num;
 
     double dist_quantile_values[MAX_NUM_QUANTILES];
