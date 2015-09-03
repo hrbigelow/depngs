@@ -673,6 +673,7 @@ run_worker_aux(unsigned n_threads, void *(*worker)(void *par))
 static void *
 generate_points_worker(void *par)
 {
+    dir_points_thread_init();
     struct thread_part *part = par;
     khiter_t itr, itr2;
     unsigned i, perm_alpha[4];
@@ -709,6 +710,7 @@ generate_points_worker(void *par)
     }
     pthread_mutex_unlock(&merge_mtx);
     kh_destroy(points_h, ph);
+    dir_points_thread_free();
     return NULL;
 }
 
@@ -726,6 +728,7 @@ generate_point_sets(unsigned n_threads)
 static void *
 generate_est_bounds_worker(void *par)
 {
+    dir_diff_cache_thread_init();
     struct thread_part *part = par;
     khiter_t itr, itr2;
     khash_t(bounds_h) *bh = kh_init(bounds_h);
@@ -741,12 +744,16 @@ generate_est_bounds_worker(void *par)
     };
     unsigned msp = g_dc_par.max_sample_points;
     
-    for (i = 0; i != 2; ++i) 
+    for (i = 0; i != 2; ++i) {
         *bpar.dist[i] = (struct dir_points){
             .points_buf = malloc(sizeof(POINT) * msp),
-            .weights = malloc(sizeof(double) * msp)
+            .weights = malloc(sizeof(double) * msp),
+            .n_points = 0,
+            .n_weights = 0
         };
-    
+        bpar.dist[i]->data = bpar.dist[i]->points_buf;
+    }
+
     for (i = 0, itr = kh_begin(g_btup_hash); itr != kh_end(g_btup_hash); ++itr) {
         if (! kh_exist(g_btup_hash, itr)) continue;
         if (i % part->n_threads == part->nth) {
@@ -782,6 +789,7 @@ generate_est_bounds_worker(void *par)
     
     pthread_mutex_unlock(&merge_mtx);
     kh_destroy(bounds_h, bh);
+    dir_diff_cache_thread_free();
     return NULL;
 }
 
