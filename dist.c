@@ -41,6 +41,9 @@ static struct {
     .dd_par = {
         .pseudo_depth = 1e6,
         .prior_alpha = 0.1,
+        .xmax = 10000,
+        .mode_batch_size = 512,
+        .max_bernoulli_trials = 50000
     },
     .ld_par = {
         .do_print_pileup = 0,

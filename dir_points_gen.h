@@ -115,6 +115,13 @@ void
 gen_dir_points(unsigned *cts, POINT *points, unsigned n_points);
 
 
+/* re-order point components to the default permutation { 0, 1, 2, 3
+   }.  if dp is using the cache, copy those points to its local
+   storage first. */
+void
+de_permute_points(struct dir_points *dp);
+
+
 /* Generate GEN_POINTS_BATCH points using par to parameterize the
    distribution */
 void

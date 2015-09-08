@@ -10,6 +10,17 @@
 struct dirichlet_diff_params {
     unsigned pseudo_depth;
     double prior_alpha;
+
+    /* maximum value of x in initialize_est_bounds */
+    unsigned xmax;
+
+    /* number of additional point pairs to generate during mode
+       search */
+    unsigned mode_batch_size;
+
+    /* max number of bernoulli trials to do before inserting nodes
+       that overlap */
+    unsigned max_bernoulli_trials; 
 } g_dd_par;
 
 

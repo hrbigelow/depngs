@@ -125,9 +125,13 @@ dir_weights_update_terms(struct bqs_count *bqs_ct, unsigned n_bqs_ct,
 }
 
 
+/* must call de_permute_points before calling this. */
 void
 dir_weights_fill(struct dir_points *dp)
 {
+    assert(dp->perm[0] == 0 && dp->perm[1] == 1
+           && dp->perm[2] == 2 && dp->perm[3] == 3);
+
     unsigned msp = g_pg_par.max_sample_points;
     assert(dp->n_points == msp);
     while (dp->n_weights != msp)
@@ -234,12 +238,47 @@ gen_dir_points(unsigned *cts, POINT *points, unsigned n_points)
 }
 
 
+/* re-order point components to the default permutation { 0, 1, 2, 3
+   }.  handle the case where the dp is using the cache. */
+void
+de_permute_points(struct dir_points *dp)
+{
+    if (dp->perm[0] == 0 && dp->perm[1] == 1
+        && dp->perm[2] == 2 && dp->perm[3] == 3)
+        return;
+    
+    if (dp->data != dp->points_buf) {
+        memcpy(dp->points_buf, dp->data, dp->n_points * sizeof(POINT));
+        dp->data = dp->points_buf;
+    }
+    
+    unsigned i, pinv[4];
+    for (i = 0; i != 4; ++i)
+        pinv[dp->perm[i]] = i;
+
+    POINT *p, tmp;
+    for (p = dp->data; p != dp->data + dp->n_points; ++p) {
+        for (i = 0; i != 4; ++i) tmp[i] = (*p)[pinv[i]];
+        for (i = 0; i != 4; ++i) (*p)[i] = tmp[i];
+    }
+
+    static unsigned perm_default[] = { 0, 1, 2, 3 };
+    memcpy(dp->perm, perm_default, sizeof(perm_default));
+}
+
+
+
 /* calculates log(likelihood) - log(dirichlet).  In this, the
-   dirichlet prior is a common factor and so cancels.  */
+   dirichlet prior is a common factor and so cancels.  Since dp
+   generally stores its points with coordinates in permuted form, we
+   require that the points are de-permuted before this calculation. */
 void
 calc_post_to_dir_logratio(struct dir_points *dp)
 { 
-   int i;
+    assert(dp->perm[0] == 0 && dp->perm[1] == 1
+           && dp->perm[2] == 2 && dp->perm[3] == 3);
+
+    int i;
     const struct bqs_count
         *term = dp->bqs_ct,
         *term_end = term + dp->n_bqs_ct;

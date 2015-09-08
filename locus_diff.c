@@ -428,10 +428,8 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                                   &tls_dw.bsp, &cache_hit);
 
         tls_dw.pair_stats[pi].dist_count[diff_state]++;
-        /* tls_dw.pair_stats[pi].cacheable += cacheable; */
         tls_dw.pair_stats[pi].cache_was_set += cache_hit;
 
-        /* tls_dw.metrics.cacheable += cacheable; */
         tls_dw.metrics.cache_was_set += cache_hit;
 
         if (diff_state == CHANGED) {
@@ -449,6 +447,8 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                 dir_points_fill(&ld[i]->dist);
 
                 dir_weights_update_terms(ld[i]->bqs_ct, ld[i]->n_bqs_ct, &ld[i]->dist);
+                /* no need to call de_permute_points since points are
+                   filled with the NULL permutation. */
                 dir_weights_fill(&ld[i]->dist);
             }
             compute_wsq_dist((const double *)ld[0]->dist.data, ld[0]->dist.weights,
@@ -740,9 +740,7 @@ indel_distance_quantiles_aux(struct managed_buf *buf)
 }
 
 
-/* compute and print base composition marginal quantiles.  the
-   distrib_points (distp) field must be populated with points and
-   weights. */
+/* compute and print base composition marginal quantiles. */
 void
 comp_quantiles_aux(struct managed_buf *comp_buf)
 {
@@ -752,13 +750,20 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
     struct pileup_locus_info ploc;
     ploc.pos = UINT_MAX; /* signal that this isn't initialized yet */
 
+    /*!!! delete me */
+    struct pileup_locus_info pli;
+    pileup_current_info(&pli);
+    
     unsigned d, s;
     for (s = 0; s != bam_samples.n; ++s) {
         struct locus_data *ld = &tls_dw.ldat[s];
-        assert(ld->dist.n_points == g_ld_par.max_sample_points);
-        assert(ld->dist.n_weights == g_ld_par.max_sample_points);
         
         if (ld->confirmed_changed) {
+
+            dir_points_fill(&ld->dist);
+            de_permute_points(&ld->dist);
+            dir_weights_fill(&ld->dist);
+            
             compute_marginal_wgt_quantiles((double *)ld->dist.data,
                                            ld->dist.weights,
                                            ld->dist.n_points,
@@ -853,6 +858,16 @@ locus_diff_worker(const struct managed_buf *in_bufs,
     while (pileup_next_pos()) {
         /* this will strain the global mutex, but only during the hash
            loading phase. */
+
+        /* !!! delete me. */
+        struct pileup_locus_info pli;
+        pileup_current_info(&pli);
+
+        if (pli.pos == 15390331 || pli.pos == 15390210) {
+            int x = 0;
+            ++x;
+        }
+        
         reset_locus_data(&tls_dw.pseudo_sample);
         for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);

@@ -22,11 +22,19 @@ enum fuzzy_state {
 };
 
 
+enum bound_class {
+    BOUND_CHANGED,
+    BOUND_AMBIGUOUS,
+    BOUND_UNCHANGED
+};
+
+
 extern const char *fuzzy_state_strings[];
 
 struct binomial_est_state {
     enum fuzzy_state state;
-    double beta_qval_lo, beta_qval_hi;
+    enum bound_class lo_bound_tag, hi_bound_tag;
+    double beta_lo, beta_mean, beta_hi;
     unsigned n_trials, n_success;
 };
 
@@ -51,6 +59,11 @@ void binomial_est_init(struct binomial_est_params be_par,
 void binomial_est_free();
 
 
+void
+add_binomial_trials(POINT *buf1, POINT *buf2, unsigned n_add,
+                    struct binomial_est_state *est);
+
+
 /* Sample pairs of points from dist_pair up to max_points, classifying
    each pair as 'success' if distance is less than min_dist, 'failure'
    otherwise.  From the set of successes and failures, use the Beta
@@ -60,6 +73,8 @@ struct binomial_est_state
 binomial_quantile_est(struct dir_points *dp1,
                       struct dir_points *dp2,
                       unsigned batch_sz);
+
+
 
 
 /* Interpolate the interval in the beb row */

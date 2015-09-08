@@ -74,8 +74,8 @@ generate_point_sets(unsigned n_threads);
 
 /* populate g_bounds_hash with computed est bounds for the bounds
    tuples surveyed. */
-void
-generate_est_bounds(unsigned n_threads);
+/* void */
+/* generate_est_bounds(unsigned n_threads); */
 
 
 /* populate g_ref_change_hash with computed bounds for sample-to-REF
@@ -83,5 +83,10 @@ generate_est_bounds(unsigned n_threads);
 void
 generate_ref_change(unsigned n_threads);
 
+
+/* populate g_sam_change_hash with computed changes for
+   sample-to-sample comparisons. */
+void
+generate_sam_change(unsigned n_threads);
 
 #endif /* _DIR_CACHE_H */

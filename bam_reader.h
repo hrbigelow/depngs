@@ -15,6 +15,7 @@
 
 /* one instance of this per input sample per thread. */
 struct bam_stats {
+    unsigned is_shallow_idx;
     hts_idx_t *idx;
     bam_hdr_t *hdr;
     BGZF *bgzf;

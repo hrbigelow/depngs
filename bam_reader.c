@@ -783,6 +783,7 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs)
         fprintf(stderr, "Error: Couldn't load bam index file %s\n", bam_index_file);
         exit(1);
     }
+    bs->is_shallow_idx = 0;
     bs->hdr = bam_hdr_read(bs->bgzf);
     bs->chunks = NULL;
     bs->n_chunks = 0;
@@ -793,11 +794,19 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs)
 /* not a deep copy. it appears that all fields except z are
    constant. */
 static hts_idx_t *
-hts_idx_dup(const hts_idx_t *idx)
+hts_idx_shallow_copy(const hts_idx_t *idx)
 {
     hts_idx_t *dup = malloc(sizeof(hts_idx_t));
     *dup = *idx;
     return dup;
+}
+
+
+/* free an hts_idx_t created with hts_idx_shallow_copy */
+void
+hts_idx_shallow_free(const hts_idx_t *idx)
+{
+    free(idx);
 }
 
 
@@ -807,7 +816,8 @@ struct bam_stats
 bam_stats_dup(const struct bam_stats bs, const char *bam_file)
 {
     struct bam_stats obs;
-    obs.idx = hts_idx_dup(bs.idx);
+    obs.is_shallow_idx = 1;
+    obs.idx = hts_idx_shallow_copy(bs.idx);
     obs.hdr = bam_hdr_dup(bs.hdr);
     obs.bgzf = bgzf_open(bam_file, "r");
     if (! bs.bgzf) {
@@ -824,7 +834,10 @@ bam_stats_dup(const struct bam_stats bs, const char *bam_file)
 void
 bam_stats_free(struct bam_stats *bs)
 {
-    hts_idx_destroy(bs->idx);
+    if (bs->is_shallow_idx)
+        hts_idx_shallow_free(bs->idx);
+    else
+        hts_idx_destroy(bs->idx);
     bam_hdr_destroy(bs->hdr);
     bgzf_close(bs->bgzf);
     free(bs->chunks);
