@@ -39,10 +39,6 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
                           unsigned long max_input_mem,
                           unsigned n_threads)
 {
-    unsigned db = dd_par.mode_batch_size, bb = be_par.batch_size;
-    /* round up db to nearest multiple of bb. */
-    dd_par.mode_batch_size += (db % bb) ? (bb - (db % bb)) : 0;
-    g_dd_par = dd_par;
     g_be_par = be_par;
     
     struct dirichlet_points_gen_params pg_par = {
@@ -54,8 +50,7 @@ dirichlet_diff_cache_init(struct dirichlet_diff_params dd_par,
     dirichlet_points_gen_init(pg_par);
 
     fprintf(stdout, "%s: Start computing confidence interval statistics.\n", timer_progress());
-    // binomial_est_init(be_par, be_par.max_sample_points, n_threads);
-    binomial_est_init(be_par, 12000, n_threads);
+    binomial_est_init(be_par, be_par.max_sample_points, n_threads);
     fprintf(stdout, "%s: Finished computing confidence interval statistics.\n", timer_progress());
 
     dir_cache_init(dc_par);
@@ -91,19 +86,6 @@ dirichlet_diff_cache_free()
     dir_cache_free();
 }
 
-
-void
-dir_diff_cache_thread_init()
-{
-    dir_points_thread_init();
-}
-
-
-void
-dir_diff_cache_thread_free()
-{
-    dir_points_thread_free();
-}
 
 
 /* convenience function for just updating a single alpha component. */

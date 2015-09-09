@@ -55,7 +55,8 @@ struct dir_points {
    data, n_points, and n_weights as appropriate.  after the call, dp
    may be used for on-demand points generation. */
 void
-dir_points_update_alpha(unsigned *alpha, unsigned *perm,
+dir_points_update_alpha(const unsigned *alpha,
+                        const unsigned *perm,
                         struct dir_points *dp);
 
 

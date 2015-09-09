@@ -1370,6 +1370,13 @@ pileup_current_info(struct pileup_locus_info *pli)
 }
 
 
+struct contig_pos
+pileup_current_pos()
+{
+    return tls.cur_pos;
+}
+
+
 void
 pileup_final_input()
 {
@@ -1381,7 +1388,15 @@ void
 pileup_reset_pos()
 {
     tls.cur_pos = g_unset_pos;
+    tls.cur_refseq = tls.refseqs;
     tls.tally_end = (struct contig_pos){ 0, 0 };
+    unsigned s;
+    for (s = 0; s != tls.n_samples; ++s) {
+        struct tally_stats *ts = &tls.ts[s];
+        ts->base_cur = ts->base_ct;
+        ts->bqs_cur = ts->bqs_ct;
+        ts->indel_cur = ts->indel_ct;
+    }
 }
 
 

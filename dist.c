@@ -6,14 +6,12 @@
 #include "bam_sample_info.h"
 #include "dir_cache.h"
 #include "dir_points_gen.h"
-#include "dir_diff_cache.h"
 #include "timer.h"
 
 static struct {
     struct bam_filter_params bf_par;
     struct binomial_est_params be_par;
     struct dir_cache_params dc_par;
-    struct dirichlet_diff_params dd_par;
     struct locus_diff_params ld_par;
     unsigned long max_mem;
     unsigned n_threads;
@@ -36,14 +34,9 @@ static struct {
         .n_bounds = 1e8,
         .min_ct_keep_bound = 3,
         .fasta_file = NULL,
-        .n_max_survey_loci = 1e8
-    },
-    .dd_par = {
-        .pseudo_depth = 1e6,
+        .n_max_survey_loci = 1e8,
         .prior_alpha = 0.1,
-        .xmax = 10000,
-        .mode_batch_size = 512,
-        .max_bernoulli_trials = 50000
+        .pseudo_depth = 1e6 /* not user-adjustable */
     },
     .ld_par = {
         .do_print_pileup = 0,
@@ -86,7 +79,7 @@ int dist_usage()
             opts.be_par.post_confidence,
             opts.be_par.beta_confidence,
             opts.be_par.max_sample_points,
-            opts.ld_par.prior_alpha,
+            opts.dc_par.prior_alpha,
             opts.dc_par.n_max_survey_loci
             );
 
@@ -176,7 +169,7 @@ main_dist(int argc, char **argv)
         case 'P': opts.be_par.max_sample_points = 
                 (unsigned)strtod_errmsg(optarg, "-f (max_sample_points)"); 
             break;
-        case 'p': opts.ld_par.prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
+        case 'p': opts.dc_par.prior_alpha = strtod_errmsg(optarg, "-p (prior_alpha)"); break;
         case 'C': quantiles_string = optarg; break;
         case 'S': opts.dc_par.n_max_survey_loci = strtod_errmsg(optarg, "-S (n_max_survey_loci)"); break;
 
@@ -243,7 +236,6 @@ main_dist(int argc, char **argv)
     opts.ld_par.max_sample_points = opts.be_par.max_sample_points;
     opts.ld_par.post_confidence = opts.be_par.post_confidence;
     opts.ld_par.min_dirichlet_dist = opts.be_par.min_dirichlet_dist;
-    opts.ld_par.prior_alpha = opts.dd_par.prior_alpha;
     opts.dc_par.fasta_file = fasta_file;
     opts.dc_par.max_sample_points = opts.be_par.max_sample_points;
 
@@ -268,7 +260,7 @@ main_dist(int argc, char **argv)
         locus_diff_init(samples_file, sample_pairs_file, 
                         query_range_file, fasta_file,
                         opts.n_threads, opts.n_max_reading, max_input_mem,
-                        opts.ld_par, opts.dd_par, opts.be_par, opts.dc_par, opts.bf_par,
+                        opts.ld_par, opts.be_par, opts.dc_par, opts.bf_par,
                         dist_fh, comp_fh, indel_fh);
 
     printf("Starting input processing.\n");

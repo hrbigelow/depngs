@@ -14,12 +14,20 @@ struct dir_cache_params {
     unsigned n_point_sets;
     unsigned max_sample_points;
     unsigned long n_max_survey_loci;
+    unsigned pseudo_depth;
+    double prior_alpha;
     const char *fasta_file; /* needed to initialize batch_pileup */
 };
 
 /* call once at start of program */
 void
-dir_cache_init(struct dir_cache_params dc_par);
+dir_cache_init(struct binomial_est_params be_par,
+               struct dir_cache_params dc_par,
+               struct bam_filter_params bf_par,
+               struct bam_scanner_info *reader_buf,
+               unsigned n_max_reading,
+               unsigned long max_input_mem,
+               unsigned n_threads);
 
 
 /* call once at end of program */
@@ -32,21 +40,42 @@ dir_cache_free();
 POINT *
 dir_cache_try_get_points(unsigned *alpha);
 
-/* return a cached bounds or NULL if not cached */
-struct binomial_est_bounds *
-dir_cache_try_get_bounds(unsigned a2, unsigned b1, unsigned b2);
 
-
-enum diff_cache_status {
-    CACHE_HIT,
-    CACHE_MISS_PERM,
-    CACHE_MISS_NO_PERM
+struct dir_cache_pair_key {
+    uint64_t key;
+    unsigned char is_valid;
+    unsigned char is_ref_change;
 };
 
-/* try to get the fuzzy_state status from cache.   */
-enum diff_cache_status
-dir_cache_try_get_diff(const unsigned *alpha1, const unsigned *alpha2,
-                       unsigned *perm, enum fuzzy_state *state);
+
+/* try to get the fuzzy_state corresponding to this key, or return
+   STATE_UNKNOWN. */
+enum fuzzy_state
+dir_cache_try_get_state(struct dir_cache_pair_key key);
+
+
+
+/* classify a pair of alphas with their permutation provided */
+struct dir_cache_pair_key
+dir_cache_classify_alphas(const unsigned *alpha1,
+                          const unsigned *alpha2);
+
+
+/* provide a fuzzy_state change by calculation.  called when the cache
+   doesn't have an entry. */
+enum fuzzy_state
+dir_cache_calc_state(const unsigned *alpha1,
+                     const unsigned *alpha2,
+                     struct dir_points *dist1,
+                     struct dir_points *dist2);
+
+
+/* return index of pseudo_alpha component, or -1 if this is not a
+   pseudo_alpha. */
+int
+dir_cache_is_pseudo_alpha(const unsigned *alpha);
+
+
 
 
 /* main routine for running the survey.  read chunks of input until

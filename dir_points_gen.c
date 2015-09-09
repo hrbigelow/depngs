@@ -74,7 +74,8 @@ dir_points_thread_free()
 
 
 void
-dir_points_update_alpha(unsigned *alpha, unsigned *perm,
+dir_points_update_alpha(const unsigned *alpha,
+                        const unsigned *perm,
                         struct dir_points *dp)
 {
     /* update the alphas and record whether there was a change */

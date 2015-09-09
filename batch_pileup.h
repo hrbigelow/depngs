@@ -230,6 +230,11 @@ void
 pileup_current_info(struct pileup_locus_info *pli);
 
 
+/* like pileup_current_info but avoids querying for the contig name */
+struct contig_pos
+pileup_current_pos();
+
+
 /* description of reads data at a single-base locus position.  for non
    sample data-dependent information, see pileup_locus_info. */
 struct pileup_data {

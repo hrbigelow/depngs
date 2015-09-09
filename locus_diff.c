@@ -17,6 +17,8 @@
 #include "geometry.h"
 #include "fasta.h"
 #include "timer.h"
+#include "dir_cache.h"
+#include "ksort.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -71,38 +73,10 @@ stats_init_worker(void *arg)
         for (dt = 1; dt != wu->n_threads; ++dt)
             thread_params.reader_buf[dt].m[s] =
                 bam_stats_dup(bstats, bam_samples.m[s].bam_file);
-            
-        /* fprintf(stdout, "Initialized reader_buf[0].m[%u] = %p\n", */
-        /*         s, &thread_params.reader_buf[0].m[s]); */
-        
     }
 
-    /* for (s = 0; s != bam_samples.n; ++s) */
-    /*     bam_stats_init(bam_samples.m[s].bam_file,  */
-    /*                    &thread_params.reader_buf[t].m[s]); */
-
     return NULL;
 }
-
-
-/* duplicate across samples, just for this thread */
-void *
-stats_dup_worker(void *arg)
-{
-    struct work_unit *wu = arg;
-    unsigned s, t = wu->nth;
-    assert(t != 0);
-    printf("in dup: t = %u\n", t);
-    for (s = 0; s != bam_samples.n; ++s) {
-        /* fprintf(stdout, "thread_params.reader_buf[0].m[%u].idx = %p\n", */
-        /*         s, thread_params.reader_buf[0].m[s].idx); */
-        thread_params.reader_buf[t].m[s] = 
-            bam_stats_dup(&thread_params.reader_buf[0].m[s],
-                          bam_samples.m[s].bam_file);
-    }    
-    return NULL;
-}
-
 
 
 struct thread_queue *
@@ -110,7 +84,6 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
                 const char *locus_range_file, const char *fasta_file,
                 unsigned n_threads, unsigned n_max_reading, unsigned long max_input_mem,
                 struct locus_diff_params ld_par,
-                struct dirichlet_diff_params dd_par,
                 struct binomial_est_params be_par,
                 struct dir_cache_params dc_par,
                 struct bam_filter_params bf_par,
@@ -143,7 +116,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     thread_params.n_threads = n_threads;
     thread_params.reader_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
     thread_params.reader_pars = malloc(n_threads * sizeof(void *));
-
+    
     /* initialize bam_stats */
     fprintf(stdout, "%s: Starting reading BAM indices\n", timer_progress());   
     unsigned t;
@@ -153,39 +126,19 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
         stats_init_input[t] = (struct work_unit){ n_threads, t };
         (void)pthread_create(&bam_init_th[t], NULL,
                              stats_init_worker, &stats_init_input[t]);
-        printf("Created init thread %u\n", t);
-        fflush(NULL);
     }
-    for (t = 0; t != n_threads; ++t) {
+    for (t = 0; t != n_threads; ++t)
         pthread_join(bam_init_th[t], NULL);
-        printf("Joined init thread %u\n", t);
-        fflush(NULL);
-    }
         
-    /* pthread_t *bam_dup_th = malloc(n_threads * sizeof(pthread_t)); */
-    /* for (t = 1; t != n_threads; ++t) { */
-    /*     (void)pthread_create(&bam_dup_th[t], NULL, */
-    /*                          stats_dup_worker, &stats_init_input[t]); */
-    /*     printf("Created dup thread %u\n", t); */
-    /*     fflush(NULL); */
-    /* } */
-    
-    /* for (t = 1; t != n_threads; ++t) { */
-    /*     pthread_join(bam_dup_th[t], NULL); */
-    /*     printf("Joined dup thread %u\n", t); */
-    /*     fflush(NULL); */
-    /* } */
-
-    /* free(bam_dup_th); */
     free(bam_init_th);
     free(stats_init_input);
     fprintf(stdout, "%s: Finished reading BAM indices.\n", timer_progress());
     
     thread_params.fasta_file = fasta_file;
 
-    dirichlet_diff_cache_init(dd_par, be_par, dc_par, bf_par,
-                              thread_params.reader_buf,
-                              n_max_reading, max_input_mem, n_threads);
+    dir_cache_init(be_par, dc_par, bf_par,
+                   thread_params.reader_buf,
+                   n_max_reading, max_input_mem, n_threads);
 
     thread_params.offload_par = 
         (struct locus_diff_offload_par){ dist_fh, comp_fh, indel_fh };
@@ -200,7 +153,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     /* we do not want to skip empty loci, because we need to traverse
        these in order to get statistics for missing data */
     unsigned skip_empty_loci = 0;
-    batch_pileup_init(bf_par, skip_empty_loci, dd_par.pseudo_depth);
+    batch_pileup_init(bf_par, skip_empty_loci, dc_par.pseudo_depth);
 
     /* now turn on progress messages */
     for (t = 0; t != n_threads; ++t)
@@ -223,7 +176,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
 void
 locus_diff_free(struct thread_queue *tq)
 {
-    dirichlet_diff_cache_free();
+    dir_cache_free();
     batch_pileup_free();
     chunk_strategy_free();
     bam_sample_info_free();
@@ -246,20 +199,27 @@ locus_diff_free(struct thread_queue *tq)
 void
 locus_diff_thread_init()
 {
+    unsigned msp = g_ld_par.max_sample_points;
     tls_dw.randgen = gsl_rng_alloc(gsl_rng_taus);
     alloc_locus_data(&tls_dw.pseudo_sample);
+
+    /* pseudo-sample weights are filled once, and only here. */
+    unsigned i;
+    for (i = 0; i != msp; ++i)
+        tls_dw.pseudo_sample.dist.weights[i] = 1.0;
+    
     tls_dw.ldat = malloc(bam_samples.n * sizeof(struct locus_data));
     unsigned s;
     for (s = 0; s != bam_samples.n; ++s)
         alloc_locus_data(&tls_dw.ldat[s]);
 
     tls_dw.pair_stats = calloc(bam_sample_pairs.n, sizeof(struct pair_dist_stats));
-    tls_dw.square_dist_buf = malloc(sizeof(double) * g_ld_par.max_sample_points);
-    tls_dw.weights_buf = malloc(sizeof(double) * g_ld_par.max_sample_points);
+    tls_dw.square_dist_buf = malloc(sizeof(double) * msp);
+    tls_dw.weights_buf = malloc(sizeof(double) * msp);
 
     batch_pileup_thread_init(bam_samples.n, 
                              thread_params.fasta_file);
-    dir_diff_cache_thread_init();
+    dir_points_thread_init();
 }
 
 
@@ -268,7 +228,7 @@ locus_diff_thread_init()
 void
 locus_diff_thread_free()
 {
-    dir_diff_cache_thread_free();
+    dir_points_thread_free();
     gsl_rng_free(tls_dw.randgen);
 
     free_locus_data(&tls_dw.pseudo_sample);
@@ -420,6 +380,26 @@ print_distance_quantiles(const char *contig,
 }
 
 
+struct pos_pair_key {
+    struct contig_pos pos;
+    struct dir_cache_pair_key pk;
+    enum fuzzy_state state;
+};
+
+
+struct pos_pair_iter {
+    struct pos_pair_key *buf, *cur;
+    unsigned size, alloc;
+};
+
+
+static unsigned
+is_pseudo_sample(struct dir_points *dp)
+{
+    return (dir_cache_is_pseudo_alpha(dp->perm_alpha) != -1);
+}
+
+
 #define ONE_OVER_SQRT2 0.70710678118654752440
 
 /* for each sample pair, calculate whether the loci differ above the
@@ -429,14 +409,19 @@ print_distance_quantiles(const char *contig,
    points for each sample as needed, both for the preliminary test and
    more points for the final test */
 void
-distance_quantiles_aux(struct managed_buf *out_buf)
+distance_quantiles_aux(struct managed_buf *out_buf,
+                       struct pos_pair_iter *dist_class)
 {
     enum fuzzy_state diff_state = AMBIGUOUS;
     unsigned cache_hit;
     struct locus_data *ld[2];
     unsigned pi, i;
-
+    struct contig_pos pos = pileup_current_pos();
+    
     for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
+        struct pos_pair_iter *it = &dist_class[pi];
+        assert(cmp_contig_pos(pos, it->cur->pos) == 0);
+        
         unsigned sp[] = { bam_sample_pairs.m[pi].s1, bam_sample_pairs.m[pi].s2 };
 
         ld[0] = &tls_dw.ldat[sp[0]];
@@ -445,22 +430,28 @@ distance_quantiles_aux(struct managed_buf *out_buf)
         tls_dw.metrics.total++;
         tls_dw.pair_stats[pi].total++;
 
-        for (i = 0; i != 2; ++i) {
-            tls_dw.bsp.dist[i] = &ld[i]->dist;
-            if (! ld[i]->init.base_ct) {
-                ld[i]->base_ct = pileup_current_basecalls(sp[i]);
-                ld[i]->init.base_ct = 1;
+        /* retrieve diff_state from pre-computed array */
+        diff_state = it->cur->state;
+        cache_hit = (it->cur->state != STATE_UNKNOWN);
+        if (diff_state == STATE_UNKNOWN) {
+            /* the pre-scanning didn't manage to get this from the
+               cache. must be calculated here. */
+            for (i = 0; i != 2; ++i) {
+                if (! ld[i]->init.base_ct) {
+                    ld[i]->base_ct = pileup_current_basecalls(sp[i]);
+                    ld[i]->init.base_ct = 1;
+                }
             }
+
+            diff_state =
+                dir_cache_calc_state(ld[0]->base_ct.ct_filt,
+                                     ld[1]->base_ct.ct_filt,
+                                     &ld[0]->dist,
+                                     &ld[1]->dist);
         }
-
-        diff_state =
-            cached_dirichlet_diff(ld[0]->base_ct.ct_filt,
-                                  ld[1]->base_ct.ct_filt,
-                                  &tls_dw.bsp, &cache_hit);
-
+        
         tls_dw.pair_stats[pi].dist_count[diff_state]++;
         tls_dw.pair_stats[pi].cache_was_set += cache_hit;
-
         tls_dw.metrics.cache_was_set += cache_hit;
 
         if (diff_state == CHANGED) {
@@ -476,11 +467,9 @@ distance_quantiles_aux(struct managed_buf *out_buf)
                 }
                 dir_points_update_alpha(ld[i]->base_ct.ct_filt, NULL, &ld[i]->dist);
                 dir_points_fill(&ld[i]->dist);
-
                 dir_weights_update_terms(ld[i]->bqs_ct, ld[i]->n_bqs_ct, &ld[i]->dist);
-                /* no need to call de_permute_points since points are
-                   filled with the NULL permutation. */
-                dir_weights_fill(&ld[i]->dist);
+                if (! is_pseudo_sample(&ld[i]->dist))
+                    dir_weights_fill(&ld[i]->dist);
             }
             compute_wsq_dist((const double *)ld[0]->dist.data, ld[0]->dist.weights,
                              (const double *)ld[1]->dist.data, ld[1]->dist.weights,
@@ -781,10 +770,6 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
     struct pileup_locus_info ploc;
     ploc.pos = UINT_MAX; /* signal that this isn't initialized yet */
 
-    /*!!! delete me */
-    struct pileup_locus_info pli;
-    pileup_current_info(&pli);
-    
     unsigned d, s;
     for (s = 0; s != bam_samples.n; ++s) {
         struct locus_data *ld = &tls_dw.ldat[s];
@@ -831,15 +816,105 @@ comp_quantiles_aux(struct managed_buf *comp_buf)
 }
 
 
-/* receives a certain number of in_bufs and a certain number of
-   out_bufs.
-   
-   there is one struct locus_data for each input.  it's current
-   field points to the current line being processed. 'gs' is a single
-   index indicating the sample with the lowest 'current' among all of
-   them.  it is this position that must be fully processed before any
-   bam_samples may advance.
-*/
+/* order by pk */
+static int
+pair_key_type_less(struct pos_pair_key a,
+                   struct pos_pair_key b)
+{
+    return a.pk.key < b.pk.key
+        || (a.pk.key == b.pk.key
+            && a.pk.is_ref_change < b.pk.is_ref_change);
+}
+
+KSORT_INIT(key_type_sort, struct pos_pair_key, pair_key_type_less);
+
+
+static int
+pair_pos_less(struct pos_pair_key a,
+              struct pos_pair_key b)
+{
+    return cmp_contig_pos(a.pos, b.pos) == -1;
+}
+
+
+KSORT_INIT(pos_sort, struct pos_pair_key, pair_pos_less);
+
+
+/* prescan all input to initialize keys.  then, sort by key, allowing
+   a single computation per distinct key value in sequence.  then,
+   populate 'state' variable.  finally, sort by position again. */
+static struct pos_pair_iter *
+prescan_input()
+{
+    struct pos_pair_iter *dist_class =
+        malloc(bam_sample_pairs.n * sizeof(struct pos_pair_iter));
+    
+    unsigned s, pi;
+    for (pi = 0; pi != bam_sample_pairs.n; ++pi)
+        dist_class[pi] = (struct pos_pair_iter){ NULL, NULL, 0, 0 };
+
+    /* pre-scan all input */
+    struct locus_data *ld[2];
+    while (pileup_next_pos()) {
+        for (s = 0; s != bam_samples.n; ++s) {
+            reset_locus_data(&tls_dw.ldat[s]);
+            tls_dw.ldat[s].base_ct = pileup_current_basecalls(s);
+        }
+        reset_locus_data(&tls_dw.pseudo_sample);
+        tls_dw.pseudo_sample.base_ct =
+            pileup_current_basecalls(PSEUDO_SAMPLE);
+
+        struct contig_pos pos = pileup_current_pos();
+        for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
+            unsigned sp[] = { bam_sample_pairs.m[pi].s1,
+                              bam_sample_pairs.m[pi].s2 };
+            ld[0] = &tls_dw.ldat[sp[0]];
+            ld[1] = sp[1] == REFERENCE_SAMPLE
+                ? &tls_dw.pseudo_sample :
+                &tls_dw.ldat[sp[1]];
+            struct pos_pair_iter *pp = &dist_class[pi];
+            ALLOC_GROW(pp->buf, pp->size + 1, pp->alloc);
+            pp->buf[pp->size].pos = pos;
+            pp->buf[pp->size].pk =
+                dir_cache_classify_alphas(ld[0]->base_ct.ct_filt,
+                                          ld[1]->base_ct.ct_filt);
+            ++pp->size;
+        }
+    }
+
+    /* sort by key value and key type. populate 'state' variable from
+       cache if possible. */
+    unsigned i;
+    struct pos_pair_key pps = { .pk = { .is_valid = 0 } }; /* previous pk */
+    for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
+        struct pos_pair_iter *pp = &dist_class[pi];
+        ks_introsort(key_type_sort, pp->size, pp->buf);
+        for (i = 0; i != pp->size; ++i) {
+            struct pos_pair_key *ps = &pp->buf[i];
+            if (ps->pk.is_valid) {
+                if (pps.pk.is_valid && pps.pk.key == ps->pk.key)
+                    ps->state = pps.state;
+                else
+                    ps->state = dir_cache_try_get_state(ps->pk);
+            } else
+                ps->state = STATE_UNKNOWN;
+            pps = *ps;
+        }
+    }
+
+    /* re-sort back to position based sorting. */
+    for (pi = 0; pi != bam_sample_pairs.n; ++pi) {
+        struct pos_pair_iter *pp = &dist_class[pi];
+        ks_introsort(pos_sort, pp->size, pp->buf);
+        pp->cur = pp->buf;
+    }
+    pileup_reset_pos();
+    
+    return dist_class;
+}
+
+
+
 void
 locus_diff_worker(const struct managed_buf *in_bufs,
                   unsigned more_input,
@@ -880,31 +955,21 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         pileup_prepare_indels(s);
     }
 
-
     /* zero out the pair_stats */
     unsigned pi;
     for (pi = 0; pi != bam_sample_pairs.n; ++pi)
         memset(&tls_dw.pair_stats[pi], 0, sizeof(tls_dw.pair_stats[0]));
 
+    /* allocate pre-computed distances. */
+    struct pos_pair_iter *dist_class = prescan_input();
+
     while (pileup_next_pos()) {
-        /* this will strain the global mutex, but only during the hash
-           loading phase. */
-
-        /* !!! delete me. */
-        struct pileup_locus_info pli;
-        pileup_current_info(&pli);
-
-        if (pli.pos == 15390331 || pli.pos == 15390210) {
-            int x = 0;
-            ++x;
-        }
-        
         reset_locus_data(&tls_dw.pseudo_sample);
         for (s = 0; s != bam_samples.n; ++s)
             reset_locus_data(&tls_dw.ldat[s]);
 
         if (dist_buf || comp_buf)
-            distance_quantiles_aux(dist_buf);
+            distance_quantiles_aux(dist_buf, dist_class);
         
         if (indel_buf)
             indel_distance_quantiles_aux(indel_buf);
@@ -912,12 +977,18 @@ locus_diff_worker(const struct managed_buf *in_bufs,
         if (comp_buf)
             comp_quantiles_aux(comp_buf);
 
+        for (pi = 0; pi != bam_sample_pairs.n; ++pi)
+            dist_class[pi].cur++;
     }   
 
     /* frees statistics that have already been used in one of the
        distance calculations. */
     pileup_clear_stats();
     accumulate_pair_stats(tls_dw.pair_stats);
+
+    for (pi = 0; pi != bam_sample_pairs.n; ++pi)
+        free(dist_class[pi].buf);
+    free(dist_class);
 }
  
     

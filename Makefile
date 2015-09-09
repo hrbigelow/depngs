@@ -54,9 +54,8 @@ all : $(EXE)
 dep : $(addprefix $(OBJDIR)/, dep.o common_tools.o dist.o				\
 	locus_diff.o fasta.o locus_range.o wquantile.o sampling.o timer.o	\
 	bam_sample_info.o binomial_est.o dir_cache.o dir_points_gen.o		\
-	dir_diff_cache.o file_utils.o bam_reader.o batch_pileup.o			\
-	thread_queue.o virtual_bound.o geometry.o chunk_strategy.o			\
-	dep_pileup.o)
+	file_utils.o bam_reader.o batch_pileup.o thread_queue.o				\
+	virtual_bound.o geometry.o chunk_strategy.o dep_pileup.o)
 	$(CC) -L$(YEPLIBDIR) -L$(HTSLIBDIR)									\
 	-Wl,-rpath,$(YEPLIBDIR),-rpath,$(GSLDEBUGLIB),-rpath,$(HTSLIBDIR)	\
 	$(PROF) -o $@ $^ $(DEPLIBS)

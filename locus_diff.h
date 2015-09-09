@@ -6,7 +6,6 @@
 #include "defs.h"
 #include "bam_reader.h"
 #include "dir_cache.h"
-#include "dir_diff_cache.h"
 #include "thread_queue.h"
 
 struct locus_diff_params {
@@ -30,7 +29,6 @@ locus_diff_init(const char *samples_file, const char *sample_pair_file,
                 const char *locus_range_file, const char *fasta_file,
                 unsigned n_threads, unsigned n_max_reading, unsigned long max_input_mem,
                 struct locus_diff_params ld_par,
-                struct dirichlet_diff_params dd_par,
                 struct binomial_est_params be_par,
                 struct dir_cache_params dc_par,
                 struct bam_filter_params bf_par,
@@ -48,7 +46,6 @@ locus_diff_tq_init(const char *locus_range_file,
                    unsigned n_threads,
                    unsigned n_max_reading,
                    unsigned long max_input_mem,
-                   struct dirichlet_diff_params dd_par,
                    struct binomial_est_params be_par,
                    struct dir_cache_params dc_par, 
                    struct bam_filter_params bf_par,
@@ -66,7 +63,6 @@ void locus_diff_tq_free();
    well, held in sample_attributes. */
 struct locus_diff_input
 {
-    struct bound_search_params bsp;
     size_t thread_num;
 
     double dist_quantile_values[MAX_NUM_QUANTILES];
