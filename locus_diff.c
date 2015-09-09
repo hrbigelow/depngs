@@ -47,7 +47,7 @@ struct work_unit {
 };
 
 
-/* */
+/* initialize all bam_stats for thread 0 */
 void *
 stats_init_worker(void *arg)
 {
@@ -64,9 +64,18 @@ stats_init_worker(void *arg)
     
     /* work (possibly more than once per thread */
     unsigned s;
-    for (s = wu->nth; s < bam_samples.n; s += wu->n_threads)
+    /* for (s = t; s < bam_samples.n; s += wu->n_threads) { */
+    /*     bam_stats_init(bam_samples.m[s].bam_file,  */
+    /*                    &thread_params.reader_buf[0].m[s]); */
+    /*     fprintf(stdout, "Initialized reader_buf[0].m[%u] = %p\n",  */
+    /*             s, &thread_params.reader_buf[0].m[s]); */
+        
+    /* } */
+
+    for (s = 0; s != bam_samples.n; ++s)
         bam_stats_init(bam_samples.m[s].bam_file, 
-                       &thread_params.reader_buf[0].m[s]);
+                       &thread_params.reader_buf[t].m[s]);
+
     return NULL;
 }
 
@@ -77,11 +86,15 @@ stats_dup_worker(void *arg)
 {
     struct work_unit *wu = arg;
     unsigned s, t = wu->nth;
-    for (s = 0; s != bam_samples.n; ++s)
+    assert(t != 0);
+    printf("in dup: t = %u\n", t);
+    for (s = 0; s != bam_samples.n; ++s) {
+        /* fprintf(stdout, "thread_params.reader_buf[0].m[%u].idx = %p\n", */
+        /*         s, thread_params.reader_buf[0].m[s].idx); */
         thread_params.reader_buf[t].m[s] = 
-            bam_stats_dup(thread_params.reader_buf[0].m[s],
+            bam_stats_dup(&thread_params.reader_buf[0].m[s],
                           bam_samples.m[s].bam_file);
-    
+    }    
     return NULL;
 }
 
@@ -135,17 +148,30 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
         stats_init_input[t] = (struct work_unit){ n_threads, t };
         (void)pthread_create(&bam_init_th[t], NULL,
                              stats_init_worker, &stats_init_input[t]);
+        printf("Created init thread %u\n", t);
+        fflush(NULL);
     }
-    for (t = 0; t != n_threads; ++t)
+    for (t = 0; t != n_threads; ++t) {
         pthread_join(bam_init_th[t], NULL);
+        printf("Joined init thread %u\n", t);
+        fflush(NULL);
+    }
         
-    for (t = 0; t != n_threads; ++t)
-        (void)pthread_create(&bam_init_th[t], NULL,
-                             stats_dup_worker, &stats_init_input[t]);
+    /* pthread_t *bam_dup_th = malloc(n_threads * sizeof(pthread_t)); */
+    /* for (t = 1; t != n_threads; ++t) { */
+    /*     (void)pthread_create(&bam_dup_th[t], NULL, */
+    /*                          stats_dup_worker, &stats_init_input[t]); */
+    /*     printf("Created dup thread %u\n", t); */
+    /*     fflush(NULL); */
+    /* } */
     
-    for (t = 0; t != n_threads; ++t)
-        pthread_join(bam_init_th[t], NULL);
-    
+    /* for (t = 1; t != n_threads; ++t) { */
+    /*     pthread_join(bam_dup_th[t], NULL); */
+    /*     printf("Joined dup thread %u\n", t); */
+    /*     fflush(NULL); */
+    /* } */
+
+    /* free(bam_dup_th); */
     free(bam_init_th);
     free(stats_init_input);
     fprintf(stdout, "%s: Finished reading BAM indices.\n", timer_progress());

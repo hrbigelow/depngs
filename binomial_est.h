@@ -14,11 +14,12 @@ struct binomial_est_params {
 };
 
 enum fuzzy_state {
-    CHANGED,                /* the two loci differ */
-    AMBIGUOUS_OR_CHANGED,   /* max_points taken; UNCHANGED category eliminated  */
-    AMBIGUOUS,              /* posterior distributions too diffuse to call */
-    AMBIGUOUS_OR_UNCHANGED, /* max_points taken; CHANGED category eliminated */
-    UNCHANGED               /* the two loci do not differ */
+    CHANGED,                 /* the two loci differ */
+    AMBIGUOUS_OR_CHANGED,    /* max_points taken; UNCHANGED category eliminated  */
+    AMBIGUOUS,               /* posterior distributions too diffuse to call */
+    AMBIGUOUS_OR_UNCHANGED,  /* max_points taken; CHANGED category eliminated */
+    UNCHANGED,               /* the two loci do not differ */
+    STATE_UNKNOWN            /* for representing */
 };
 
 

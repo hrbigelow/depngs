@@ -95,7 +95,7 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs);
 
 /* duplicate the bam_stats object (allocating as necessary) */
 struct bam_stats
-bam_stats_dup(const struct bam_stats bs, const char *bam_file);
+bam_stats_dup(const struct bam_stats *bs, const char *bam_file);
 
 
 /* release the resources of this bam_stat */

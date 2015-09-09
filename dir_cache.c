@@ -156,17 +156,22 @@ static const unsigned alpha_pair_limits[] = {
 };
 
 /* packing 13|13|6|2 for each alpha */
-uint64_t
+static inline uint64_t
 pack_alpha_pair(const unsigned *alpha1,
                 const unsigned *alpha2,
                 const unsigned *perm)
 {
     union pair p;
-    const unsigned *a1 = alpha1, *a2 = alpha2;
-    p.c[0] = (uint32_t)a1[perm[0]]<<21 | (uint32_t)a1[perm[1]]<<8
-        | (uint32_t)a1[perm[2]]<<2 | (uint32_t)a1[perm[3]];
-    p.c[1] = (uint32_t)a2[perm[0]]<<21 | (uint32_t)a2[perm[1]]<<8
-        | (uint32_t)a2[perm[2]]<<2 | (uint32_t)a2[perm[3]];
+    p.c[0] = 
+        (uint32_t)alpha1[perm[0]]<<21
+        | (uint32_t)alpha1[perm[1]]<<8
+        | (uint32_t)alpha1[perm[2]]<<2
+        | (uint32_t)alpha1[perm[3]];
+    p.c[1] = 
+        (uint32_t)alpha2[perm[0]]<<21
+        | (uint32_t)alpha2[perm[1]]<<8
+        | (uint32_t)alpha2[perm[2]]<<2
+        | (uint32_t)alpha2[perm[3]];
     return p.v;
 }
 
@@ -363,7 +368,7 @@ dir_cache_try_get_points(unsigned *alpha_perm)
 
 
 /* try to retrieve a change state from a sample pair */
-enum fuzzy_state *
+static inline enum fuzzy_state
 dir_cache_try_get_samchange(const unsigned *alpha1,
                             const unsigned *alpha2,
                             const unsigned *perm)
@@ -372,8 +377,8 @@ dir_cache_try_get_samchange(const unsigned *alpha1,
     khiter_t itr;
     if ((itr = kh_get(fuzzy_h, g_sam_change_hash, key)) != kh_end(g_sam_change_hash)
         && kh_exist(g_sam_change_hash, itr))
-        return &kh_val(g_sam_change_hash, itr);
-    else return NULL;
+        return kh_val(g_sam_change_hash, itr);
+    else return STATE_UNKNOWN;
 }
 
 
@@ -391,7 +396,7 @@ dir_cache_try_get_samchange(const unsigned *alpha1,
 
 
 /* try to retrieve a change state from a sample and REF */
-enum fuzzy_state *
+enum fuzzy_state
 dir_cache_try_get_refchange(unsigned ref_ind, unsigned *alpha_perm)
 {
     khint64_t key =
@@ -400,8 +405,8 @@ dir_cache_try_get_refchange(unsigned ref_ind, unsigned *alpha_perm)
     
     khiter_t itr = kh_get(fuzzy_h, g_ref_change_hash, key);
     if (itr != kh_end(g_ref_change_hash) && kh_exist(g_ref_change_hash, itr))
-        return &kh_val(g_ref_change_hash, itr);
-    else return NULL;
+        return kh_val(g_ref_change_hash, itr);
+    else return STATE_UNKNOWN;
 }
 
 
@@ -416,25 +421,25 @@ dir_cache_try_get_diff(const unsigned *alpha1,
                        unsigned *perm,
                        enum fuzzy_state *state)
 {
-    unsigned ref_ind;
+    unsigned ref_ind = 5; /* to suppress warnings */
     unsigned sam_to_ref = sample_to_ref_perm(alpha1, alpha2, perm, &ref_ind);
     if (sam_to_ref) {
         unsigned i, alpha_perm[4];
         for (i = 0; i != 4; ++i) alpha_perm[i] = alpha1[perm[i]];
-        enum fuzzy_state *change =
+        enum fuzzy_state change =
             dir_cache_try_get_refchange(ref_ind, alpha_perm);
-        if (change) {
-            *state = *change;
+        if (change != STATE_UNKNOWN) {
+            *state = change;
             return CACHE_HIT;
         } else
             return CACHE_MISS_PERM;
     }
     unsigned sam_to_sam = sample_pair_perm(alpha1, alpha2, perm);
     if (sam_to_sam) {
-        enum fuzzy_state *change =
+        enum fuzzy_state change =
             dir_cache_try_get_samchange(alpha1, alpha2, perm);
-        if (change) {
-            *state = *change;
+        if (change != STATE_UNKNOWN) {
+            *state = change;
             return CACHE_HIT;
         } else
             return CACHE_MISS_PERM;

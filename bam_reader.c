@@ -774,7 +774,7 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs)
         fprintf(stderr, "Error: Couldn't load bam file %s\n", bam_file);
         exit(1);
     }
-    char *bam_index_file = malloc(strlen(bam_file) + 5);
+    char bam_index_file[2000];
     strcpy(bam_index_file, bam_file);
     strcat(bam_index_file, ".bai");
 
@@ -785,9 +785,12 @@ bam_stats_init(const char *bam_file, struct bam_stats *bs)
     }
     bs->is_shallow_idx = 0;
     bs->hdr = bam_hdr_read(bs->bgzf);
+    if (! bs->hdr) {
+        fprintf(stderr, "Error: Couldn't load bam header from file %s\n", bam_file);
+        exit(1);
+    }
     bs->chunks = NULL;
     bs->n_chunks = 0;
-    free(bam_index_file);
 }
 
 
@@ -797,14 +800,18 @@ static hts_idx_t *
 hts_idx_shallow_copy(const hts_idx_t *idx)
 {
     hts_idx_t *dup = malloc(sizeof(hts_idx_t));
-    *dup = *idx;
+    if (idx == NULL) 
+        fprintf(stdout, "idx is NULL\n");
+    //assert(idx);
+    else
+        *dup = *idx;
     return dup;
 }
 
 
 /* free an hts_idx_t created with hts_idx_shallow_copy */
 void
-hts_idx_shallow_free(const hts_idx_t *idx)
+hts_idx_shallow_free(hts_idx_t *idx)
 {
     free(idx);
 }
@@ -813,20 +820,25 @@ hts_idx_shallow_free(const hts_idx_t *idx)
 
 /* duplicate the bam_stats object (allocating as necessary) */
 struct bam_stats
-bam_stats_dup(const struct bam_stats bs, const char *bam_file)
+bam_stats_dup(const struct bam_stats *bs, const char *bam_file)
 {
     struct bam_stats obs;
     obs.is_shallow_idx = 1;
-    obs.idx = hts_idx_shallow_copy(bs.idx);
-    obs.hdr = bam_hdr_dup(bs.hdr);
+    obs.idx = hts_idx_shallow_copy(bs->idx);
+    obs.hdr = bam_hdr_dup(bs->hdr);
+    if (! obs.hdr) {
+        fprintf(stderr, "Error: Couldn't duplicate bam header for bam file %s\n",
+                bam_file);
+        exit(1);
+    }
     obs.bgzf = bgzf_open(bam_file, "r");
-    if (! bs.bgzf) {
+    if (! obs.bgzf) {
         fprintf(stderr, "Error: Couldn't load bam file %s\n", bam_file);
         exit(1);
     }
-    obs.chunks = malloc(bs.n_chunks * sizeof(hts_pair64_t));
-    obs.n_chunks = bs.n_chunks;
-    obs.more_input = bs.more_input;
+    obs.chunks = malloc(bs->n_chunks * sizeof(hts_pair64_t));
+    obs.n_chunks = bs->n_chunks;
+    obs.more_input = bs->more_input;
     return obs;
 }
 
