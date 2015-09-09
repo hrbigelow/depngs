@@ -47,7 +47,8 @@ struct work_unit {
 };
 
 
-/* initialize all bam_stats for thread 0 */
+/* initialize all bam_stats for sample nth and thread 0, and duplicate
+   them for all other threads. */
 void *
 stats_init_worker(void *arg)
 {
@@ -62,19 +63,23 @@ stats_init_worker(void *arg)
     };
     thread_params.reader_pars[t] = &thread_params.reader_buf[t];
     
-    /* work (possibly more than once per thread */
-    unsigned s;
-    /* for (s = t; s < bam_samples.n; s += wu->n_threads) { */
-    /*     bam_stats_init(bam_samples.m[s].bam_file,  */
-    /*                    &thread_params.reader_buf[0].m[s]); */
-    /*     fprintf(stdout, "Initialized reader_buf[0].m[%u] = %p\n",  */
-    /*             s, &thread_params.reader_buf[0].m[s]); */
+    unsigned s, dt;
+    for (s = t; s < bam_samples.n; s += wu->n_threads) {
+        struct bam_stats *bstats =
+            &thread_params.reader_buf[0].m[s];
+        bam_stats_init(bam_samples.m[s].bam_file, bstats);
+        for (dt = 1; dt != wu->n_threads; ++dt)
+            thread_params.reader_buf[dt].m[s] =
+                bam_stats_dup(bstats, bam_samples.m[s].bam_file);
+            
+        /* fprintf(stdout, "Initialized reader_buf[0].m[%u] = %p\n", */
+        /*         s, &thread_params.reader_buf[0].m[s]); */
         
-    /* } */
+    }
 
-    for (s = 0; s != bam_samples.n; ++s)
-        bam_stats_init(bam_samples.m[s].bam_file, 
-                       &thread_params.reader_buf[t].m[s]);
+    /* for (s = 0; s != bam_samples.n; ++s) */
+    /*     bam_stats_init(bam_samples.m[s].bam_file,  */
+    /*                    &thread_params.reader_buf[t].m[s]); */
 
     return NULL;
 }
