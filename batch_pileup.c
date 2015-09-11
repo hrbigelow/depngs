@@ -602,7 +602,9 @@ bqs_count_to_call(struct bqs_count bc, unsigned refbase_i)
     static char match[] = ",.";
     return bc.base == refbase_i
         ? match[bc.strand]
-        : seq_nt16_str[bc.base];
+        : (bc.strand
+           ? seq_nt16_str[bc.base]
+           : tolower(seq_nt16_str[bc.base]));
 }
 
 /* convert a BAM quality to a character */
