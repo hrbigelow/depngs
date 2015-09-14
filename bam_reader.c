@@ -351,8 +351,8 @@ accumulate_chunks(kbtree_t(itree_t) *itree,
    tiling windows that were consumed.
 */
 static struct contig_span
-hts_size_to_range(const struct contig_region *qbeg,
-                  const struct contig_region *qend,
+hts_size_to_range(const struct contig_region *qlo,
+                  const struct contig_region *qhi,
                   struct contig_span subset,
                   size_t min_wanted_bytes,
                   hts_idx_t *idx,
@@ -372,9 +372,7 @@ hts_size_to_range(const struct contig_region *qbeg,
     struct contig_pos cpos = { subset.end.tid, subset.end.pos };
     struct contig_span loaded_span = { cpos, cpos };
 
-    const struct contig_region *qlo, *qhi;
-    unsigned long ix_sz = find_intersecting_span(qbeg, qend, subset, &qlo, &qhi);
-    if (! ix_sz) return loaded_span;
+    if (qlo == qhi) return loaded_span;
     
     /* constants */
     int firstbin0 = hts_bin_first(idx->n_lvls);
@@ -493,12 +491,15 @@ bam_scanner(void *par, size_t bytes_wanted)
     struct contig_pos min_end = { UINT_MAX, UINT_MAX };
     struct contig_span target_span = { cs_stats.cur_pos, cs_stats.total_span.end };
                
+    const struct contig_region *qlo, *qhi;
+    (void)find_intersecting_span(qbeg, qend, target_span, &qlo, &qhi);
+
     while (n_tiles > 1 && max_bytes >= bytes_wanted) {
         max_bytes = 0;
         for (s = 0; s != bsi->n; ++s) {
             struct bam_stats *bs = &bsi->m[s];
             bsi->loaded_span =
-                hts_size_to_range(qbeg, qend, target_span,
+                hts_size_to_range(qlo, qhi, target_span,
                                   bytes_target,
                                   bs->idx, 
                                   &bs->chunks, &bs->n_chunks,
@@ -567,7 +568,6 @@ bam_reader(void *par, struct managed_buf *bufs)
 
     size_t max_grow;
     unsigned more_input = 0;
-
     for (s = 0; s != bsi->n; ++s) {
         struct bam_stats *bs = &bsi->m[s];
         if (bs->more_input) more_input = 1;
@@ -608,6 +608,10 @@ bam_reader(void *par, struct managed_buf *bufs)
             bufs[s].size = wp - bufs[s].buf;
         }
         bufs[s].size = wp - bufs[s].buf;
+
+        /* shrink buffer to conserve memory */
+        bufs[s].alloc = bufs[s].size + 1;
+        ALLOC_GROW(bufs[s].buf, bufs[s].size, bufs[s].alloc);
     }
     return more_input;
 }

@@ -19,7 +19,13 @@ static struct {
     unsigned n_threads;
     unsigned n_max_reading;
     unsigned phred_offset;
-} opts = { { NULL, 5, 10, 0, 0 }, 1e9, 1, 1, 33 };
+} opts = { 
+    { NULL, 5, 10, 0, 0 }, 
+    .max_mem = 1e9,
+    .n_threads = 1, 
+    .n_max_reading = 1, 
+    .phred_offset = 33
+};
 
 
 /* a place to hold allocated input for thread_queue that thread_queue
