@@ -49,35 +49,6 @@ struct work_unit {
 };
 
 
-/* initialize all bam_stats for sample nth and thread 0, and duplicate
-   them for all other threads. */
-void *
-stats_init_worker(void *arg)
-{
-    struct work_unit *wu = arg;
-    unsigned t = wu->nth;
-
-    /* once-per-thread initialization */
-    thread_params.reader_buf[t] = (struct bam_scanner_info){
-        .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
-        .n = bam_samples.n,
-        .do_print_progress = 1
-    };
-    thread_params.reader_pars[t] = &thread_params.reader_buf[t];
-    
-    unsigned s, dt;
-    for (s = t; s < bam_samples.n; s += wu->n_threads) {
-        struct bam_stats *bstats =
-            &thread_params.reader_buf[0].m[s];
-        bam_stats_init(bam_samples.m[s].bam_file, bstats);
-        for (dt = 1; dt != wu->n_threads; ++dt)
-            thread_params.reader_buf[dt].m[s] =
-                bam_stats_dup(bstats, bam_samples.m[s].bam_file);
-    }
-
-    return NULL;
-}
-
 
 struct thread_queue *
 locus_diff_init(const char *samples_file, const char *sample_pairs_file, 
@@ -113,25 +84,34 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
                         locus_range_file, fasta_file,
                         cs_bytes_zone2, cs_bytes_zone3);
 
-    thread_params.n_threads = n_threads;
-    thread_params.reader_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
-    thread_params.reader_pars = malloc(n_threads * sizeof(void *));
     
     /* initialize bam_stats */
     fprintf(stdout, "%s: Starting reading BAM indices\n", timer_progress());   
-    unsigned t;
-    struct work_unit *stats_init_input = malloc(n_threads * sizeof(struct work_unit));
-    pthread_t *bam_init_th = malloc(n_threads * sizeof(pthread_t));
-    for (t = 0; t != n_threads; ++t) {
-        stats_init_input[t] = (struct work_unit){ n_threads, t };
-        (void)pthread_create(&bam_init_th[t], NULL,
-                             stats_init_worker, &stats_init_input[t]);
-    }
-    for (t = 0; t != n_threads; ++t)
-        pthread_join(bam_init_th[t], NULL);
+    {
+        unsigned s, t;
+        const char **bam_files = malloc(bam_samples.n * sizeof(char *));
+        for (s = 0; s != bam_samples.n; ++s)
+            bam_files[s] = bam_samples.m[s].bam_file;
+        struct bam_stats *all_stats =
+            bam_stats_init_all(bam_files, bam_samples.n, n_threads);
+        free(bam_files);
         
-    free(bam_init_th);
-    free(stats_init_input);
+        thread_params.n_threads = n_threads;
+        thread_params.reader_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
+        thread_params.reader_pars = malloc(n_threads * sizeof(void *));
+        for (t = 0; t != n_threads; ++t) {
+            thread_params.reader_buf[t] = (struct bam_scanner_info){
+                .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
+                .n = bam_samples.n,
+                .do_print_progress = 1
+            };
+            thread_params.reader_pars[t] = &thread_params.reader_buf[t];
+            for (s = 0; s != bam_samples.n; ++s)
+                thread_params.reader_buf[t].m[s] = all_stats[t * bam_samples.n + s];
+        }
+        free(all_stats);
+    }
+    
     fprintf(stdout, "%s: Finished reading BAM indices.\n", timer_progress());
     
     thread_params.fasta_file = fasta_file;
@@ -156,6 +136,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     batch_pileup_init(bf_par, skip_empty_loci, dc_par.pseudo_depth);
 
     /* now turn on progress messages */
+    unsigned t;
     for (t = 0; t != n_threads; ++t)
         thread_params.reader_buf[t].do_print_progress = 1;
     

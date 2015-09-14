@@ -309,25 +309,35 @@ pileup_init(const char *samples_file,
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 
     /* fasta_init is called from within batch_pileup_init */
-    thread_params.n_threads = n_threads;
-    thread_params.scanner_info_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
-    thread_params.reader_pars = malloc(n_threads * sizeof(void *));
-
-    unsigned t, s;
-    for (t = 0; t != n_threads; ++t) {
-        thread_params.scanner_info_buf[t] = (struct bam_scanner_info){
-            .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
-            .n = bam_samples.n,
-            .do_print_progress = 1
-        };
+    {
+        unsigned t, s;
+        const char **bam_files = malloc(bam_samples.n * sizeof(char *));
         for (s = 0; s != bam_samples.n; ++s)
-            bam_stats_init(bam_samples.m[s].bam_file, 
-                           &thread_params.scanner_info_buf[t].m[s]);
+            bam_files[s] = bam_samples.m[s].bam_file;
         
-        thread_params.reader_pars[t] = &thread_params.scanner_info_buf[t];
-    }
-    thread_params.fasta_file = fasta_file;
+        struct bam_stats *all_stats =
+            bam_stats_init_all(bam_files, bam_samples.n, n_threads);
+        free(bam_files);
+    
+        thread_params.n_threads = n_threads;
+        thread_params.scanner_info_buf = malloc(n_threads * sizeof(struct bam_scanner_info));
+        thread_params.reader_pars = malloc(n_threads * sizeof(void *));
 
+        for (t = 0; t != n_threads; ++t) {
+            thread_params.scanner_info_buf[t] = (struct bam_scanner_info){
+                .m = malloc(bam_samples.n * sizeof(struct bam_stats)),
+                .n = bam_samples.n,
+                .do_print_progress = 1
+            };
+            thread_params.reader_pars[t] = &thread_params.scanner_info_buf[t];
+            for (s = 0; s != bam_samples.n; ++s)
+                thread_params.scanner_info_buf[t].m[s] =
+                    all_stats[t * bam_samples.n + s];
+        }
+        thread_params.fasta_file = fasta_file;
+        free(all_stats);
+    }
+    
     /* estimated bytes left of bam input in a sample to switch to
        smaller chunking zones to avoid thread starvation.  see
        chunk_strategy.h */

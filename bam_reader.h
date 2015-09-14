@@ -102,6 +102,17 @@ bam_stats_dup(const struct bam_stats *bs, const char *bam_file);
 void
 bam_stats_free(struct bam_stats *bs);
 
+
+/* allocates and initializes stats[t][s] structure for every sample in
+   every thread.  first initialize stats[0][s] for some sample s.
+   Then, for each t > 0, initialize stats[t][s] by calling
+   bam_stats_dup. */
+struct bam_stats *
+bam_stats_init_all(const char **bam_files,
+                   unsigned n_threads,
+                   unsigned n_samples);
+
+
 #define MAX_READGROUP_NAME_LEN 1000
 
 KHASH_SET_INIT_STR(readgroup_h)

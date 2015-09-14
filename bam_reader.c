@@ -11,6 +11,7 @@
 #include "khash.h"
 
 #include <assert.h>
+#include <pthread.h>
 
 /* extract compressed offset from voffset */
 #define BAM_COFFSET(v) ((v)>>16)
@@ -854,6 +855,63 @@ bam_stats_free(struct bam_stats *bs)
     bgzf_close(bs->bgzf);
     free(bs->chunks);
 }
+
+struct stats_work_unit {
+    unsigned n_samples, n_threads, nth;
+    const char **samples;
+    struct bam_stats *stats_buf;
+};
+
+
+void *
+stats_init_worker(void *arg)
+{
+    struct stats_work_unit *wu = arg;
+    unsigned s, t = wu->nth;
+    for (s = t; s < wu->n_samples; s += wu->n_threads) {
+        struct bam_stats *bstats = &wu->stats_buf[s];
+        bam_stats_init(wu->samples[s], bstats);
+        unsigned dt;
+        for (dt = 1; dt != wu->n_threads; ++dt)
+            wu->stats_buf[dt * wu->n_samples + s] =
+                bam_stats_dup(bstats, wu->samples[s]);
+    }
+    return NULL;
+}
+
+
+struct bam_stats *
+bam_stats_init_all(const char **bam_files,
+                   unsigned n_samples,
+                   unsigned n_threads)
+{
+    /* stats[t][s] = ... */
+    struct bam_stats *stats =
+        malloc(n_samples * n_threads * sizeof(struct bam_stats));
+
+    struct stats_work_unit *work =
+        malloc(n_threads * sizeof(struct stats_work_unit));
+    unsigned t;
+    for (t = 0; t != n_threads; ++t)
+        work[t] = (struct stats_work_unit){ .n_samples = n_samples,
+                                            .n_threads = n_threads,
+                                            .nth = t,
+                                            .samples = bam_files,
+                                            .stats_buf = stats };
+
+    pthread_t *bam_init_th = malloc(n_threads * sizeof(pthread_t));
+    for (t = 0; t != n_threads; ++t) {
+        (void)pthread_create(&bam_init_th[t], NULL,
+                             stats_init_worker, &work[t]);
+    }
+    for (t = 0; t != n_threads; ++t)
+        pthread_join(bam_init_th[t], NULL);
+    
+    free(bam_init_th);
+    free(work);
+    return stats;
+}
+
 
 
 khash_t(readgroup_h) *
