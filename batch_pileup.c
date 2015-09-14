@@ -63,13 +63,6 @@ unpack_pbqt(khint64_t k, struct pbqt *t)
 }
 
 
-/* union pbqt_key { */
-/*     khint64_t k; */
-/*     struct pbqt v; */
-/* }; */
-
-
-
 union pos_key {
     khint64_t k;
     struct contig_pos v;
@@ -95,11 +88,16 @@ struct pos_indel_count {
 static int
 cmp_indel(struct indel a, struct indel b)
 {
-    return ((int)a.is_ins - (int)b.is_ins)
-        || ((int)a.length - (int)b.length)
-        || (a.is_ins && strcmp(a.seq, b.seq));
+    int ins_cmp, len_cmp;
+    int rv = (ins_cmp = (int)a.is_ins - (int)b.is_ins)
+        ? ins_cmp
+        : (
+           (len_cmp = (int)a.length - (int)b.length)
+           ? len_cmp
+           : (a.is_ins && strcmp(a.seq, b.seq))
+           );
+    return rv;
 }
-
 
 
 /* hash type for storing bqt (basecall, quality, strand) counts at
@@ -564,28 +562,24 @@ pileup_make_indel_pairs(struct indel_count *cts1, unsigned n_cts1,
        on comparison order.  */
     int cmp;
     while (ic0 != ie0 || ic1 != ie1) {
-        /* -1: first-in-pair only
+        /* <0: first-in-pair only
            0 : both pairs
-           1 : second-in-pair only */
+           >0 : second-in-pair only */
         cmp = (ic1 == ie1 ? -1
                : (ic0 == ie0 ? 1 
                   : cmp_indel(ic0->idl, ic1->idl)));
-        switch (cmp) {
-        case -1: 
+        if (cmp < 0) {
             ip->count[0] = ic0->ct;
             ip->count[1] = 0; 
             ip->indel = ic0++->idl;
-            break;
-        case 0 :
+        } else if (cmp == 0) {
             ip->count[0] = ic0->ct;
             ip->count[1] = ic1->ct; 
             ip->indel = ic0->idl; ++ic0; ++ic1;
-            break;
-        case 1 : 
+        } else {
             ip->count[1] = ic1->ct;
             ip->count[0] = 0;
             ip->indel = ic1++->idl;
-            break;
         }
         ++ip;
     }            
@@ -1037,7 +1031,7 @@ pos_iter_indel_count_less(struct pos_indel_count a, struct pos_indel_count b)
 {
     int cmp;
     return (cmp = cmp_contig_pos(a.cpos, b.cpos)) == -1
-        || (cmp == 0 && cmp_indel(a.ict.idl, b.ict.idl) == -1);
+        || (cmp == 0 && cmp_indel(a.ict.idl, b.ict.idl) < 0);
 }
 
 KSORT_INIT(pi_sort, struct pos_indel_count, pos_iter_indel_count_less);
