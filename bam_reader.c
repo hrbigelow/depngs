@@ -369,6 +369,8 @@ hts_size_to_range(const struct contig_region *qlo,
 
     /* creg is the intersection of the current interval with the subset */
     struct contig_region creg;
+
+    /* cpos is */
     struct contig_pos cpos = { subset.end.tid, subset.end.pos };
     struct contig_span loaded_span = { cpos, cpos };
 
@@ -409,13 +411,13 @@ hts_size_to_range(const struct contig_region *qlo,
             ++(*n_tiles);
 
             /* update cpos.  (cpos is the end position of tile ti, or
-               the end of the current query region qlo->end) */
+               the end of the current query region ) */
             cpos.pos = (ti + 1)<<ms; 
-            cpos.pos = MIN(cpos.pos, qlo->end);
+            cpos.pos = MIN(cpos.pos, creg.end);
 
             if (*n_tiles == n_max_tiles
                 || bgzf_bytes >= min_wanted_bytes 
-                || cmp_contig_pos(cpos, CONTIG_REGION_END(creg)) == 1) {
+                || cmp_contig_pos(cpos, CONTIG_REGION_END(creg)) != -1) {
                 /* break if window touches end, or we have enough
                    content */
                 goto END;
@@ -425,11 +427,11 @@ hts_size_to_range(const struct contig_region *qlo,
         ++qlo;
     }
  END:
-    *more_input = qlo != qhi;
+    loaded_span.end = cpos;
+    *more_input = cmp_contig_pos(cpos, subset.end) == -1;
     accumulate_chunks(itree, chunks, n_chunks);
     kb_destroy(itree_t, itree);
     free(bins);
-    loaded_span.end = cpos;
     return loaded_span;
 }
 

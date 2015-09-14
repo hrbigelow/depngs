@@ -28,8 +28,8 @@ chunk_strategy_init(unsigned n_files, unsigned n_threads,
                            &cs_stats.n_query_regions,
                            &cs_stats.n_total_loci);
 
-    if (cs_stats.n_query_regions > 1000)
-    cs_stats.n_all_bytes_read = calloc(n_files, sizeof(cs_stats.n_all_bytes_read[0]));
+    cs_stats.n_all_bytes_read = 
+        calloc(n_files, sizeof(cs_stats.n_all_bytes_read[0]));
     cs_stats.n_all_loci_read = 0;
 
     chunk_strategy_reset();
