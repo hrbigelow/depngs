@@ -11,6 +11,7 @@
 #include "common_tools.h"
 #include "locus_range.h"
 #include "fasta.h"
+#include "timer.h"
 
 static struct {
     struct bam_filter_params bam_filter;
@@ -96,7 +97,8 @@ int main_pileup(int argc, char **argv)
     int c;
     char *query_range_file = NULL;
     int n_max_reading_set = 0;
-
+    timer_init();
+    
     /* adapted from samtools/bam_plcmd.c.*/
     while ((c = getopt(argc, argv, "t:R:m:F:ABC:EG:l:q:Q:x:X:")) >= 0) {
         switch (c) {

@@ -180,7 +180,6 @@ batch_pileup_init(struct bam_filter_params bf_par,
     bam_filter = bf_par;
     skip_empty_loci = skip_empty;
     pseudo_depth = _pseudo_depth;
-    chunk_strategy_reset();
 }
 
 
