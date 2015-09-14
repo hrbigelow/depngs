@@ -28,6 +28,7 @@ chunk_strategy_init(unsigned n_files, unsigned n_threads,
                            &cs_stats.n_query_regions,
                            &cs_stats.n_total_loci);
 
+    if (cs_stats.n_query_regions > 1000)
     cs_stats.n_all_bytes_read = calloc(n_files, sizeof(cs_stats.n_all_bytes_read[0]));
     cs_stats.n_all_loci_read = 0;
 
@@ -83,10 +84,17 @@ cs_max_bytes_wanted()
                                subset,
                                &qlo, &qhi);
     
-    /* estimate the minimum number of bytes_left in any sample */
+    /* estimate the minimum number of bytes_left in any sample. if
+       there are lots of query regions, there will be inefficient
+       parsing because BAM scanning has a finest resolution of one
+       tile of 16384 bp. So, we assume we will be parsing an entire
+       BGZF block (16000 bases on average) for one locus. */
     unsigned long max_bytes_per_locus = 0;
     if (cs_stats.n_all_loci_read == 0)
-        max_bytes_per_locus = DEFAULT_BYTES_PER_LOCUS;
+        max_bytes_per_locus =
+            cs_stats.n_query_regions > 100
+            ? 16000
+            : 10;
     else {
         unsigned long max_bytes_read = 0;
         unsigned f;

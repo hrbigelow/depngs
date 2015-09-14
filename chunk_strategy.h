@@ -35,7 +35,7 @@ struct chunk_strategy {
        left. */
     unsigned long *n_all_bytes_read;
     unsigned long n_all_loci_read;
-
+    
     /* current position for starting the next read */
     struct contig_pos cur_pos;
 };
