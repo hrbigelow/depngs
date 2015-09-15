@@ -88,7 +88,7 @@ struct locus_diff_offload_par {
 
 /* conforms to thread_queue_worker_t */
 void
-locus_diff_worker(const struct managed_buf *in_bufs,
+locus_diff_worker(struct managed_buf *in_bufs,
                   unsigned more_input,
                   void *vsi, /* cast to struct bam_scanner_info */
                   struct managed_buf *out_bufs);

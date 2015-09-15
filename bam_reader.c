@@ -612,8 +612,7 @@ bam_reader(void *par, struct managed_buf *bufs)
         bufs[s].size = wp - bufs[s].buf;
 
         /* shrink buffer to conserve memory */
-        bufs[s].alloc = bufs[s].size + 1;
-        ALLOC_GROW(bufs[s].buf, bufs[s].size, bufs[s].alloc);
+        ALLOC_SHRINK(bufs[s].buf, bufs[s].size, bufs[s].alloc);
     }
     return more_input;
 }

@@ -27,17 +27,6 @@
     } while (0)
 
 
-#define ALLOC_GROW_TYPED(x, nr, alloc)                          \
-    do {                                                        \
-        if ((nr) > alloc) {                                     \
-            if (alloc_nr(alloc) < (nr))                         \
-                alloc = (nr);                                   \
-            else                                                \
-                alloc = alloc_nr(alloc);                        \
-            x = (typeof(x))realloc((x), alloc * sizeof(*(x)));  \
-        }                                                       \
-    } while (0)
-
 /* Realloc the buffer pointed at by 'x' so it holds at least 'nr'
    entries; the number of entries currently allocated is 'alloc',
    using growing factor alloc_nr().  If realloc is necessary, also
@@ -55,6 +44,27 @@
             (ptr) = x + offset;                                 \
         }                                                       \
     } while (0)
+
+
+#define ALLOC_CLEAR(x, nr, alloc)               \
+    do {                                        \
+        if (alloc) {                            \
+            free(x);                            \
+            x = NULL;                           \
+            nr = 0;                             \
+            alloc = 0;                          \
+        }                                       \
+    } while (0)
+
+
+
+#define ALLOC_SHRINK(x, nr, alloc)                  \
+    do {                                            \
+        if ((nr) < alloc) {                         \
+            x = realloc((x), nr * sizeof(*(x)));    \
+            alloc = (nr);                           \
+        }                                           \
+    } while (0) 
 
 
 struct managed_buf {

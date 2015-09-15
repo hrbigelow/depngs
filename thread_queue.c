@@ -70,6 +70,9 @@ struct thread_queue {
 
 struct timespec program_start_time;
 
+/* tells the scanner to try to reserve about this much in each input
+   chunk. */
+static size_t g_max_input_chunk_bytes;
 
 /* initialize resources */
 struct thread_queue *
@@ -116,12 +119,13 @@ thread_queue_init(thread_queue_reader_t reader,
     tq->n_outputs = n_outputs;
 
     /* only need initialize the pointer to NULL */
+    g_max_input_chunk_bytes = max_input_mem / n_threads / n_inputs;
     unsigned p, t, b;
     for (t = 0; t != n_threads; ++t) {
         tq->input[t].buf = malloc(n_inputs * sizeof(struct managed_buf));
         for (b = 0; b != n_inputs; ++b) {
             struct managed_buf *buf = &tq->input[t].buf[b];
-            buf->alloc = max_input_mem / n_threads / n_inputs;
+            buf->alloc = g_max_input_chunk_bytes;
             buf->buf = malloc(buf->alloc);
             buf->size = 0;
         }
@@ -321,8 +325,10 @@ offload_full_buffers(struct thread_comp_input *par)
         tq->pool_status[tq->out_head->status]++;
         
         unsigned b;
-        for (b = 0; b != tq->n_outputs; ++b)
-            tq->out_head->buf[b].size = 0;
+        for (b = 0; b != tq->n_outputs; ++b) {
+            struct managed_buf *mb = &tq->out_head->buf[b];
+            ALLOC_CLEAR(mb->buf, mb->size, mb->alloc);
+        }
         
         tq->out_head = tq->out_head->next;
         pthread_cond_signal(&tq->out_buf_avail);
@@ -349,7 +355,7 @@ worker_func(void *args)
 
         /* reserve next input range */
         PROGRESS_START("SCAN");
-        tq->reader.scan(par->scan_info, par->buf[0].alloc);
+        tq->reader.scan(par->scan_info, g_max_input_chunk_bytes);
         PROGRESS_MSG("SCAN");
 
         /* reserve the first empty out buffer.  we must do this within

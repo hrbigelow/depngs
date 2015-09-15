@@ -120,7 +120,7 @@ init_sample_pairs(const char *pair_file, khash_t(remap_h) *sample_map)
                         pair_file, label[l]);
                 exit(1);
             }
-        ALLOC_GROW_TYPED(bam_sample_pairs.m, p + 1, alloc);
+        ALLOC_GROW(bam_sample_pairs.m, p + 1, alloc);
         bam_sample_pairs.m[p].s1 = kh_val(sample_map, itr[0]);
         bam_sample_pairs.m[p].s2 = kh_val(sample_map, itr[1]);
         ++p;

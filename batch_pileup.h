@@ -48,17 +48,17 @@
 #include "bam_reader.h"
 
 
-/* n_match_lo_q + n_match_hi_q + n_match_fuzzy equal the total number
-   of CIGAR match bases at this locus. ct_filt contain the
-   n_match_hi_q calls broken down by basecall. (A 'fuzzy' call is a
-   basecall that is not one of A,C,G, or T).  */
-struct base_count {
-    unsigned ct_filt[4]; /* # CIGAR match reads by base call, with
-                            qual >= min_quality_score */
-    unsigned n_match_lo_q; /* # CIGAR match reads with qual < min_quality_score */
-    unsigned n_match_hi_q; /* # CIGAR match reads with qual >= min_quality_score */
-    unsigned n_match_fuzzy; /* # CIGAR match reads with ambiguous base call.   */
-};
+ /* n_match_lo_q + n_match_hi_q + n_match_fuzzy equal the total number
+    of CIGAR match bases at this locus. ct_filt contain the
+    n_match_hi_q calls broken down by basecall. (A 'fuzzy' call is a
+    basecall that is not one of A,C,G, or T).  */
+ struct base_count {
+     unsigned ct_filt[4]; /* # CIGAR match reads by base call, with
+                             qual >= min_quality_score */
+     unsigned n_match_lo_q; /* # CIGAR match reads with qual < min_quality_score */
+     unsigned n_match_hi_q; /* # CIGAR match reads with qual >= min_quality_score */
+     unsigned n_match_fuzzy; /* # CIGAR match reads with ambiguous base call.   */
+ };
 
 
 struct bqs_count {
@@ -166,9 +166,9 @@ pileup_current_basecalls(unsigned s);
 void
 pileup_prepare_bqs(unsigned s);
 
-/* provide (b,q,s) stats for a sample at current position.  *cts is
-   reallocated as necessary. *n_cts set to number of distinct stats
-   that are populated. */
+ /* provide (b,q,s) stats for a sample at current position.  *cts is
+    reallocated as necessary. *n_cts set to number of distinct stats
+    that are populated. */
 void
 pileup_current_bqs(unsigned s, struct bqs_count **cts, unsigned *n_cts);
 

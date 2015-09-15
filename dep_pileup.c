@@ -85,6 +85,8 @@ pileup_usage()
 }
 
 
+/* max_input_mem is passed to thread_queue.  it is the full allotment
+   of memory for all input buffers (n_samples * n_threads).  */
 struct thread_queue *
 pileup_init(const char *samples_file,
             const char *fasta_file,
@@ -162,10 +164,11 @@ int main_pileup(int argc, char **argv)
     char *fasta_file = argv[optind + 1];
     char *pileup_file = argv[optind + 2];
 
-    /* max_mem accounts for compressed bam plus pileup
-       structures. max_input_mem accounts for the compressed bam
-       size. */
-    unsigned long max_input_mem = (float)opts.max_mem * 0.4;
+    /* max_mem accounts for compressed bam plus pileup structures plus
+       output buffers.  max_input_mem accounts for the compressed bam
+       size only. uncompressed it is about 3-4 times that size.
+       printed out into pileup buffers it is about 4 times that size. */
+    unsigned long max_input_mem = (float)opts.max_mem * 0.1;
 
     struct thread_queue *tq = 
         pileup_init(samples_file,
@@ -195,7 +198,7 @@ int main_pileup(int argc, char **argv)
    vsi: cast this to struct bam_scanner_info.
  */
 void
-pileup_worker(const struct managed_buf *in_bufs,
+pileup_worker(struct managed_buf *in_bufs,
               unsigned more_input,
               void *vsi,
               struct managed_buf *out_bufs)
@@ -211,6 +214,8 @@ pileup_worker(const struct managed_buf *in_bufs,
         struct bam_stats *bs = &bsi->m[s];
         bam_inflate(&in_bufs[s], bs->chunks, bs->n_chunks, &bam);
         pileup_tally_stats(bam, bsi, s);
+        in_bufs[s].size = 0;
+        ALLOC_SHRINK(in_bufs[s].buf, in_bufs[s].size, in_bufs[s].alloc);
     }
     if (bam.buf != NULL) free(bam.buf);
 
@@ -355,7 +360,7 @@ pileup_init(const char *samples_file,
                         bytes_zone2,
                         bytes_zone3);
 
-    unsigned n_extra = n_threads * 2;
+    unsigned n_extra = 5;
     unsigned n_outputs = 1; /* just producing a pileup file */
 
     thread_queue_reader_t reader = { bam_reader, bam_scanner };

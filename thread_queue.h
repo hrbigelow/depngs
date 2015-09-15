@@ -49,9 +49,10 @@ typedef struct {
    worker whether there is more input (and thus the worker function
    will be called again) or this is the last time.  (this flag is
    useful for worker functions that need to perform some summarization
-   routine when there is no further input) */
+   routine when there is no further input.  the worker function is
+   allowed to grow/shrink in_bufs as it sees fit) */
 typedef void
-(thread_queue_worker_t)(const struct managed_buf *in_bufs,
+(thread_queue_worker_t)(struct managed_buf *in_bufs,
                         unsigned more_input,
                         void *scan_info,
                         struct managed_buf *out_bufs);

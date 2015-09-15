@@ -474,7 +474,7 @@ dir_cache_calc_state(const unsigned *alpha1,
 
 
 static void
-survey_worker(const struct managed_buf *in_bufs,
+survey_worker(struct managed_buf *in_bufs,
               unsigned more_input,
               void *scan_info,
               struct managed_buf *out_bufs);
@@ -643,7 +643,7 @@ winnow_ptup_hash()
 
 /* accumulate basecall statistics */
 static void
-survey_worker(const struct managed_buf *in_bufs,
+survey_worker(struct managed_buf *in_bufs,
               unsigned more_input,
               void *scan_info,
               struct managed_buf *out_bufs /* unused */)

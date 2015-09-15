@@ -94,7 +94,9 @@ cmp_indel(struct indel a, struct indel b)
         : (
            (len_cmp = (int)a.length - (int)b.length)
            ? len_cmp
-           : (a.is_ins && strcmp(a.seq, b.seq))
+           : (a.is_ins
+              ? strcmp(a.seq, b.seq)
+              : 0)
            );
     return rv;
 }

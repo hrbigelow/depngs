@@ -897,7 +897,7 @@ prescan_input()
 
 
 void
-locus_diff_worker(const struct managed_buf *in_bufs,
+locus_diff_worker(struct managed_buf *in_bufs,
                   unsigned more_input,
                   void *vsi,
                   struct managed_buf *out_bufs)
