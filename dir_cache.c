@@ -44,6 +44,7 @@ static struct dir_cache_params g_dc_par;
 
 void
 dir_cache_init(struct binomial_est_params be_par,
+               struct batch_pileup_params bp_par,
                struct dir_cache_params dc_par,
                struct bam_filter_params bf_par,
                struct bam_scanner_info *reader_buf,
@@ -86,7 +87,7 @@ dir_cache_init(struct binomial_est_params be_par,
     fprintf(stdout, "%s: Finished computing confidence interval statistics.\n", timer_progress());
 
     fprintf(stdout, "%s: Start collecting input statistics.\n", timer_progress());
-    run_survey(bf_par, reader_buf, dc_par.pseudo_depth,
+    run_survey(bf_par, bp_par, reader_buf,
                dc_par.n_max_survey_loci, n_threads, n_max_reading, max_input_mem);
     fprintf(stdout, "%s: Finished collecting input statistics.\n", timer_progress());
 
@@ -513,15 +514,15 @@ survey_offload(void *par,
    least n_bounds and n_point_sets. */
 void
 run_survey(struct bam_filter_params bf_par,
+           struct batch_pileup_params bp_par,
            struct bam_scanner_info *reader_buf,
-           unsigned pseudo_depth,
            unsigned long n_max_survey_loci,
            unsigned n_threads,
            unsigned n_max_reading,
            unsigned long max_input_mem)
 {
-    unsigned skip_empty_loci = 1;
-    batch_pileup_init(bf_par, skip_empty_loci, pseudo_depth);
+    bp_par.skip_empty_loci = 1;
+    batch_pileup_init(bf_par, bp_par);
 
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
     unsigned t, np = 0;

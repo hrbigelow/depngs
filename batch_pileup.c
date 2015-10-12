@@ -15,6 +15,7 @@
 #include "fasta.h"
 #include "locus_range.h"
 #include "chunk_strategy.h"
+#include "htslib/sam.h"
 
 #include <pthread.h>
 #include <stdint.h>
@@ -166,20 +167,16 @@ struct contig_fragment {
 };
 
 
-static unsigned pseudo_depth;
-static unsigned skip_empty_loci; /* if 1, pileup_next_pos() advances
-                                      past loci that have no data. */
+static struct batch_pileup_params g_bp_par;
 static struct bam_filter_params bam_filter;
 
 
 void
 batch_pileup_init(struct bam_filter_params bf_par,
-                  unsigned skip_empty,
-                  unsigned _pseudo_depth)
+                  struct batch_pileup_params bp_par)
 {
     bam_filter = bf_par;
-    skip_empty_loci = skip_empty;
-    pseudo_depth = _pseudo_depth;
+    g_bp_par = bp_par;
 }
 
 
@@ -234,7 +231,7 @@ batch_pileup_thread_init(unsigned n_samples, const char *fasta_file)
 
     tls.null_ct = (struct base_count){ { 0, 0, 0, 0 }, 0, 0 };
 
-    unsigned pd = pseudo_depth;
+    unsigned pd = g_bp_par.pseudo_depth;
     tls.refsam_ct[0] = (struct base_count){ { pd, 0, 0, 0 }, 0, pd };
     tls.refsam_ct[1] = (struct base_count){ { 0, pd, 0, 0 }, 0, pd };
     tls.refsam_ct[2] = (struct base_count){ { 0, 0, pd, 0 }, 0, pd };
@@ -288,6 +285,15 @@ batch_pileup_thread_free()
     }
 }
 
+
+static int
+infer_read_pair_overlap(bam1_t *b1, bam1_t *b2);
+
+
+static void
+tweak_overlap_quality(unsigned left_off, 
+                      bam1_t *b0, bam1_t *b1,
+                      unsigned min_clash_qual);
 
 static void
 process_bam_block(char *rec, char *end,
@@ -648,7 +654,7 @@ pileup_current_data(unsigned s, struct pileup_data *pd)
         strncpy(pd->quals.buf, "REF", 3);
 
         pd->n_match_lo_q = 0;
-        pd->n_match_hi_q = pseudo_depth;
+        pd->n_match_hi_q = g_bp_par.pseudo_depth;
         pd->n_indel = 0;
         return;
     }        
@@ -914,7 +920,10 @@ process_bam_block(char *rec, char *end,
                 itr = kh_get(olap_h, ts->overlap_hash, bam_get_qname(&b));
                 if (itr != kh_end(ts->overlap_hash)) {
                     (void)bam_parse(kh_val(ts->overlap_hash, itr), &b_mate);
-                    // !!! NEED TO IMPLEMENT: tweak_overlap_quality(&b, &b_mate);
+                    int left_offset = infer_read_pair_overlap(&b_mate, &b);
+                    if (left_offset != -1)
+                        tweak_overlap_quality(left_offset, &b_mate, &b, g_bp_par.min_clash_qual);
+
                     process_bam_stats(&b, ts);
                     process_bam_stats(&b_mate, ts);
                     free((void *)kh_key(ts->overlap_hash, itr));
@@ -1342,7 +1351,7 @@ pileup_next_pos()
 {
     next_pos_aux();
 
-    if (skip_empty_loci) {
+    if (g_bp_par.skip_empty_loci) {
         unsigned was_fixed = 0;
         do {
             update_data_iters();
@@ -1401,4 +1410,156 @@ struct bam_filter_params
 pileup_get_filter_params()
 {
     return bam_filter;
+}
+
+
+/* advance rpos and ci to closest MATCH state in the cigar from the
+   current position.  ci is the current element of cigar, rpos is the
+   current position on reference. if 'next' is set, advance at least
+   one unit even if the current state is BAM_CMATCH.  otherwise,
+   advance only if it is not BAM_CMATCH. */
+static void
+advance_to_match(const uint32_t *cigar, 
+                 uint32_t n_cigar, 
+                 unsigned char next,
+                 int32_t *rpos, 
+                 int32_t *qpos,
+                 unsigned *ci)
+{
+    uint32_t op, ln;
+    unsigned ct = *ci;
+    while (ct != n_cigar 
+           && ((op = bam_cigar_op(cigar[ct])) != BAM_CMATCH || next)) {
+        ln = bam_cigar_oplen(cigar[ct]);
+        if (bam_cigar_type(op) & 1) *qpos += ln;
+        if (bam_cigar_type(op) & 2) *rpos += ln;
+        ++ct;
+        next = 0;
+    }
+    *ci = ct;
+}
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+/* return the inferred offset from the left end of read1 to the left
+   end of read2 on the sequenced fragment.  -1 means the two reads do
+   NOT overlap on the fragment.  n means all but the first n bases of
+   read1 are also covered by read2.
+
+   traverses the pair of alignments, locating each pair of overlapping
+   'M' blocks (one from each read).  each M pair implies a read-read
+   offset, and the smaller length of the two M is used as 'number of
+   bases of support'.  if more than one pair of 'M' blocks imply the
+   same read-read offset, support is summed.  after consuming both
+   CIGARs, finds the best-supported offset, breaking ties by selecting
+   the one with the minimum offset (i.e. the maximum number of
+   doubly-sequenced bases. */
+static int
+infer_read_pair_overlap(bam1_t *b1, bam1_t *b2)
+{
+    /* initialize current CIGAR block markers for first and second read to
+       the first M block. */
+    bam1_t *b[2] = { b1, b2 };
+    uint32_t *cigar[] = { bam_get_cigar(b[0]), bam_get_cigar(b[1]) };
+    int32_t qpos[] = { 0, 0 }, rpos[] = { b[0]->core.pos, b[1]->core.pos };
+    unsigned i, c[] = { 0, 0 }, e[] = { b[0]->core.n_cigar, b[1]->core.n_cigar };
+    for (i = 0; i != 2; ++i)
+        advance_to_match(cigar[i], e[i], 0, &rpos[i], &qpos[i], &c[i]);
+
+    unsigned char olap;
+    unsigned n_off = 0;
+    uint32_t oplen[2];
+#define MAX_N_OFF 20
+    struct { int32_t off; uint32_t n_sup; } offsets[MAX_N_OFF];
+
+    /* loop through all pairs of potentially overlapping M states. */
+    while (c[0] != e[0] && c[1] != e[1] && n_off != MAX_N_OFF) {
+        oplen[0] = bam_cigar_oplen(cigar[0][c[0]]);
+        oplen[1] = bam_cigar_oplen(cigar[1][c[1]]);
+
+        uint32_t rend[] = { rpos[0] + oplen[0], rpos[1] + oplen[1] };
+
+        olap = (rpos[0] < rend[1] && rend[1] <= rend[0])
+            || (rpos[1] < rend[0] && rend[0] <= rend[1]);
+
+        if (olap) {
+            int32_t off = (rpos[1] - qpos[1]) - (rpos[0] - qpos[0]);
+
+            unsigned n_sup = MIN(oplen[0], oplen[1]);
+            for (i = 0; i != n_off; ++i) {
+                if (offsets[i].off == off) {
+                    offsets[n_off].n_sup += n_sup;
+                    break;
+                }
+            }
+            if (i == n_off) {
+                offsets[n_off].off = off;
+                offsets[n_off].n_sup = n_sup;
+                ++n_off;
+            }
+        }
+        /* advance current op that has lesser end boundary */
+        i = (rend[0] < rend[1]) ? 0 : 1;
+        advance_to_match(cigar[i], e[i], 1, &rpos[i], &qpos[i], &c[i]);
+    }
+    /* find the maximally supported read-pair offset if any.  off
+       represents the distance on the fragment from the left end of
+       read1 to the left end of read2 (in the same orientation).  an
+       offset of 0 means both reads cover the same stretch of
+       template. */
+    int off = -1;
+    if (n_off) {
+        unsigned o, p;
+        for (o = 0, p = 0; o != n_off; ++o) {
+            if (offsets[p].n_sup < offsets[o].n_sup
+                || (offsets[p].n_sup == offsets[o].n_sup &&
+                    offsets[p].off > offsets[o].off))
+                p = o;
+        }
+        off = offsets[p].off;
+    }
+    return off;
+}
+
+
+/* consolidate basecall quality of every redundantly sequenced base by
+   adjusting one or more of the qualities down to zero.  among the
+   pair of bases (one in each read) that are in the same position on
+   the fragment, zero out the lower quality of the two. b1 is the
+   upstream record, b2 is the downstream record in the pair.  the
+   range of quals affected are marked 'z' in the diagram below:
+
+   frag    : ------------------------------------
+   b1      : ----------zzzzzzzzzzzzzzz
+   b2      :           zzzzzzzzzzzzzzz-----------
+   left_off: |<------->|
+
+   if calls agree, zero out the lesser of the two qualities.  
+
+   if calls disagree:
+      if both are >= min_clash_qual, set both to zero
+      otherwise, set the lower one to zero.
+*/
+static void
+tweak_overlap_quality(unsigned left_off, 
+                      bam1_t *b0, bam1_t *b1,
+                      unsigned min_clash_qual)
+{
+    assert(left_off < b0->core.l_qseq);
+    uint8_t *seq[] = { bam_get_seq(b0), bam_get_seq(b1) };
+    uint8_t *qual[] = { bam_get_qual(b0), bam_get_qual(b1) };
+    unsigned qmin, qpmin, q0, q1, len0 = b0->core.l_qseq, len1 = b1->core.l_qseq;
+    assert(len0 <= left_off + len1);
+    for (q0 = left_off, q1 = 0; q0 != len0; ++q0, ++q1) {
+        qmin = (qual[0][q0] < qual[1][q1] ? 1 : 0);
+        qpmin = (qmin == 0 ? q0 : q1);
+        if (bam_seqi(seq[0], q0) != bam_seqi(seq[1], q1)) {
+            if (qual[qmin][qpmin] >= min_clash_qual) {
+                qual[0][q0] = 0;
+                qual[1][q1] = 0;
+            } else
+                qual[qmin][qpmin] = 0;
+        } else
+            qual[qmin][qpmin] = 0;
+    }
 }

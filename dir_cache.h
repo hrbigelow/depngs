@@ -22,6 +22,7 @@ struct dir_cache_params {
 /* call once at start of program */
 void
 dir_cache_init(struct binomial_est_params be_par,
+               struct batch_pileup_params bp_par,
                struct dir_cache_params dc_par,
                struct bam_filter_params bf_par,
                struct bam_scanner_info *reader_buf,
@@ -85,8 +86,8 @@ dir_cache_is_pseudo_alpha(const unsigned *alpha);
    requirement. */
 void
 run_survey(struct bam_filter_params bf_par,
+           struct batch_pileup_params bp_par,
            struct bam_scanner_info *reader_buf,
-           unsigned pseudo_depth,
            unsigned long n_max_survey_loci,
            unsigned n_threads,
            unsigned n_max_reading,

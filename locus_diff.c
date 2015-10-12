@@ -58,6 +58,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
                 struct binomial_est_params be_par,
                 struct dir_cache_params dc_par,
                 struct bam_filter_params bf_par,
+                struct batch_pileup_params bp_par,
                 FILE *dist_fh, FILE *comp_fh, FILE *indel_fh)
 {
     g_ld_par = ld_par;
@@ -116,7 +117,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
     
     thread_params.fasta_file = fasta_file;
 
-    dir_cache_init(be_par, dc_par, bf_par,
+    dir_cache_init(be_par, bp_par, dc_par, bf_par,
                    thread_params.reader_buf,
                    n_max_reading, max_input_mem, n_threads);
 
@@ -130,10 +131,7 @@ locus_diff_init(const char *samples_file, const char *sample_pairs_file,
 
     thread_queue_reader_t reader = { bam_reader, bam_scanner };
 
-    /* we do not want to skip empty loci, because we need to traverse
-       these in order to get statistics for missing data */
-    unsigned skip_empty_loci = 0;
-    batch_pileup_init(bf_par, skip_empty_loci, dc_par.pseudo_depth);
+    batch_pileup_init(bf_par, bp_par);
 
     /* now turn on progress messages */
     unsigned t;

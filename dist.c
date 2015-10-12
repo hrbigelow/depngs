@@ -10,6 +10,7 @@
 
 static struct {
     struct bam_filter_params bf_par;
+    struct batch_pileup_params bp_par;
     struct binomial_est_params be_par;
     struct dir_cache_params dc_par;
     struct locus_diff_params ld_par;
@@ -23,6 +24,12 @@ static struct {
         .rflag_require = 0,
         .rflag_filter = 0
     }, 
+    .bp_par = {
+        .skip_empty_loci = 0, /* need to traverse these in order to
+                                 get statistics for missing data */
+        .pseudo_depth = 1e6,
+        .min_clash_qual = 20
+    },
     .be_par = {
         .max_sample_points = 10000,
         .post_confidence = 0.99,
@@ -261,7 +268,7 @@ main_dist(int argc, char **argv)
                         query_range_file, fasta_file,
                         opts.n_threads, opts.n_max_reading, max_input_mem,
                         opts.ld_par, opts.be_par, opts.dc_par, opts.bf_par,
-                        dist_fh, comp_fh, indel_fh);
+                        opts.bp_par, dist_fh, comp_fh, indel_fh);
 
     printf("Starting input processing.\n");
     thread_queue_run(tqueue);

@@ -32,6 +32,7 @@ locus_diff_init(const char *samples_file, const char *sample_pair_file,
                 struct binomial_est_params be_par,
                 struct dir_cache_params dc_par,
                 struct bam_filter_params bf_par,
+                struct batch_pileup_params bp_par,
                 FILE *dist_fh, FILE *comp_fh, FILE *indel_fh);
 
 

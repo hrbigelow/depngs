@@ -70,8 +70,6 @@ struct bqs_count {
 };
 
 
-
-
 struct indel {
     char is_ins;
     unsigned length;
@@ -115,6 +113,15 @@ void
 batch_pileup_thread_free();
 
 
+struct batch_pileup_params {
+    unsigned skip_empty_loci; /* if 1, pileup_next_pos() advances past
+                                 loci that have no data. */
+    unsigned pseudo_depth;
+    unsigned min_clash_qual; /* for doubly sequenced basecalls that
+                                clash to be both set to zero qual,
+                                both must be above this threshold. */
+};
+
 /* skip_empty_loci: if 0, pileup_next_pos() will visit all loci in the
    region of interest.  if set to 1, skip those loci in the region of
    interest that have no data for any sample.  setting this to 0
@@ -122,8 +129,7 @@ batch_pileup_thread_free();
    loop. */
 void
 batch_pileup_init(struct bam_filter_params _bam_filter,
-                  unsigned skip_empty_loci,
-                  unsigned _pseudo_depth);
+                  struct batch_pileup_params bp_par);
 
 
 void

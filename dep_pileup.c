@@ -15,12 +15,18 @@
 
 static struct {
     struct bam_filter_params bam_filter;
+    struct batch_pileup_params bp_par;
     unsigned long max_mem;
     unsigned n_threads;
     unsigned n_max_reading;
     unsigned phred_offset;
 } opts = { 
     { NULL, 5, 10, 0, 0 }, 
+    {
+        .skip_empty_loci = 0,
+        .pseudo_depth = 1e6,
+        .min_clash_qual = 20
+    },
     .max_mem = 1e9,
     .n_threads = 1, 
     .n_max_reading = 1, 
@@ -95,7 +101,8 @@ pileup_init(const char *samples_file,
             unsigned n_threads,
             unsigned n_max_reading,
             unsigned long max_input_mem,
-            struct bam_filter_params bam_filter);
+            struct bam_filter_params bam_filter,
+            struct batch_pileup_params bp_par);
 
 extern char *optarg;
 extern int optind;
@@ -178,7 +185,8 @@ int main_pileup(int argc, char **argv)
                     opts.n_threads,
                     opts.n_max_reading,
                     max_input_mem,
-                    opts.bam_filter);
+                    opts.bam_filter,
+                    opts.bp_par);
 
     printf("Starting input processing.\n");
     fflush(stdout);
@@ -299,10 +307,6 @@ pileup_on_exit()
     batch_pileup_thread_free();
 }
 
-/* This only matters for the 'null' locus, which is not used in this
-   application. */
-#define PSEUDO_DEPTH 1e6
-
 struct thread_queue *
 pileup_init(const char *samples_file,
             const char *fasta_file,
@@ -311,11 +315,12 @@ pileup_init(const char *samples_file,
             unsigned n_threads,
             unsigned n_max_reading,
             unsigned long max_input_mem,
-            struct bam_filter_params bam_filter)
+            struct bam_filter_params bam_filter,
+            struct batch_pileup_params bp_par)
 {
     bam_sample_info_init(samples_file, NULL);
-    unsigned skip_empty_loci = 1;
-    batch_pileup_init(bam_filter, skip_empty_loci, PSEUDO_DEPTH);
+    bp_par.skip_empty_loci = 1;
+    batch_pileup_init(bam_filter, bp_par);
 
     thread_params.pileup_fh = open_if_present(pileup_file, "w");
 
