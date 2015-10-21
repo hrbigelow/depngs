@@ -308,6 +308,7 @@ reserve_out_buffer(struct thread_comp_input *par)
 static void
 offload_full_buffers(struct thread_comp_input *par)
 {
+    PROGRESS_DECL();
     struct thread_queue *tq = par->tq;
     while (tq->out_head && tq->out_head->status == FULL) {
         tq->pool_status[tq->out_head->status]--;
@@ -317,7 +318,9 @@ offload_full_buffers(struct thread_comp_input *par)
         /* once tq->out_head->status is set to UNLOADING, program
            logic ensures it is safe to use tq->out_head->buf */
         pthread_mutex_unlock(&tq->out_mtx);
+        PROGRESS_START("OFFLOAD");
         tq->offload(tq->offload_par, tq->out_head->buf);
+        PROGRESS_MSG("OFFLOAD");
         pthread_mutex_lock(&tq->out_mtx);
 
         tq->pool_status[tq->out_head->status]--;
@@ -398,7 +401,9 @@ worker_func(void *args)
         PROGRESS_MSG("WORK");
 
         if (tq->n_outputs) {
+            PROGRESS_START("RESERVEOUT_UNLOAD");
             pthread_mutex_lock(&tq->out_mtx);
+            PROGRESS_MSG("RESERVEOUT_UNLOAD");
             set_outnode_status(tq, par->out, FULL);
             par->out = NULL;
             offload_full_buffers(par);

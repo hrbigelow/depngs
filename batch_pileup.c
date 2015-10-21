@@ -920,9 +920,9 @@ process_bam_block(char *rec, char *end,
                 itr = kh_get(olap_h, ts->overlap_hash, bam_get_qname(&b));
                 if (itr != kh_end(ts->overlap_hash)) {
                     (void)bam_parse(kh_val(ts->overlap_hash, itr), &b_mate);
-                    int left_offset = infer_read_pair_overlap(&b_mate, &b);
-                    if (left_offset != -1)
-                        tweak_overlap_quality(left_offset, &b_mate, &b, g_bp_par.min_clash_qual);
+                    /* int left_offset = infer_read_pair_overlap(&b_mate, &b); */
+                    /* if (left_offset != -1) */
+                    /*     tweak_overlap_quality(left_offset, &b_mate, &b, g_bp_par.min_clash_qual); */
 
                     process_bam_stats(&b, ts);
                     process_bam_stats(&b_mate, ts);
