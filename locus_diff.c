@@ -381,6 +381,9 @@ is_pseudo_sample(struct dir_points *dp)
 
 #define ONE_OVER_SQRT2 0.70710678118654752440
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) < (b) ? (b) : (a))
+
 /* for each sample pair, calculate whether the loci differ above the
    given level and confidence. if a pair differs, set the
    confirmed_changed flag for each sample in the pair. if out_buf is
@@ -449,7 +452,26 @@ distance_quantiles_aux(struct managed_buf *out_buf,
                 dir_weights_update_terms(ld[i]->bqs_ct, ld[i]->n_bqs_ct, &ld[i]->dist);
                 if (! is_pseudo_sample(&ld[i]->dist))
                     dir_weights_fill(&ld[i]->dist);
+
+                /* for testing purposes, output the min and max
+                   weights, and the parameters */
+                if (! is_pseudo_sample(&ld[i]->dist))
+                {
+                    unsigned j;
+                    double minw = DBL_MAX, maxw = 0, sumw = 0;
+                    for (j = 0; j != ld[i]->dist.n_weights; ++j) {
+                        maxw = MAX(maxw, ld[i]->dist.weights[j]);
+                        minw = MIN(minw, ld[i]->dist.weights[j]);
+                        sumw += ld[i]->dist.weights[j];
+                    }
+                    unsigned *pa = ld[i]->dist.perm_alpha;
+                    double *w = ld[i]->dist.weights;
+                    fprintf(stdout, "%10.5g\t%10.5g\t%10.5g\t%10.5g\t%u\t%u\t%u\t%u\n",
+                            minw, maxw, sumw, maxw / sumw * (double)ld[i]->dist.n_weights,
+                            pa[0], pa[1], pa[2], pa[3]);
+                }
             }
+
             compute_wsq_dist((const double *)ld[0]->dist.data, ld[0]->dist.weights,
                              (const double *)ld[1]->dist.data, ld[1]->dist.weights,
                              g_ld_par.max_sample_points,

@@ -291,7 +291,7 @@ infer_read_pair_overlap(bam1_t *b1, bam1_t *b2);
 
 
 static void
-tweak_overlap_quality(unsigned left_off, 
+tweak_overlap_quality(int left_off, 
                       bam1_t *b0, bam1_t *b1,
                       unsigned min_clash_qual);
 
@@ -1442,9 +1442,11 @@ advance_to_match(const uint32_t *cigar,
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 /* return the inferred offset from the left end of read1 to the left
-   end of read2 on the sequenced fragment.  -1 means the two reads do
-   NOT overlap on the fragment.  n means all but the first n bases of
-   read1 are also covered by read2.
+   end of read2 on the sequenced fragment.  INT_MAX means the two
+   reads do NOT overlap on the fragment.  n means all but the first n
+   bases of read1 are also covered by read2.  a negative value n means
+   that the reads completely overlap and sequence into the primer
+   region by -n bases.
 
    traverses the pair of alignments, locating each pair of overlapping
    'M' blocks (one from each read).  each M pair implies a read-read
@@ -1507,7 +1509,7 @@ infer_read_pair_overlap(bam1_t *b1, bam1_t *b2)
        read1 to the left end of read2 (in the same orientation).  an
        offset of 0 means both reads cover the same stretch of
        template. */
-    int off = -1;
+    int off = INT_MAX;
     if (n_off) {
         unsigned o, p;
         for (o = 0, p = 0; o != n_off; ++o) {
@@ -1530,9 +1532,18 @@ infer_read_pair_overlap(bam1_t *b1, bam1_t *b2)
    range of quals affected are marked 'z' in the diagram below:
 
    frag    : ------------------------------------
-   b1      : ----------zzzzzzzzzzzzzzz
-   b2      :           zzzzzzzzzzzzzzz-----------
+   b0      : ----------zzzzzzzzzzzzzzz
+   b1      :           zzzzzzzzzzzzzzz-----------
    left_off: |<------->|
+
+   or:
+
+   b0      :      zzzzzzzzzzzzzzzzzzzzzzzzzz-----
+   b1      : -----zzzzzzzzzzzzzzzzzzzzzzzzzz
+   left_off: |<-->|  (negative)
+
+   This second situation happens when the template is shorter than the
+   read length.
 
    if calls agree, zero out the lesser of the two qualities.  
 
@@ -1541,16 +1552,24 @@ infer_read_pair_overlap(bam1_t *b1, bam1_t *b2)
       otherwise, set the lower one to zero.
 */
 static void
-tweak_overlap_quality(unsigned left_off, 
+tweak_overlap_quality(int left_off, 
                       bam1_t *b0, bam1_t *b1,
                       unsigned min_clash_qual)
 {
-    assert(left_off < b0->core.l_qseq);
     uint8_t *seq[] = { bam_get_seq(b0), bam_get_seq(b1) };
     uint8_t *qual[] = { bam_get_qual(b0), bam_get_qual(b1) };
-    unsigned qmin, qpmin, q0, q1, len0 = b0->core.l_qseq, len1 = b1->core.l_qseq;
-    assert(len0 <= left_off + len1);
-    for (q0 = left_off, q1 = 0; q0 != len0; ++q0, ++q1) {
+    unsigned qmin, qpmin;
+    unsigned q0, e0, q1;
+    if (left_off < 0) {
+        q0 = 0;
+        e0 = b0->core.l_qseq + left_off;
+        q1 = -left_off;
+    } else {
+        q0 = left_off;
+        e0 = b0->core.l_qseq;
+        q1 = 0;
+    }
+    for ( ; q0 != e0; ++q0, ++q1) {
         qmin = (qual[0][q0] < qual[1][q1] ? 1 : 0);
         qpmin = (qmin == 0 ? q0 : q1);
         if (bam_seqi(seq[0], q0) != bam_seqi(seq[1], q1)) {
