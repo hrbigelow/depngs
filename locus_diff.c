@@ -857,6 +857,7 @@ prescan_input()
     /* pre-scan all input */
     struct locus_data *ld[2];
     while (pileup_next_pos()) {
+        /* for each individual sample, compute local statistics. */
         for (s = 0; s != bam_samples.n; ++s) {
             reset_locus_data(&tls_dw.ldat[s]);
             tls_dw.ldat[s].base_ct = pileup_current_basecalls(s);

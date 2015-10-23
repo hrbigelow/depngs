@@ -76,11 +76,4 @@ binomial_quantile_est(struct dir_points *dp1,
                       unsigned batch_sz);
 
 
-
-
-/* Interpolate the interval in the beb row */
-enum fuzzy_state
-locate_cell(struct binomial_est_bounds *beb, unsigned a1);
-
-
 #endif /* _BINOMIAL_EST_H */

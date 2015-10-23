@@ -404,20 +404,6 @@ binomial_quantile_est(struct dir_points *dp1,
 }
  
 
-
-/* Interpolate the interval in the beb row */
-enum fuzzy_state
-locate_cell(struct binomial_est_bounds *beb, unsigned a1)
-{
-    if (beb->unchanged[0] <= a1 && a1 < beb->unchanged[1])
-        return UNCHANGED;
-    else if (beb->ambiguous[0] <= a1 && a1 < beb->ambiguous[1])
-        return AMBIGUOUS;
-    else return CHANGED;
-}
-
-
-
 #if 0
 /* using existing points, calculate weights as necessary, apply
    threshold to classify as success or failure, and compute the
