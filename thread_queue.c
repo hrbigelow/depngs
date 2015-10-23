@@ -229,26 +229,25 @@ set_outnode_status(struct thread_queue *tq,
 }
 
 
-#define ELAPSED_MS \
-    ((((end_time).tv_sec * 1000000000 + (end_time).tv_nsec) -           \
-      ((beg_time).tv_sec * 1000000000 + (beg_time).tv_nsec)) / 1000000)
+/* return the difference in two times in milliseconds */
+#define ELAPSED_MS(b, e)                                  \
+    ((((e).tv_sec * 1000000000 + (e).tv_nsec) -           \
+      ((b).tv_sec * 1000000000 + (b).tv_nsec)) / 1000000)
+
+#define TIME_MS(t) (long)((t).tv_sec * 1e3 + (t).tv_nsec / 1e6)
 
 #ifdef TQ_DBG
 #define PROGRESS_DECL() struct timespec beg_time, end_time;
-
-#define TIME_MS(t) \
-    (long)((t).tv_sec * 1e3 + (t).tv_nsec / 1e6)                        \
-    - (long)(program_start_time.tv_sec * 1e3                            \
-             + program_start_time.tv_nsec / 1e6)
 
 #define PROGRESS_START(category)                                        \
     do {                                                                \
     clock_gettime(CLOCK_REALTIME, &beg_time);                           \
     fprintf(stderr,                                                     \
-            "START\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\n",              \
+            "START\t%s\t%li\t%li\t%li\t%li\t%li\t%u\t%u\t%u\n",         \
             (category),                                                 \
             TIME_MS(beg_time),                                          \
-            TIME_MS(beg_time),                                          \
+            ELAPSED_MS(program_start_time, beg_time),                   \
+            ELAPSED_MS(program_start_time, beg_time),                   \
             par - tq->input,                                            \
             0l,                                                         \
             tq->pool_status[EMPTY],                                     \
@@ -263,12 +262,13 @@ set_outnode_status(struct thread_queue *tq,
     do {                                                                \
         clock_gettime(CLOCK_REALTIME, &end_time);                       \
         fprintf(stderr,                                                 \
-                "END\t%s\t%li\t%li\t%li\t%li\t%u\t%u\t%u\n",            \
+                "END\t%s\t%li\t%li\t%li\t%li\t%li\t%u\t%u\t%u\n",       \
                 (category),                                             \
-                TIME_MS(beg_time),                                      \
                 TIME_MS(end_time),                                      \
+                ELAPSED_MS(program_start_time, beg_time),               \
+                ELAPSED_MS(program_start_time, end_time),               \
                 par - tq->input,                                        \
-                ELAPSED_MS,                                             \
+                ELAPSED_MS(beg_time, end_time),                         \
                 tq->pool_status[EMPTY],                                 \
                 tq->pool_status[LOADING],                               \
                 tq->pool_status[FULL]);                                 \
