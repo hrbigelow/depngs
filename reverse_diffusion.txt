@@ -1,0 +1,69 @@
+This describes a process to be thought of as "reverse diffusion".
+Ordinary diffusion happens when a drop of ink is suspended in water
+and time passes.  Each molecule of ink undergoes a random walk, whose
+expected displacement gets longer with time.
+
+In the same way, the sequencing process can be thought of as a
+diffusion process.  We start at a point in the 4-simplex that
+represents base-composition.  All of the molecules that make up that
+base composition are sequenced with some fixed error probability.  The
+resulting set of basecalls implies a base composition that has
+diffused away from the real one due to the error rate.
+
+The question is, for a given error rate, how much should the base
+composition to change?  It is interesting to note the asymetry.  If
+the original base composition is 100% of one base and the overall base
+miscall rate is 0.01, then we should expect 1/100 of the bases to be
+miscalled.  The basecall composition has thus drifted from the corner
+of the simplex a bit toward the center.  Likewise, if the original
+composition is 90% A, 10% other, then 90% of the miscalls will be
+'other', and only 10%/3 of 'other' will mutate back to 'A'.  Thus, the
+basecall composition still drifts towards the center of the simplex,
+but there is a small contingent that drifts back to the corner.  We
+see that the fixed point, where the basecall composition is equal to
+the original composition, is 0.25 of each base.
+
+To state the problem explicitly, we start with a 2-category problem.
+Suppose you have 1000 poker chips, each with a red and blue side.  An
+inference game is played, the rules are as follows:
+
+1.  The chips (stamped with a number from 1-1000) are laid out on the
+table and placed with a specific side up.  e.g. it could be 1R, 2B,
+3R, 4R, ..., 1000B.  This is known as a configuration h (for hidden)
+since you, the player are not going to see this.
+
+Note: There are 2^1000 possible configurations.  Each one belongs to
+one of the 1000 configuration 'groups', G0, G1, G2, ..., G1000, determined
+by how many chips are blue-up.
+
+2.  The dealer now rolls a 100-sided die once for each chip.  If he
+rolls a '1', he turns the chip over, otherwise he leaves the chip as
+is.
+
+3.  You now get to see the final configuration o (observed).  Let's
+say it is 1R, 2R, ..., 37B, 38R, ..., 217B, ..., 1000R.  Let's say
+that there are 10 blue showing.
+
+Now, the question is, what is the probability that the original hidden
+configuration belongs to G0, G1, etc?
+
+Note, this is ill-defined at the moment.  You have not been told what
+the prior probabilities of the original configurations are.  Let's
+just say they are P(h) for now.
+
+
+Solution:
+
+First, let g(c) mean "the group that configuration c belongs to".  It
+simply consists of counting the number of blue-up chips in the
+configuration.
+
+we would like to write the conditional probability P(o|g(h)), that is,
+"the probability of the observed configuration given the group of the
+hidden configuration.
+
+Before that though, what is P(o|h)?  This is simply:
+
+prod_i(0..1000) if(o_i == h_i) 0.99 else 0.01.
+
+

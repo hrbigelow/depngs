@@ -12,9 +12,145 @@ posterior is reformulated as a weighted mixture of dirichlets.  Each
 dirichlet represents the contribution to the posterior resulting from
 { nA, nC, nG, nT } counts of founder bases.  For D reads, there are
 4^D possible underlying ordered sequences of actual founder bases, one
-in each read.  Each sequence is weighted according to the probability
-that the founder bases take on those values, based on the basecall and
-quality.  For example, if the first read has basecall A at quality 30,
-then a founder base of 'A' has 0.999, while any other founder base has
-0.00033.
+in each read.
+
+The partitions (each having a distinct set of founder base counts) are
+identified using (i think) a monte carlo-like simulation as follows:
+
+1. Represent the data as a 2-dimensional histogram of counts, with
+rows as quality scores and columns as base calls.
+
+2a. Compute s = sum_d(ct_d * e_d) / X.  This is the average error
+probability.  ct_d = the number of times datum d (basecall, quality
+score) occurred, and e_d is the error probability associated with the
+quality score. X is the number of distinct data.
+
+2b. Compute Binomial(n; s, D) for n from 0 until you reach 99.9%
+probability. Use cached set of binomial coefficients.  Store in
+binom[i].
+
+3. set nsim[i] = round(binom[i] * M) (M = 1000 say)
+
+4. For each of the M simulations, generate a partitioning of the n
+miscalls into the D error slots.
+
+4a. Set part_sums[i] = p_i, p_i = sum_j_to_(i-1) { part_sums[j] +
+(ct_d * e_d) } i from 0 to (X-1)
+
+4b. set flags[i] = 0 for all i from 0 to (X-1).
+
+4c. Generate a random number r in [0, p_(X-1)].
+
+4c. Find the least upper bound p_i, such that r < p_i.  Set flag f_i
+to 1.
+
+4d. Repeat, resampling if you hit a set flag.
+
+4e. Traverse the flags array.  Tally the basecall as founder base if
+f_i is 0, randomly add rand(0,3) + base % 4 if f_i is 1.  Record tally
+in a hash somehow (is there enough room to tally as a key?)
+
+5. Divide each tally by M to get the partition probability.
+
+6. For each key,val in the founder base counts hash:
+
+6a. if val > m, is 'R' partition, otherwise 'S'.
+
+6b. Retrieve from cache or draw P Dirichlet points parameterized by
+'key', copy to local buffer.
+
+7. Weight all points in the S partitions with the component
+probability computed in step 5.  Weight all points in the R partitions
+with the component probability times (S / R).
+
+8. To compute pairwise distance, do weighted distance quantile
+calculation, iterating through the points so that the pairs are
+pseudo-mixed.
+
+
+Heuristics for accelerating / avoiding computation.
+
+We are ultimately only interested in the fine structure of the
+distance quantiles if we can prove that the distance quantile value at
+X is greater than Y.  We know that the distance distribution is itself
+a mixture of individual distance distributions weighted by the joint
+weight of the two components being compared.
+
+But, let us suppose we are interested in establishing distance of Y =
+0.2 or greater at a confidence of X = 0.99.  That is, only 1% of the
+total mass can be below 0.2.  But, if we compute the distance
+distribution from the pair of major components, which accounts for 95%
+of the total mass, what is the maximum fraction of *its* mass that can
+be below 0.2?  It would be 0.01 / 0.95 or 0.011, say.  This then does
+afford us with a suitable heuristic, which can be used together with
+the caching strategy based on pure Dirichlet pairs, and the
+
+
+
+What about the pre-scanning.  During pre-scanning, locus_diff
+traverses every position in the chunk and every sample pair at that
+position, and records the pair of basecounts as its sufficient
+statistic for classification.  For this scheme to work in the new
+context, we instead would need to store the pair of founder base
+counts, together with their joint probability as the sufficient
+statistic.
+
+Then, we would sort by key, and visit the sorted loci one by one,
+initializing the 'state' flag.  However, the function
+dir_cache_try_get_state would need to be modified as well.  Instead of
+returning a fuzzy_state, it should return a mass fraction.
+
+This estimation is currently encapsulated in binomial_est's
+binomial_quantile_est function, which computes the beta_lo, beta_mean
+and beta_hi quantile values based on numbers of trials.
+beta_{lo,mean,hi} are simply estimates of the quantile value itself
+(based on these bernoulli trials).  What we are after is the actual
+estimate for quantile value at post_confidence.
+
+So, instead of caching states, we need to cache mass fractions.  It is
+easy enough to change.  dir_cache now needs to store the full
+binomial_est_state object rather than just the fuzzy_state portion of
+it.  Then, when retrieving from the hash, we can inspect the beta
+values.  We still store the binomial_est_state, but we also now store
+the locus pair's majority component joint probability, and from that,
+can calculate whether or not the loci differ.
+
+This device achieves all that we want.
+
+So, the major changes will be:
+
+1. the g_ref_change_hash and g_sam_change_hash in dir_cache will be
+extended to store binomial_est_state rather than just fuzzy_state.
+
+2. the pos_pair_key of locus_diff will also now store
+binomial_est_state, as well as majority component joint probability.
+
+2.5. for each individual sample, compute local statistics.  this will
+now be the founder base counts for the major component, along with the
+major component probability.  One question now is whether this can be
+computed efficiently without storing the counts of the minor
+components.  I don't think that it can, because it requires generating
+other founder-base-count components in the process.
+
+It seems we need to go all the way back to 'struct locus_data' and
+store the array (possibly fixed-size?) of
+(founder-base-counts,probability) computed for this locus.  This work
+probably does not need to be stored, because in fact we will likely
+determine from it that we do not need to re-compute it.  So, size is
+of no concern here, and we can make the set of partitions amply large
+(e.g. 20 partitions).
+
+The calculation of components could conceivably be pruned further
+though.
+
+3. during prescan_input, the loci pairs are traversed, and the
+majority component for each element in the pair is computed,
+dir_cache_classify_alphas is run, the key is stored, as well as the
+joint mass fraction.  This is just retrieved from the two individual
+locis' data.  There is no recomputation occurring.
+
+Now, though, we should take a look at the real-world situations.
+
+
+
 
