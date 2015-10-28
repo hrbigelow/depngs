@@ -62,8 +62,58 @@ we would like to write the conditional probability P(o|g(h)), that is,
 "the probability of the observed configuration given the group of the
 hidden configuration.
 
-Before that though, what is P(o|h)?  This is simply:
+Suppose g(o) = G10 and g(h) = G2.  Then P(o|g(h)) can be expressed as
+three components:
 
-prod_i(0..1000) if(o_i == h_i) 0.99 else 0.01.
+Let
+
+G2 (1000-choose-10) = 49950
+S0: subset of G2 with 0 blue-up overlap with o (990-choose-2) * (10-choose-0) = 489555
+S1: subset of G2 with 1 blue-up overlap with o (990-choose-1) * (10-choose-1) = 9900
+S2: subset of G2 with 2 blue-up overlap with o (990-choose-0) * (10-choose-2) = 45
+
+P(o|S0) = 489555 * prob(12 flips)
+P(o|S1) = 9900 * prob(10 flips)  /* 1 BR flip, 9 RB flips */
+P(o|S2) = 45 * prob(8 flips) /* 8 RB flips */
+
+
+Note that P(o|h) is permutation symmetric.  For any permutation Q(),
+P(Q(o)|Q(h)) = P(o|h).  This is because both terms in the formula (the
+m-choose-n term and the prob(n flips) term) only concern numbers of
+red and blue, and numbers of red and blue that overlap.  By permuting
+both o and h in the same way, the numbers that overlap are not
+changed.
+
+
+Note, then that the set Gn is also invariant under permutation.  Thus:
+
+P(o|g(h)) = P(Q(o)|g(h)) ~ P(g(o)|g(h))
+
+Because of this, we resolve the paradox of why the particular order of
+the observed chips (which ones are red and blue) doesn't affect the
+probability estimate.
+
+
+Now that we have P(g(o)|g(h)), we have a D x D (= 1000 x 1000) table.
+But, what is P(g(h))?  In fact, this is easier to specify than P(h),
+and it is more sensible.  We *could* perhaps specify P(g(h)) = 1/D
+(uniform distribution).  This would then make P(g(h)|g(o)) ~
+P(g(o)|g(h)), and we could do what we want.
+
+So, what is the formula for P(g(o)|g(h))?
+
+First, we need a function for the probability P(o|Si)
+
+
+Let g(o) be number of blue-up chips in o.
+Let S(h,v) be subset of all configurations in S(h) with v blue-up overlapping o.
+
+v may vary from 0 to V = min(g(o), g(h)).
+
+
+P(o|S(h,v)) = mcn(D-V,g(o) - v) * mcn(g(h), v) * prob(D, g(o) + g(h) - v)
+
+sum_ol ( { P(o_g|S_ol) }
+
 
 
