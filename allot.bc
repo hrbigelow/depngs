@@ -1,3 +1,4 @@
+/* M-choose-N */
 define mcn(m, n) { 
     auto r, s, t, ti;
     r = 1;
@@ -6,6 +7,14 @@ define mcn(m, n) {
     for (t = m; t > m - n; --t) { r *= t; s *= ti++; }; 
     return r / s;
 }
+
+
+/* Computes mcn(m,n+1) / mcn(m,n).  That is, the change when
+   choosing the n+1'th. */
+define mcn_ratio(m,n) {
+    return (m-n)/(n+1);
+}
+
 
 /* compute log of the binomial with m trials, n successes, and
    probability of success p */
@@ -21,28 +30,68 @@ define logbinom(m, n, p) {
 }
 
 
-/* compute the probability of converting a set of 'total' chips, from
-   a configuration having bh blue showing to a configuration having bv
-   blue showing, and assuming that overlap chips in common between the
-   bh and the bv.  */
-define log_basecall_component(total, n_bhid, n_bvis, olap, p) {
-    auto log_prob, n_br_flip, n_rb_flip, n_flip, n_stay;
-    n_br_flip = n_bhid - olap;
-    n_rb_flip = n_bvis - olap;
-    n_flip = n_br_flip + n_rb_flip;
-    n_stay = total - n_flip;
-    n_rvis = total - n_bvis;
+/* compute the probability of one family of coin configurations being
+   converted to another family through the 'Flip()' process.  See
+   notes.
+
+   b: TTTTTTTTTTHTTTTTTTTTTTTTTTHTTTTTTT
+   a: ttttttttttttttttttttthhhhhhhhhhhhh
+
+   C(b,a,p,v) =
+   mcn(t, H-v)    // # H->t transitions
+   * mcn(h, h-v)  // # T->h transitions
+   * p^(H + h-2v) // Total # flipped
+   * (1-p)^(N - (H + h-2v))
+
+   Parameters:
+   n: total number of coins
+   bh: number heads before
+   ah: number heads after
+   v: number of coins that are heads both before and after
+   p: probability of inverting a coin
+
+*/
+define log_flip_prob(n, bh, ah, v, p) {
+    auto log_prob, n_ht, n_th, n_flip, n_stay, bt, at;
+    n_ht = bh - v;
+    n_th = ah - v;
+    n_flip = n_ht + n_th;
+    n_stay = n - n_flip;
+    at = n - ah;
+    bt = n - bh;
     /* print \ */
-    /*     "mcn(", n_rvis, ", ", n_br_flip, ") ", \ */
-    /*     "* mcn(", n_bvis, ", ", n_rb_flip, ") ", \ */
+    /*     "mcn(", at, ", ", n_ht, ") ", \ */
+    /*     "* mcn(", ah, ", ", n_th, ") ", \ */
     /*     "* ", p, "^", n_flip, " ", \ */
     /*     "* ", 1-p, "^", n_stay, "\n"; */
-    log_prob =                      \
-        l(mcn(n_rvis, n_br_flip))   \
-        + l(mcn(n_bvis, n_rb_flip)) \
-        + n_flip * l(p) \
+    log_prob =                                   \
+        l(mcn(at, n_ht))                         \
+        + l(mcn(ah, n_th))                       \
+        + n_flip * l(p)                          \
         + n_stay * l(1-p);
     return log_prob;
+}
+
+
+
+/* compute C(b,a,p,v) / C(b,a,p,v-1), where b is the 'before'
+   configuration of coins, a is the 'after' configuration of coins, p
+   is the probability of inverting a given coin, and v is the union of
+   coins showing heads in both a and b.  H is number of heads in b. h
+   is number of heads in a. N is total number of coins,
+
+   C(b,a,p,v) / C(b,a,p,v-1) = p^-2 * (H-v+1)/(t-H+v) * (h-v+1)/v
+
+*/
+define flip_ratio(n, bh, ah, v, p) {
+    auto at;
+    at = n - ah;
+    return p^-2 * (1-p)^2 / (mcn_ratio(at,bh-v) * mcn_ratio(ah,ah-v));
+}
+
+
+define manual_ratio(n, bh, ah, v, p) { 
+    return e(log_flip_prob(n, bh, ah, v, p) - log_flip_prob(n, bh, ah, v - 1, p));
 }
 
 
