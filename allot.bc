@@ -7,6 +7,8 @@ define mcn(m, n) {
     return r / s;
 }
 
+/* compute log of the binomial with m trials, n successes, and
+   probability of success p */
 define logbinom(m, n, p) { 
     auto lc, ls, lf, z, r;
     z = scale;
@@ -17,6 +19,32 @@ define logbinom(m, n, p) {
     scale = z;
     return (lc + ls + lf) / 1;
 }
+
+
+/* compute the probability of converting a set of 'total' chips, from
+   a configuration having bh blue showing to a configuration having bv
+   blue showing, and assuming that overlap chips in common between the
+   bh and the bv.  */
+define log_basecall_component(total, n_bhid, n_bvis, olap, p) {
+    auto log_prob, n_br_flip, n_rb_flip, n_flip, n_stay;
+    n_br_flip = n_bhid - olap;
+    n_rb_flip = n_bvis - olap;
+    n_flip = n_br_flip + n_rb_flip;
+    n_stay = total - n_flip;
+    n_rvis = total - n_bvis;
+    /* print \ */
+    /*     "mcn(", n_rvis, ", ", n_br_flip, ") ", \ */
+    /*     "* mcn(", n_bvis, ", ", n_rb_flip, ") ", \ */
+    /*     "* ", p, "^", n_flip, " ", \ */
+    /*     "* ", 1-p, "^", n_stay, "\n"; */
+    log_prob =                      \
+        l(mcn(n_rvis, n_br_flip))   \
+        + l(mcn(n_bvis, n_rb_flip)) \
+        + n_flip * l(p) \
+        + n_stay * l(1-p);
+    return log_prob;
+}
+
 
 
 /* should be normalized over n from 0 to m */
