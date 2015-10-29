@@ -5,14 +5,14 @@ expected displacement gets longer with time.
 
 In the same way, the sequencing process can be thought of as a
 diffusion process.  We start at a point in the 4-simplex that
-represents base-composition.  All of the molecules that make up that
+represents base composition.  All of the molecules that make up that
 base composition are sequenced with some fixed error probability.  The
 resulting set of basecalls implies a base composition that has
 diffused away from the real one due to the error rate.
 
 The question is, for a given error rate, how much should the base
-composition to change?  It is interesting to note the asymetry.  If
-the original base composition is 100% of one base and the overall base
+composition change?  It is interesting to note the asymmetry.  If the
+original base composition is 100% of one base and the overall base
 miscall rate is 0.01, then we should expect 1/100 of the bases to be
 miscalled.  The basecall composition has thus drifted from the corner
 of the simplex a bit toward the center.  Likewise, if the original
@@ -22,6 +22,8 @@ basecall composition still drifts towards the center of the simplex,
 but there is a small contingent that drifts back to the corner.  We
 see that the fixed point, where the basecall composition is equal to
 the original composition, is 0.25 of each base.
+
+POKER CHIP GAME
 
 To state the problem explicitly, we start with a 2-category problem.
 Suppose you have 1000 poker chips, each with a red and blue side.  An
@@ -49,7 +51,7 @@ configuration belongs to G0, G1, etc?
 
 Note, this is ill-defined at the moment.  You have not been told what
 the prior probabilities of the original configurations are.  Let's
-just say they are P(h) for now.
+assume that P(o in Gi) is 1/1000 for each i.
 
 
 Solution:
@@ -68,7 +70,16 @@ three components:
 Let
 
 G2 (1000-choose-10) = 49950
-S0: subset of G2 with 0 blue-up overlap with o (990-choose-2) * (10-choose-0) = 489555
+S(b,o,v) := "the subset of G(b) that have v blue-up overlap with o"
+Note:
+
+union_v (0..V) { S(b,o,v) } = G(b)
+where V = max(G(b), G(o))
+
+
+P(o|G(b)) := 
+
+S(b,o,v): subset of G2 with 0 blue-up overlap with o (990-choose-2) * (10-choose-0) = 489555
 S1: subset of G2 with 1 blue-up overlap with o (990-choose-1) * (10-choose-1) = 9900
 S2: subset of G2 with 2 blue-up overlap with o (990-choose-0) * (10-choose-2) = 45
 
@@ -84,6 +95,9 @@ red and blue, and numbers of red and blue that overlap.  By permuting
 both o and h in the same way, the numbers that overlap are not
 changed.
 
+P(o|S(h,v)) = mcn(D-V,g(o)-v) * mcn(g(h), v) * prob(D, g(o) + g(h) - v)
+
+So, P(o_i|G_j) = sum_v { P(|S_vj) }
 
 Note, then that the set Gn is also invariant under permutation.  Thus:
 
@@ -111,9 +125,6 @@ Let S(h,v) be subset of all configurations in S(h) with v blue-up overlapping o.
 v may vary from 0 to V = min(g(o), g(h)).
 
 
-P(o|S(h,v)) = mcn(D-V,g(o) - v) * mcn(g(h), v) * prob(D, g(o) + g(h) - v)
-
-sum_ol ( { P(o_g|S_ol) }
 
 
 
