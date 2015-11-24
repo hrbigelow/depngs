@@ -1,0 +1,29 @@
+\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+
+$n_{h,k}$: number of founder bases of type h called as type k
+
+N: = $\sum_{h,k}{n_{h,k}}$
+
+o: observed configuration
+
+L: path length through simplex from o to F
+
+F: founder base composition
+
+q: quality score in this bin
+
+e: probability of miscall
+
+\begin{eqnarray}
+Pr(o, L, F) & \equiv & MC(n_{h,k}) Path(L, N, q) Prior(F|\alpha) \\[6ex]
+MC(\{n_{h,k}\}) & \equiv & prod_k (n_{k,0} \cdots n_{k,3}) \\[6ex]
+Path(L, N, e) & \equiv & e^L (1-e)^{N-L} \\[6ex]
+Prior(F|\alpha) & \equiv & \int_p{Pr(x|p)Pr(p|\alpha)dp} \\
+& = & \frac{N!}{\prod_k n_k!} 
+\frac{\Gamma(A)}{\Gamma(N+A)} 
+\prod_k \frac{\Gamma(n_k+\alpha_k)}{\Gamma(\alpha_k)} \\[6ex]
+\end{eqnarray}
+
+\end{document}

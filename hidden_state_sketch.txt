@@ -1,0 +1,94 @@
+Outline of new algorithm.
+
+
+
+/* summarizes basecall data at a locus.  Basecall counts are packed
+into 12,10,6,4 bits (4096, 1024, 64, 16) */
+#define N_MAX_QUAL_BINS 10
+struct basecall_summary {
+    unsigned n_qual_bins;
+    uint32_t packed_counts[N_MAX_QUAL_BINS];
+}
+
+/* holds a distribution of weighted hidden counts */
+#define N_HDIST_BASE 10
+struct hidden_dist {
+    unsigned n_extra; /* */
+    struct {
+        double prob;
+        uint32_t count[4];
+    } a[N_HDIST_BASE], *a_extra;
+}
+
+
+PRESCAN
+
+1. Prescan input and accumulate a number of loci worth of binned
+quality score counts, storing each as keys in a hash map.
+
+2. At the end of this prescan, merge the thread-local hash maps
+into a (to-be) readonly hash map of the same type.
+
+3. Traversing the keys in n threads, take every nth + t entry and
+run the algorithm for populating the value.  (an array of
+weighted hidden base counts)
+
+MAIN RUN
+
+0. The read-only hash has been populated
+
+1. Process a chunk of new data.
+   a. Compute the pileup
+   b. Compute the binned, ranked base-counts
+   c. Pack counts into the key structure
+   d. Sort the key structures
+   e. Traverse sorted list of keys
+      i)  if same as previous, 
+
+
+
+
+Algorithm for estimating P(o, g(h))
+
+
+1. Compute marginals in 2D simplex.
+   a. compute 2D counts in each quality bin
+   b. stepping towards the majority base one by one, compute the
+      change in the joint score.
+      1. add to path probability
+      2. replace multinomial factor
+      3. update or replace prior
+   c. repeat step b until a peak is found.
+   d. continue until the marginal prob is less than some fraction
+      of the peak
+
+2. Repeat the process in step 1 in 3D for each non-negligible 2D simplex point.
+   a. Subdivide the non-majority counts in the 2D marginal into majority
+      and non-majority counts.
+   b. start at the point having 100% of non-majority base counts, stepping
+      towards the non-majority direction, repeating steps in 1.
+
+3. Recurse at each 3D point to 4D.
+
+
+Details for step 1:
+
+n_{h,k}: number of founder bases of type h called as type k
+N: = sum_{h,k}{n_{h,k}}
+o: observed configuration
+L: path length through simplex from o to F
+F: founder base composition
+q: quality score in this bin
+Pr(q): probability of correct call
+
+Pr(o, L, F) \equiv  MC(n_{h,k}) Path(L, N, q) Prior(F|\alpha)
+
+MC({n_{h,k}) \equiv prod_k{(n_{k,0} ... n_{k,3})}
+
+Path(L, N, q) \equiv Pr(q)^(N-L) (1-Pr(q))^L
+
+Prior(F|\alpha) \equiv integral_p{Pr(x|p)Pr(p|\alpha)dp}
+
+= \frac{N!}{prod_k{n_k!}} \frac{\gamma(A)}{\gamma(N+A)} prod_k{\frac{\gamma{n_k+\alpha_k}}{\gamma(\alpha_k)}
+
+
