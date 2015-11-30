@@ -60,7 +60,7 @@ First, let g(c) mean "the group that configuration c belongs to".  It
 simply consists of counting the number of blue-up chips in the
 configuration.
 
-we would like to write the conditional probability P(o|g(h)), that is,
+We would like to write the conditional probability P(o|g(h)), that is,
 "the probability of the observed configuration given the group of the
 hidden configuration.
 
@@ -101,30 +101,23 @@ So, P(o_i|G_j) = sum_v { P(|S_vj) }
 
 Note, then that the set Gn is also invariant under permutation.  Thus:
 
-P(o|g(h)) = P(Q(o)|g(h)) ~ P(g(o)|g(h))
 
-Because of this, we resolve the paradox of why the particular order of
-the observed chips (which ones are red and blue) doesn't affect the
-probability estimate.
+P(o|g(h)) = P(Q(o)|g(h))
 
+P(g(o)|g(h)) = P(o|g(h)) * |g(o)|
 
-Now that we have P(g(o)|g(h)), we have a D x D (= 1000 x 1000) table.
-But, what is P(g(h))?  In fact, this is easier to specify than P(h),
-and it is more sensible.  We *could* perhaps specify P(g(h)) = 1/D
-(uniform distribution).  This would then make P(g(h)|g(o)) ~
-P(g(o)|g(h)), and we could do what we want.
+P(g(o), g(h)) = P(g(o)|g(h)) * P(g(h))
 
-So, what is the formula for P(g(o)|g(h))?
+We specify a prior at the permutation-invariant group level,
+e.g. P(g(h)), rather than P(h), which is valid if we know that the
+individual components of h are being produced from i.i.d. draws.
+Since ultimately we will extend this to DNA sequencing, in which each
+molecule is indeed drawn and sequenced independently, this assumption
+holds.
 
-First, we need a function for the probability P(o|Si)
+P(g(h)|g(o)) = P(g(o),g(h)) / P(g(o))
 
-
-Let g(o) be number of blue-up chips in o.
-Let S(h,v) be subset of all configurations in S(h) with v blue-up overlapping o.
-
-v may vary from 0 to V = min(g(o), g(h)).
-
-
-
-
+But, now having observed the observation o, we already know we are in
+group g(o).  Practically speaking, we just need to look in the proper
+column of the joint distribution.
 

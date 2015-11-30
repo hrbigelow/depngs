@@ -6,24 +6,56 @@ $n_{h,k}$: number of founder bases of type h called as type k
 
 N: = $\sum_{h,k}{n_{h,k}}$
 
-o: observed configuration
+o: observed configuration (ordered array of N symbols)
 
-L: path length through simplex from o to F
+F: founder base count (vector of 4 integers)
 
-F: founder base composition
+O: observed base count (derived from o, vector of 4 integers)
 
-q: quality score in this bin
+L: path length through simplex from O to F
 
 e: probability of miscall
 
 \begin{eqnarray}
-Pr(o, L, F) & \equiv & MC(n_{h,k}) Path(L, N, q) Prior(F|\alpha) \\[6ex]
-MC(\{n_{h,k}\}) & \equiv & prod_k (n_{k,0} \cdots n_{k,3}) \\[6ex]
+Pr(o, L, F) & \equiv & MC(\{n_{h,k}\}) Path(L, N, q) Prior(F|\alpha) \\[6ex]
+MC(\{n_{h,k}\}) & \equiv & \prod_h \frac{n_{h,\cdot}!}{\prod_k n_{h,k}!} \\[6ex]
 Path(L, N, e) & \equiv & e^L (1-e)^{N-L} \\[6ex]
-Prior(F|\alpha) & \equiv & \int_p{Pr(x|p)Pr(p|\alpha)dp} \\
-& = & \frac{N!}{\prod_k n_k!} 
-\frac{\Gamma(A)}{\Gamma(N+A)} 
-\prod_k \frac{\Gamma(n_k+\alpha_k)}{\Gamma(\alpha_k)} \\[6ex]
+Prior(F|\alpha) & \equiv & \int_p{Pr(x|p)Pr(p|\alpha)dp} \nonumber \\
+& = & \frac{N!}{\prod_h n_h!} 
+\frac{\Gamma(A)}{\Gamma(N+A)}
+\prod_h \frac{\Gamma(n_h+\alpha_h)}{\Gamma(\alpha_h)} \\[6ex]
+Pr(o,F) & \equiv & \sum_L Pr(o,L,F)
+\end{eqnarray}
+
+Some derivations in 2D.  Let (x,y) represent hidden counts ${n_0,n_1}$
+and let $\check{x} \equiv x-1$ and $\hat{y} \equiv y+1$ in the
+following.
+
+\begin{eqnarray}
+  \frac{Path(N,L,e)}{Path(N,L+2,e)}
+  & = & \frac{e^L(1-e)^{N-L}}{e^{L+2}(1-e)^{N-L-2}} \nonumber \\
+  & = & \frac{(1-e)^2}{e^2} \\[4ex]
+  \frac{Prior(\{\check{x},\hat{y}\})}{Prior(\{x,y\})}
+  & = &
+    \frac{\frac{N!}{\check{x}!\hat{y}!}}{\frac{N!}{x!y!}}
+    \frac{\frac{\Gamma(A)}{\Gamma(N+A)}}{\frac{\Gamma(A)}{\Gamma(N+A)}}
+    \frac{
+      \frac{\Gamma(\check{x}+\alpha_0)}{\Gamma(\alpha_0)}
+    }{
+      \frac{\Gamma(x+\alpha_0)}{\Gamma(\alpha_0)}
+    }
+    \frac{
+      \frac{\Gamma(\hat{y}+\alpha_1)}{\Gamma(\alpha_1)}
+    }{
+      \frac{\Gamma(y+\alpha_1)}{\Gamma(\alpha_1)}
+    } \nonumber \\[2ex]
+    & = &
+    \frac{x!}{\check{x}!}
+    \frac{y!}{\hat{y}!}
+    \frac{\hat{y}+\alpha_1}{x+\alpha_0} \nonumber \\
+    & = &
+    \frac{x}{x+\alpha_0}
+    \frac{\hat{y}+\alpha_1}{\hat{y}}
 \end{eqnarray}
 
 \end{document}

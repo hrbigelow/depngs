@@ -73,22 +73,34 @@ Algorithm for estimating P(o, g(h))
 
 Details for step 1:
 
-n_{h,k}: number of founder bases of type h called as type k
-N: = sum_{h,k}{n_{h,k}}
-o: observed configuration
-L: path length through simplex from o to F
-F: founder base composition
-q: quality score in this bin
-Pr(q): probability of correct call
+Define an estimation proceedure for Pr(o,F) as the sum over L of
+Pr(o,L,F) starting with L at a minimum, and evaluating the Pr(o,L,F)
+terms until they start to decline, and the next term is smaller than
+some pre-defined fraction of the running sum.
 
-Pr(o, L, F) \equiv  MC(n_{h,k}) Path(L, N, q) Prior(F|\alpha)
+This first type of 'step' involves two of the three factors being modified:
 
-MC({n_{h,k}) \equiv prod_k{(n_{k,0} ... n_{k,3})}
+1. The MC factor changes.
+2. The Path changes
 
-Path(L, N, q) \equiv Pr(q)^(N-L) (1-Pr(q))^L
+For a given o, we would like to identify the set of values of F for
+which Pr(o,F) is non-negligible.  To do this, we start with F equal to
+O, and calculate Pr(o,L,F) for L = 0.  Then, increase L by 2 (adding
+one miscall for each symbol in F) until Pr(o,L,F) is less than a
+certain fraction of the original, and we know it is declining.
 
-Prior(F|\alpha) \equiv integral_p{Pr(x|p)Pr(p|\alpha)dp}
+Then, choose F one step closer to the closest corner and compute
+Pr(o,L,F) for minimal L, then lengthen L, etc.
 
-= \frac{N!}{prod_k{n_k!}} \frac{\gamma(A)}{\gamma(N+A)} prod_k{\frac{\gamma{n_k+\alpha_k}}{\gamma(\alpha_k)}
+Continue until we reach a peak value for some F and it starts to
+decline.  Stop when the value of Pr(o,F)
 
+In 2D, the MC factors can be precomputed to large depth.  10000 x 50
+factors could be pre-computed.
+
+The Path() factors could have up to 10000 x 100 x 8 = 8,000,000 (N x L
+x e) distinct values.
+
+The second type of 'step' involves moving from one F to another,
+adjacent F.  If we first 
 
