@@ -1,11 +1,15 @@
 /* M-choose-N */
 define mcn(m, n) { 
-    auto r, s, t, ti;
+    auto r, s, t, ti, z, v;
     r = 1;
     s = 1;
     ti = 1;
     for (t = m; t > m - n; --t) { r *= t; s *= ti++; }; 
-    return r / s;
+    z = scale;
+    scale = 0;
+    v = (r / s) / 1;
+    scale = z;
+    return v;
 }
 
 

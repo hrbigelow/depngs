@@ -58,4 +58,27 @@ following.
     \frac{\hat{y}+\alpha_1}{\hat{y}}
 \end{eqnarray}
 
+Consider now a heuristic way to evaluate the posterior $Pr(o,F) \equiv
+\sum_L Pr(o,L,F)$. In 2D, the non-zero components exist for every
+other value of L, i.e. (0,2,4,...) or (1,3,5,...). The individual
+components $Pr(o,L,F)$ differ from each other in the factors of Path
+probability and $MC()$, the multinomial coefficient, which is the number
+of configurations $h$ that are compatible with the path
+length.
+
+For illustration, let's assume the configuration $o$ has 10A and 90C.
+Define hA as the number of 'A' in the group of hidden configurations.
+Define v as the number of 'A' elements in $h$ that overlap 'A'
+elements in o.  It follows that $L \equiv (10-v) + (hA-v) = hA + 10 -
+2v$, and $v = \frac{hA + 10 - L}{2}$.  And, $MC(hA,L) \equiv {10
+  \choose v}{90 \choose (hA-v)}$.
+
+Increasing L by 2 changes (decreases) the Path probability by factor
+$\frac{e^2}{(1-e)^2}$.
+
+%% \begin{eqnarray}
+%% \frac{10 \choose (v-1)}{10 \choose v} \frac{90 \choose (hA-v+1)}{90 \choose (hA-v)}
+%% & = &
+%% \frac{v}{9-v} \frac{90-
+
 \end{document}
