@@ -74,11 +74,15 @@ elements in o.  It follows that $L \equiv (10-v) + (hA-v) = hA + 10 -
   \choose v}{90 \choose (hA-v)}$.
 
 Increasing L by 2 changes (decreases) the Path probability by factor
-$\frac{e^2}{(1-e)^2}$.
+$\frac{e^2}{(1-e)^2}$. The change to the group size upon increasing L
+is due to $v$ decreasing by one, given by:
 
-%% \begin{eqnarray}
-%% \frac{10 \choose (v-1)}{10 \choose v} \frac{90 \choose (hA-v+1)}{90 \choose (hA-v)}
-%% & = &
-%% \frac{v}{9-v} \frac{90-
+\begin{eqnarray}
+  \frac{{10 \choose \check{v}}}{{10 \choose v}}
+  \frac{{90 \choose hA-\check{v}}}{{90 \choose hA-v}} \nonumber
+& = &
+  \frac{v}{10-\check{v}}
+  \frac{90-(hA-v)}{hA-\check{v}}
+\end{eqnarray}
 
 \end{document}
