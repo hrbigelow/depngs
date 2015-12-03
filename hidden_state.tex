@@ -1,35 +1,124 @@
 \documentclass{article}
+\usepackage{amsmath}
 \pagestyle{empty}
 \begin{document}
 
-$n_{h,k}$: number of founder bases of type h called as type k
+Consider an alphabet of symbols \{A,C\}, and an ordered configuration
+from this alphabet. Each symbol is read using a process that miscalls
+it with some error probability e.  We don't observe the actual
+configuration; it is hidden.  The observed configuration is produced
+from the hidden one through this calling process.  Formally:
 
-N: = $\sum_{h,k}{n_{h,k}}$
+\begin{align*}
+h & \equiv \text{the hidden configuration} \\
+o & \equiv \text{the observed configuration} \\
+h[i] & \equiv \text{the i'th element of } h \\
+h_A & \equiv \text{the number of A elements in } h \text{, }
+= \sum_i \delta(h[i],A) \\
+\text{with }\delta(p,q) & \equiv
+\begin{cases}
+  p = q & 1 \\
+  p \neq q & 0
+\end{cases}
+\text{ and }
+\bar{\delta}(p,q) \equiv
+\begin{cases}
+  p = q & 0 \\
+  p \neq q & 1
+\end{cases}
+\end{align*}
 
-o: observed configuration (ordered array of N symbols)
+We are interested in the likelihood of an observed configuration
+arising from a hidden configuration.  This is specified in the usual
+way as:
 
-F: founder base count (vector of 4 integers)
+\begin{align}
+  Pr(o,h;e) & \equiv Pr(o|h;e)Prior(h;\alpha) \\
+  Dist(o,h) & \equiv \sum_i \bar{\delta}(o[i],h[i]) \\
+  Pr(o|h;e) & \equiv e^{Dist(o,h)}(1-e)^{D-Dist(o,h)} \\
+  Path(L;e) & \equiv Pr(o|h;e) \text{ s.t. } Dist(o,h) = L\\
+  Pr(h|o;e) & \propto Pr(o,h;e) \nonumber
+\end{align}
 
-O: observed base count (derived from o, vector of 4 integers)
+$Dist(o,h)$ is the number of elements that differ between $o$ and $h$.
+$Pr(o|h;e)$ gives the probability of 'generating', or calling a
+configuration $o$ from a configuration $h$ when a certain error
+probability $e$ is in effect. Since we will later be interested in
+just the distance between o and h, and not any specific $h$,
+$Path(L;e)$ gives a notational convenience.
 
-L: path length through simplex from O to F
+$Prior(h;\alpha)$ mentioned above hasn't been specified yet.  We
+choose a prior to represent the process of founder base generation,
+namely a two-stage model.  First, some symbol composition $C$ is
+chosen from a Dirichlet distribution.  The Dirichlet is parameterized
+by $\alpha$, and it is meant to represent the possible base
+compositions of samples that might be sequenced.  Once a sample is
+chosen, the individual founder bases (elements of $h$) are
+independently drawn with replacement, from the composition $C$.  We
+use replacement since the actual physical sample is so large that it
+may as well be. This design gives rise to a distribution known as
+multinomial-dirichlet, with the following form:
 
-e: probability of miscall
+\begin{align}
+Prior(h;\alpha) & \equiv \int_p{Dir(p;\alpha) Pr(h|p)dp}
+= \frac{\Gamma(A)}{\Gamma(D+A)}
+\prod_k \frac{\Gamma(h_k+\alpha_k)}{\Gamma(\alpha_k)} \\
+\text{with } A & \equiv \sum_k \alpha_k \text{ and } D \equiv \sum_k h_k \nonumber \\
+PriorComp(C;\alpha) & \equiv Prior(h;\alpha) \text{ for some } h \text{ s.t. } h_A = C_A, h_C = C_C
+\end{align}
 
-\begin{eqnarray}
-Pr(o, L, F) & \equiv & MC(\{n_{h,k}\}) Path(L, N, q) Prior(F|\alpha) \\[6ex]
-MC(\{n_{h,k}\}) & \equiv & \prod_h \frac{n_{h,\cdot}!}{\prod_k n_{h,k}!} \\[6ex]
-Path(L, N, e) & \equiv & e^L (1-e)^{N-L} \\[6ex]
-Prior(F|\alpha) & \equiv & \int_p{Pr(x|p)Pr(p|\alpha)dp} \nonumber \\
-& = & \frac{N!}{\prod_h n_h!} 
-\frac{\Gamma(A)}{\Gamma(N+A)}
-\prod_h \frac{\Gamma(n_h+\alpha_h)}{\Gamma(\alpha_h)} \\[6ex]
-Pr(o,F) & \equiv & \sum_L Pr(o,L,F)
-\end{eqnarray}
+Now, ultimately we are interested in the likelihood of the set of
+configurations $h$ having a particular symbol composition. Let
+$S_{a,o,L}$ be the set of configurations $h$ where $h_A = a$ and where
+each configuration $h$ differs from $o$ at $L$ positions.
 
-Some derivations in 2D.  Let (x,y) represent hidden counts ${n_0,n_1}$
-and let $\check{x} \equiv x-1$ and $\hat{y} \equiv y+1$ in the
-following.
+With the alphabet of two symbols A and C, there are four possible
+categories of changes between $o$ and $h$, which we can depict with
+the contingency table:
+
+\begin{align*}
+  \begin{matrix}
+    n_{AA} & n_{AC} & h_A \\
+    n_{CA} & n_{CC} & h_C \\
+    o_A & o_C
+  \end{matrix}
+\end{align*}
+
+with row and column sums shown.
+
+\begin{align*}
+  n_{pq} & \equiv \text{number of elements where } (h[i],o[i]) = (p,q) \\
+  & = \sum_{i}^{D} \delta(h[i],p) \delta(o[i],q) \\
+  n_{AC} + n_{CA} & \equiv L
+\end{align*}
+
+It works out that
+
+\begin{align}
+  n_{AA} & = \frac{h_A + o_A - L}{2} \nonumber \\
+  n_{CC} & = \frac{h_C + o_C - L}{2} \nonumber \\
+  |S_{a,o,L}| & = {o_A \choose n_{AA}}{o_C \choose n_{CC}}
+\end{align}
+
+As it turns out, every configuration $h \in S_{a,o,L}$ gives the same
+value for $Pr(h, o; e)$.  This is because they all have the same
+number of $h_A, h_C$ and the same distance $L$ to $o$ by defintion.
+$Prior(h;\alpha)$ depends only on $h_A$ and $h_C$, not on the specific
+permutation of the elements of $h$.  $Pr(o|h;e)$ depends only on
+distance $L$ between $h$ and $o$. So we can write:
+
+\begin{align}
+  Posterior(H,o,L;e) & \equiv Pr(h \in S_{C,o,L},o;e) \\
+  Pr(h \in S_{C,o,L}, o; e) & \equiv \sum_h^{S_{a,o,L}} Pr(h, o; e) \nonumber \\
+  & = |S_{a,o,L}| Path(L;e) PriorComp(C;\alpha) \nonumber \\
+  & = {o_A \choose n_{AA}}{o_C \choose n_{CC}}
+  e^L(1-e)^{D-L}
+  \frac{\Gamma(A)}{\Gamma(D+A)}
+  \prod_k \frac{\Gamma(h_k+\alpha_k)}{\Gamma(\alpha_k)}
+\end{align}
+
+We are interested ultimately in finding
+
 
 \begin{eqnarray}
   \frac{Path(N,L,e)}{Path(N,L+2,e)}
@@ -58,6 +147,8 @@ following.
     \frac{\hat{y}+\alpha_1}{\hat{y}}
 \end{eqnarray}
 
+
+
 Consider now a heuristic way to evaluate the posterior $Pr(o,F) \equiv
 \sum_L Pr(o,L,F)$. In 2D, the non-zero components exist for every
 other value of L, i.e. (0,2,4,...) or (1,3,5,...). The individual
@@ -77,12 +168,12 @@ Increasing L by 2 changes (decreases) the Path probability by factor
 $\frac{e^2}{(1-e)^2}$. The change to the group size upon increasing L
 is due to $v$ decreasing by one, given by:
 
-\begin{eqnarray}
+\begin{align}
   \frac{{10 \choose \check{v}}}{{10 \choose v}}
   \frac{{90 \choose hA-\check{v}}}{{90 \choose hA-v}} \nonumber
-& = &
+& =
   \frac{v}{10-\check{v}}
   \frac{90-(hA-v)}{hA-\check{v}}
-\end{eqnarray}
+\end{align}
 
 \end{document}
