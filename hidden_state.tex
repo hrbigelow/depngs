@@ -69,8 +69,8 @@ PriorComp(C;\alpha) & \equiv Prior(h;\alpha) \text{ for some } h \text{ s.t. } h
 
 Now, ultimately we are interested in the likelihood of the set of
 configurations $h$ having a particular symbol composition. Let
-$S_{a,o,L}$ be the set of configurations $h$ where $h_A = a$ and where
-each configuration $h$ differs from $o$ at $L$ positions.
+$S_{C,o,L}$ be the set of configurations $h$ where $(h_A,h_C) = C$ and
+$Dist(h, o) = L$.
 
 With the alphabet of two symbols A and C, there are four possible
 categories of changes between $o$ and $h$, which we can depict with
@@ -97,83 +97,90 @@ It works out that
 \begin{align}
   n_{AA} & = \frac{h_A + o_A - L}{2} \nonumber \\
   n_{CC} & = \frac{h_C + o_C - L}{2} \nonumber \\
-  |S_{a,o,L}| & = {o_A \choose n_{AA}}{o_C \choose n_{CC}}
+  |S_{C,o,L}| & = {o_A \choose n_{AA}} {o_C \choose n_{CC}}
 \end{align}
 
-As it turns out, every configuration $h \in S_{a,o,L}$ gives the same
-value for $Pr(h, o; e)$.  This is because they all have the same
-number of $h_A, h_C$ and the same distance $L$ to $o$ by defintion.
-$Prior(h;\alpha)$ depends only on $h_A$ and $h_C$, not on the specific
-permutation of the elements of $h$.  $Pr(o|h;e)$ depends only on
-distance $L$ between $h$ and $o$. So we can write:
+As it turns out, every configuration $h \in S_{C,o,L}$ gives the same
+value for $Pr(h, o; e)$.  This is because components $Prior(h;\alpha)$
+depends only on $(h_A,h_C)$ (not on the specific permutation of the
+elements of $h$), and $Pr(o|h;e)$ depends only on $Dist(h,o) = L$. So
+we can write:
 
 \begin{align}
-  Posterior(H,o,L;e) & \equiv Pr(h \in S_{C,o,L},o;e) \\
-  Pr(h \in S_{C,o,L}, o; e) & \equiv \sum_h^{S_{a,o,L}} Pr(h, o; e) \nonumber \\
-  & = |S_{a,o,L}| Path(L;e) PriorComp(C;\alpha) \nonumber \\
+  Posterior(C,o,L;e) & \equiv Pr(h \in S_{C,o,L},o;e) \\
+  Pr(h \in S_{C,o,L}, o; e) & \equiv \sum_h^{S_{C,o,L}} Pr(h,o;e) \nonumber \\
+  & = |S_{C,o,L}| Path(L;e) PriorComp(C;\alpha) \nonumber \\
   & = {o_A \choose n_{AA}}{o_C \choose n_{CC}}
   e^L(1-e)^{D-L}
   \frac{\Gamma(A)}{\Gamma(D+A)}
   \prod_k \frac{\Gamma(h_k+\alpha_k)}{\Gamma(\alpha_k)}
 \end{align}
 
-We are interested ultimately in finding
-
-
-\begin{eqnarray}
-  \frac{Path(N,L,e)}{Path(N,L+2,e)}
-  & = & \frac{e^L(1-e)^{N-L}}{e^{L+2}(1-e)^{N-L-2}} \nonumber \\
-  & = & \frac{(1-e)^2}{e^2} \\[4ex]
-  \frac{Prior(\{\check{x},\hat{y}\})}{Prior(\{x,y\})}
-  & = &
-    \frac{\frac{N!}{\check{x}!\hat{y}!}}{\frac{N!}{x!y!}}
-    \frac{\frac{\Gamma(A)}{\Gamma(N+A)}}{\frac{\Gamma(A)}{\Gamma(N+A)}}
-    \frac{
-      \frac{\Gamma(\check{x}+\alpha_0)}{\Gamma(\alpha_0)}
-    }{
-      \frac{\Gamma(x+\alpha_0)}{\Gamma(\alpha_0)}
-    }
-    \frac{
-      \frac{\Gamma(\hat{y}+\alpha_1)}{\Gamma(\alpha_1)}
-    }{
-      \frac{\Gamma(y+\alpha_1)}{\Gamma(\alpha_1)}
-    } \nonumber \\[2ex]
-    & = &
-    \frac{x!}{\check{x}!}
-    \frac{y!}{\hat{y}!}
-    \frac{\hat{y}+\alpha_1}{x+\alpha_0} \nonumber \\
-    & = &
-    \frac{x}{x+\alpha_0}
-    \frac{\hat{y}+\alpha_1}{\hat{y}}
-\end{eqnarray}
-
-
-
-Consider now a heuristic way to evaluate the posterior $Pr(o,F) \equiv
-\sum_L Pr(o,L,F)$. In 2D, the non-zero components exist for every
-other value of L, i.e. (0,2,4,...) or (1,3,5,...). The individual
-components $Pr(o,L,F)$ differ from each other in the factors of Path
-probability and $MC()$, the multinomial coefficient, which is the number
-of configurations $h$ that are compatible with the path
-length.
-
-For illustration, let's assume the configuration $o$ has 10A and 90C.
-Define hA as the number of 'A' in the group of hidden configurations.
-Define v as the number of 'A' elements in $h$ that overlap 'A'
-elements in o.  It follows that $L \equiv (10-v) + (hA-v) = hA + 10 -
-2v$, and $v = \frac{hA + 10 - L}{2}$.  And, $MC(hA,L) \equiv {10
-  \choose v}{90 \choose (hA-v)}$.
-
-Increasing L by 2 changes (decreases) the Path probability by factor
-$\frac{e^2}{(1-e)^2}$. The change to the group size upon increasing L
-is due to $v$ decreasing by one, given by:
+We are interested ultimately in computing
 
 \begin{align}
-  \frac{{10 \choose \check{v}}}{{10 \choose v}}
-  \frac{{90 \choose hA-\check{v}}}{{90 \choose hA-v}} \nonumber
-& =
-  \frac{v}{10-\check{v}}
-  \frac{90-(hA-v)}{hA-\check{v}}
+  Posterior(C,o;e) & \equiv \sum_L Posterior(C,o,L;e) \nonumber \\
 \end{align}
+
+
+
+
+Consider a heuristic way to evaluate $Posterior(C,o;e)$. In 2D, the
+non-zero components exist for every other value of L, i.e. (0,2,4,...)
+or (1,3,5,...). For each value of $L$, the components of
+$Posterior(C,o,L;e)$ differ from each other in $Path(L;e)$ and
+$|S_{C,o,L}|$, but not in $PriorComp(C;\alpha)$. Let $v$ be the number
+of positions that are $A$ in both $h$ and $o$:
+
+\begin{align*}
+  v \equiv \sum_i \delta(h[i],A)\delta(o[i],A)
+\end{align*}
+
+It follows that
+
+\begin{align}
+  L & \equiv (o_A-v) + (h_A-v) = h_A + o_A - 2v \nonumber \\
+  v & = \frac{h_A + o_A - L}{2} \nonumber \\
+  |S_{C,o,L}| & \equiv {o_A \choose v}{o_C \choose (h_A-v)} \nonumber
+\end{align}
+
+Now consider the change in these two factors when $L$ increases by 2
+(thus, $v$ decreases by one, represented by $\check{v} = v - 1$):
+
+\begin{align}
+  \frac{|S_{C,o,L+2}|}{|S_{C,o,L}|}
+  & \equiv
+  \frac{{o_A \choose \check{v}}}{{o_A \choose v}}
+  \frac{{o_C \choose h_A-\check{v}}}{{o_C \choose h_A-v}}
+  = &
+  \frac{v}{o_A-\check{v}}
+  \frac{o_C-(h_A-v)}{h_A-\check{v}} \\[4ex]
+  \frac{Path(L+2;e)}{Path(L;e)}
+  & \equiv
+  \frac{e^{L+2}(1-e)^{D-(L+2)}}{e^L(1-e)^{D-L}}
+  = &
+  \frac{e^2}{(1-e)^2}
+\end{align}
+
+So we see that the Path component decreases sharply.  The highest
+error probabilities we will be considering are likely about $0.05$;
+the Path factor change for this will be $0.002506$. The set size
+$|S_{C,o,L}|$ increases depending on $v$ and $D$ mostly.
+
+
+\begin{align}
+  \frac{PriorComp(\{\check{x},\hat{y}\})}{Prior(\{x,y\})} & =
+  \frac{\frac{N!}{\check{x}!\hat{y}!}}{\frac{N!}{x!y!}}
+  \frac{\frac{\Gamma(A)}{\Gamma(N+A)}}{\frac{\Gamma(A)}{\Gamma(N+A)}}
+  \frac{ \frac{\Gamma(\check{x}+\alpha_0)}{\Gamma(\alpha_0)} }{
+    \frac{\Gamma(x+\alpha_0)}{\Gamma(\alpha_0)} } \frac{
+    \frac{\Gamma(\hat{y}+\alpha_1)}{\Gamma(\alpha_1)} }{
+    \frac{\Gamma(y+\alpha_1)}{\Gamma(\alpha_1)} } \nonumber \\[2ex] &
+  = \frac{x!}{\check{x}!}  \frac{y!}{\hat{y}!}
+  \frac{\hat{y}+\alpha_1}{x+\alpha_0} \nonumber \\ & =
+  \frac{x}{x+\alpha_0} \frac{\hat{y}+\alpha_1}{\hat{y}}
+\end{align}
+
+
 
 \end{document}
