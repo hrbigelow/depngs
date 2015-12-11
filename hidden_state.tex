@@ -1,4 +1,5 @@
 \documentclass{article}
+\usepackage[margin=1in]{geometry}
 \usepackage{amsmath}
 \pagestyle{empty}
 \begin{document}
@@ -33,28 +34,28 @@ arising from a hidden configuration.  This is specified in the usual
 way as:
 
 \begin{align}
-  Pr(o,h;e) & \equiv Pr(o|h;e)Prior(h;\alpha) \\
-  Dist(o,h) & \equiv \sum_i \bar{\delta}(o[i],h[i]) \\
-  Pr(o|h;e) & \equiv e^{Dist(o,h)}(1-e)^{D-Dist(o,h)} \\
-  Path(L;e) & \equiv Pr(o|h;e) \text{ s.t. } Dist(o,h) = L\\
+  Pr(o,h;e) & \equiv Pr(o|h;e)Prior(h;\alpha) \\[2ex]
+  Dist(o,h) & \equiv \sum_i \bar{\delta}(o[i],h[i]) \\[2ex]
+  Pr(o|h;e) & \equiv e^{Dist(o,h)}(1-e)^{D-Dist(o,h)} \\[2ex]
+  Path(L;e) & \equiv Pr(o|h;e) \text{ s.t. } Dist(o,h) = L\\[2ex]
   Pr(h|o;e) & \propto Pr(o,h;e) \nonumber
 \end{align}
 
 $Dist(o,h)$ is the number of elements that differ between $o$ and $h$.
 $Pr(o|h;e)$ gives the probability of 'generating', or calling a
 configuration $o$ from a configuration $h$ when a certain error
-probability $e$ is in effect. Since we will later be interested in
-just the distance between o and h, and not any specific $h$,
-$Path(L;e)$ gives a notational convenience.
+probability $e$ is in effect. We will later be interested in grouping
+equal terms together, so the expression $Path(L;e)$ can be substituted
+for $Pr(o|h;e)$ to make this equivalence explicit.
 
 $Prior(h;\alpha)$ mentioned above hasn't been specified yet.  We
 choose a prior to represent the process of founder base generation,
-namely a two-stage model.  First, some symbol composition $C$ is
+namely a two-stage model.  First, some symbol composition $H$ is
 chosen from a Dirichlet distribution.  The Dirichlet is parameterized
 by $\alpha$, and it is meant to represent the possible base
 compositions of samples that might be sequenced.  Once a sample is
 chosen, the individual founder bases (elements of $h$) are
-independently drawn with replacement, from the composition $C$.  We
+independently drawn with replacement, from the composition $H$.  We
 use replacement since the actual physical sample is so large that it
 may as well be. This design gives rise to a distribution known as
 multinomial-dirichlet, with the following form:
@@ -62,99 +63,94 @@ multinomial-dirichlet, with the following form:
 \begin{align}
 Prior(h;\alpha) & \equiv \int_p{Dir(p;\alpha) Pr(h|p)dp}
 = \frac{\Gamma(A)}{\Gamma(D+A)}
-\prod_k \frac{\Gamma(h_k+\alpha_k)}{\Gamma(\alpha_k)} \\
-\text{with } A & \equiv \sum_k \alpha_k \text{ and } D \equiv \sum_k h_k \nonumber \\
-PriorComp(C;\alpha) & \equiv Prior(h;\alpha) \text{ for some } h \text{ s.t. } h_A = C_A, h_C = C_C
+\prod_k \frac{\Gamma(h_k+\alpha_k)}{\Gamma(\alpha_k)} \\[2ex]
+\text{with } A & \equiv \sum_k \alpha_k \text{ and } D \equiv \sum_k h_k \nonumber \\[2ex]
+PriorComp(H;\alpha) & \equiv Prior(h;\alpha) \text{ for some } h \text{ s.t. } h_A = H_A, h_C = H_C
 \end{align}
+
+Like $Path(L;e)$ above, $PriorComp(H;\alpha)$ is also a notational
+convenience that makes explicit the dependence only on $H$ derived
+from $h$ and not $h$'s specific element ordering.
 
 Now, ultimately we are interested in the likelihood of the set of
 configurations $h$ having a particular symbol composition. Let
-$S_{C,o,L}$ be the set of configurations $h$ where $(h_A,h_C) = C$ and
+$S_{H,o,L}$ be the set of configurations $h$ where $(h_A,h_C) = H$ and
 $Dist(h, o) = L$.
 
-With the alphabet of two symbols A and C, there are four possible
-categories of changes between $o$ and $h$, which we can depict with
-the contingency table:
+With the alphabet of two symbols \{A, C\}, there are types of changes
+between $o$ and $h$, which we can depict with the contingency table:
 
 \begin{align*}
-  \begin{matrix}
-    n_{AA} & n_{AC} & h_A \\
-    n_{CA} & n_{CC} & h_C \\
-    o_A & o_C
-  \end{matrix}
+  & \begin{matrix}
+    n_{AA} & n_{AC} & H_A \\
+    n_{CA} & n_{CC} & H_C \\
+    o_A & o_C & D
+  \end{matrix} \\[2ex]
+  \text{with }
+  n_{pq} & \equiv \text{number of elements where } (h[i],o[i]) = (p,q) \\
+  & = \sum_{i}^{D} \delta(h[i],p) \delta(o[i],q)
 \end{align*}
 
-with row and column sums shown.
+with row and column sums shown.  We write the equations in terms of
+the marginals $(H_A, H_C)$, $(o_A, o_C)$ plus $n_{AA}$. All other
+matrix cells can be derived from these.
 
 \begin{align*}
-  n_{pq} & \equiv \text{number of elements where } (h[i],o[i]) = (p,q) \\
-  & = \sum_{i}^{D} \delta(h[i],p) \delta(o[i],q) \\
-  n_{AC} + n_{CA} & \equiv L
+  v & \equiv n_{AA} & \text{number of overlapping 'A' elements} \\
+  L & \equiv n_{AC} + n_{CA} & \text{number of differing elements} \nonumber \\
+  & = H_A + o_A - 2v \\
+  \bar{v} & \equiv n_{CC} = D - L - v & \text{number of overlapping 'C' elements} \\
+  & = D - H_A - o_A + v
 \end{align*}
 
 It works out that
 
 \begin{align}
-  n_{AA} & = \frac{h_A + o_A - L}{2} \nonumber \\
-  n_{CC} & = \frac{h_C + o_C - L}{2} \nonumber \\
-  |S_{C,o,L}| & = {o_A \choose n_{AA}} {o_C \choose n_{CC}}
+  |S_{H,o,L}| & = {o_A \choose v} {o_C \choose \bar{v}}
 \end{align}
 
-As it turns out, every configuration $h \in S_{C,o,L}$ gives the same
+As it turns out, every configuration $h \in S_{H,o,L}$ gives the same
 value for $Pr(h, o; e)$.  This is because components $Prior(h;\alpha)$
 depends only on $(h_A,h_C)$ (not on the specific permutation of the
-elements of $h$), and $Pr(o|h;e)$ depends only on $Dist(h,o) = L$. So
-we can write:
+elements of $h$), and $Pr(o|h;e)$ depends only on $Dist(h,o) = L$. We
+can then write:
 
 \begin{align}
-  Posterior(C,o,L;e) & \equiv Pr(h \in S_{C,o,L},o;e) \\
-  Pr(h \in S_{C,o,L}, o; e) & \equiv \sum_h^{S_{C,o,L}} Pr(h,o;e) \nonumber \\
-  & = |S_{C,o,L}| Path(L;e) PriorComp(C;\alpha) \nonumber \\
-  & = {o_A \choose n_{AA}}{o_C \choose n_{CC}}
+  Posterior(H,o,L;e) & \equiv Pr(h \in S_{H,o,L},o;e) \nonumber \\[2ex]
+  & = |S_{H,o,L}| Pr(h,o;e) \nonumber \\[2ex]
+  & = |S_{H,o,L}| Path(L;e) PriorComp(H;\alpha) \nonumber \\[2ex]
+  & = {o_A \choose v}{o_C \choose \bar{v}}
   e^L(1-e)^{D-L}
   \frac{\Gamma(A)}{\Gamma(D+A)}
-  \prod_k \frac{\Gamma(h_k+\alpha_k)}{\Gamma(\alpha_k)}
+  \prod_k \frac{\Gamma(H_k+\alpha_k)}{\Gamma(\alpha_k)}
 \end{align}
+
 
 We are interested ultimately in computing
 
 \begin{align}
-  Posterior(C,o;e) & \equiv \sum_L Posterior(C,o,L;e) \nonumber \\
+  Posterior(H,o;e) & \equiv \sum_L Posterior(H,o,L;e) \nonumber \\
 \end{align}
 
 
 
 
-Consider a heuristic way to evaluate $Posterior(C,o;e)$. In 2D, the
-non-zero components exist for every other value of L, i.e. (0,2,4,...)
-or (1,3,5,...). For each value of $L$, the components of
-$Posterior(C,o,L;e)$ differ from each other in $Path(L;e)$ and
-$|S_{C,o,L}|$, but not in $PriorComp(C;\alpha)$. Let $v$ be the number
-of positions that are $A$ in both $h$ and $o$:
-
-\begin{align*}
-  v \equiv \sum_i \delta(h[i],A)\delta(o[i],A)
-\end{align*}
-
-It follows that
-
-\begin{align}
-  L & \equiv (o_A-v) + (h_A-v) = h_A + o_A - 2v \nonumber \\
-  v & = \frac{h_A + o_A - L}{2} \nonumber \\
-  |S_{C,o,L}| & \equiv {o_A \choose v}{o_C \choose (h_A-v)} \nonumber
-\end{align}
-
-Now consider the change in these two factors when $L$ increases by 2
+Consider a heuristic way to evaluate $Posterior(H,o;e)$. With a
+2-symbol alphabet \{A, C\}, L can take on values (0,2,4,...) or
+(1,3,5,...) for a given choice of $o$ and $H$. For each value of $L$,
+the components of $Posterior(H,o,L;e)$ differ from each other in
+$|S_{H,o,L}|$ and $Path(L;e)$ but not in $PriorComp(H;\alpha)$.  Now
+consider the change in these two factors when $L$ increases by 2
 (thus, $v$ decreases by one, represented by $\check{v} = v - 1$):
 
 \begin{align}
-  \frac{|S_{C,o,L+2}|}{|S_{C,o,L}|}
+  \frac{|S_{H,o,L+2}|}{|S_{H,o,L}|}
   & \equiv
-  \frac{{o_A \choose \check{v}}}{{o_A \choose v}}
-  \frac{{o_C \choose h_A-\check{v}}}{{o_C \choose h_A-v}}
+  \frac{{o_A \choose {v-1}}}{{o_A \choose v}}
+  \frac{{o_C \choose {\bar{v}+1}}}{{o_C \choose {\bar{v}}}}
   = &
-  \frac{v}{o_A-\check{v}}
-  \frac{o_C-(h_A-v)}{h_A-\check{v}} \\[4ex]
+  \frac{v}{o_A-(v-1)}
+  \frac{o_C - \bar{v}}{\bar{v} + 1} \\[4ex]
   \frac{Path(L+2;e)}{Path(L;e)}
   & \equiv
   \frac{e^{L+2}(1-e)^{D-(L+2)}}{e^L(1-e)^{D-L}}
@@ -165,20 +161,55 @@ Now consider the change in these two factors when $L$ increases by 2
 So we see that the Path component decreases sharply.  The highest
 error probabilities we will be considering are likely about $0.05$;
 the Path factor change for this will be $0.002506$. The set size
-$|S_{C,o,L}|$ increases depending on $v$ and $D$ mostly.
-
+$|S_{H,o,L}|$ increases depending on $v$ and $D$ mostly. We would like
+to characterize the shape of the product of those two ratios as a
+function of L, and find the value of L that gives a 99.9\% quantile
+(or some high value).  For many settings of $(o_A, o_C)$ and $(h_A,
+h_C)$, the 99.9\% quantile will be found for a low value of L.  This
+is fortunate because it means we can approximate:
 
 \begin{align}
-  \frac{PriorComp(\{\check{x},\hat{y}\})}{Prior(\{x,y\})} & =
-  \frac{\frac{N!}{\check{x}!\hat{y}!}}{\frac{N!}{x!y!}}
+  Posterior(H,o;e) \approx \sum_{L=L_{min}}^{L_{max}} Posterior(H,o,L;e)
+\end{align}
+
+The next step is to identify the subset of $H$ that comprise a
+majority of the mass of $Posterior(H,o;e)$ seen as a function of
+$H$. We expect that it is a unimodal function of $H$ ($H_A$ or $H_C$),
+and use a ratio technique.  Holding the overlap value $v$ fixed,
+define $\hat{H} \equiv (H_A + 1, H_C -1)$.  Given this scenario, $H_A$
+can vary from $v$ to $o_C + v - 1$. Note that by varying $H$ in this
+way and holding $v$ fixed, $L$ increases by one.
+
+\begin{align}
+  \frac{Posterior(H,o,L;e)}{Posterior(\hat{H},o,L+1;e)} & =
+  \frac{|S_{\hat{H},o,L+1}|}{|S_{H,o,L}|}
+  \frac{Path(L+1)}{Path(L)}
+  \frac{PriorComp(\hat{H})}{PriorComp(H)} \nonumber  
+\end{align}
+
+with
+
+\begin{align}
+  \frac{|S_{\hat{H},o,L+1}|}{|S_{H,o,L}|}
+  & \equiv
+  \frac{{o_A \choose v}}{{o_A \choose v}}
+  \frac{{o_C \choose {\bar{v}-1}}}{{o_C \choose \bar{v}}}
+  =
+  \frac{\bar{v}}{o_C - (\bar{v} - 1)} \\[3ex]
+  \frac{Path(L+1)}{Path(L)}
+  & =
+  \frac{e}{1 - e} \\[3ex]
+  \frac{PriorComp(\hat{H};\alpha)}{PriorComp(H;\alpha)} & =
   \frac{\frac{\Gamma(A)}{\Gamma(N+A)}}{\frac{\Gamma(A)}{\Gamma(N+A)}}
-  \frac{ \frac{\Gamma(\check{x}+\alpha_0)}{\Gamma(\alpha_0)} }{
-    \frac{\Gamma(x+\alpha_0)}{\Gamma(\alpha_0)} } \frac{
-    \frac{\Gamma(\hat{y}+\alpha_1)}{\Gamma(\alpha_1)} }{
-    \frac{\Gamma(y+\alpha_1)}{\Gamma(\alpha_1)} } \nonumber \\[2ex] &
-  = \frac{x!}{\check{x}!}  \frac{y!}{\hat{y}!}
-  \frac{\hat{y}+\alpha_1}{x+\alpha_0} \nonumber \\ & =
-  \frac{x}{x+\alpha_0} \frac{\hat{y}+\alpha_1}{\hat{y}}
+  \frac{ \frac{\Gamma(H_A+1+\alpha_A)}{\Gamma(\alpha_A)}}{
+    \frac{\Gamma(H_A+\alpha_A)}{\Gamma(\alpha_A)} } \frac{
+    \frac{\Gamma(H_C-1+\alpha_C)}{\Gamma(\alpha_C)} }{
+    \frac{\Gamma(H_C+\alpha_C)}{\Gamma(\alpha_C)} } \nonumber \\[2ex]
+  & =
+  \frac{\Gamma(H_A + 1 + \alpha_A)}{\Gamma(H_A + \alpha_A)}
+  \frac{\Gamma(H_C - 1 + \alpha_C)}{\Gamma(H_C + \alpha_C)} \nonumber \\[2ex]
+  & =
+  \frac{H_A + 1 + \alpha_A}{H_C + \alpha_C}
 \end{align}
 
 
