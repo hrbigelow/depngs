@@ -174,11 +174,18 @@ is fortunate because it means we can approximate:
 
 The next step is to identify the subset of $H$ that comprise a
 majority of the mass of $Posterior(H,o;e)$ seen as a function of
-$H$. We expect that it is a unimodal function of $H$ ($H_A$ or $H_C$),
-and use a ratio technique.  Holding the overlap value $v$ fixed,
-define $\hat{H} \equiv (H_A + 1, H_C -1)$.  Given this scenario, $H_A$
-can vary from $v$ to $o_C + v - 1$. Note that by varying $H$ in this
-way and holding $v$ fixed, $L$ increases by one.
+$H$. Holding the overlap value $v$ fixed, define $\hat{H} \equiv (H_A
++ 1, H_C -1)$.  Given this scenario, $H_A$ can vary from $v$ to $o_C +
+v - 1$. Note that by varying $H$ in this way and holding $v$ fixed,
+$L$ increases by one.
+
+We expect that it is a unimodal function of $H$ ($H_A$ or $H_C$), and
+use a ratio technique as follows.  Given a function $F()$ defined over
+a discreet domain of values [0,1,2,...,n], find some value j such that
+$\frac{F(i)}{F(i-1)} > 1 \forall i <= j$ and $\frac{F(i)}{F(i-1)} <
+1 \forall i > j$.  Then, j is a global maximum. In the following, our
+$F()$ is $Posterior(H,o,L;e)$ and the implicit discrete variable is
+$H_A$.
 
 \begin{align}
   \frac{Posterior(H,o,L;e)}{Posterior(\hat{H},o,L+1;e)} & =
@@ -212,6 +219,9 @@ with
   \frac{H_A + 1 + \alpha_A}{H_C + \alpha_C}
 \end{align}
 
+So we see that the $PriorComp()$ ratio term is the only term that
+varies with respect to $H_A$ and it is monotonically increasing with
+$H_A$.  So with binary search, it is trivial to find the value.
 
 
 \end{document}
