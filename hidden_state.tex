@@ -126,22 +126,27 @@ can then write:
 \end{align}
 
 
-We are interested ultimately in computing
+We are interested ultimately in characterizing $Posterior(H,o;e)$ over
+the space of $H$.  We do this efficiently by avoiding any $H$ for
+which the density is negligible, and also for each $H$, avoiding
+calculating negligible partial sums. The exact calculation is the sum
+over all possible $L$:
 
 \begin{align}
-  Posterior(H,o;e) & \equiv \sum_L Posterior(H,o,L;e) \nonumber \\
+  Posterior(H,o;e) & \equiv \sum_L Posterior(H,o,L;e) \nonumber
 \end{align}
 
+We instead look at the subset of L that yield non-negligible terms in
+the addition. To do this, consider the ratio:
 
+\begin{align}
+  \frac{Posterior(H,o,L+2;e)}{Posterior(H,o,L;e)} \equiv
+  \frac{|S_{H,o,L+2}|}{|S_{H,o,L}|}
+  \frac{Path(L+2;e)}{Path(L;e)}
+  \frac{PriorComp(H;\alpha)}{PriorComp(H;\alpha)}
+\end{align}
 
-
-Consider a heuristic way to evaluate $Posterior(H,o;e)$. With a
-2-symbol alphabet \{A, C\}, L can take on values (0,2,4,...) or
-(1,3,5,...) for a given choice of $o$ and $H$. For each value of $L$,
-the components of $Posterior(H,o,L;e)$ differ from each other in
-$|S_{H,o,L}|$ and $Path(L;e)$ but not in $PriorComp(H;\alpha)$.  Now
-consider the change in these two factors when $L$ increases by 2
-(thus, $v$ decreases by one, represented by $\check{v} = v - 1$):
+with
 
 \begin{align}
   \frac{|S_{H,o,L+2}|}{|S_{H,o,L}|}
@@ -158,34 +163,26 @@ consider the change in these two factors when $L$ increases by 2
   \frac{e^2}{(1-e)^2}
 \end{align}
 
-So we see that the Path component decreases sharply.  The highest
-error probabilities we will be considering are likely about $0.05$;
-the Path factor change for this will be $0.002506$. The set size
-$|S_{H,o,L}|$ increases depending on $v$ and $D$ mostly. We would like
-to characterize the shape of the product of those two ratios as a
-function of L, and find the value of L that gives a 99.9\% quantile
-(or some high value).  For many settings of $(o_A, o_C)$ and $(h_A,
-h_C)$, the 99.9\% quantile will be found for a low value of L.  This
-is fortunate because it means we can approximate:
+
+Note that the $Path()$ ratio is constant with respect to $L$, and
+ratio (10) shrinks as $v$ shrinks and $L$ grows. So we can in
+principle find some $(L_{lo},L_{hi})$ such that:
 
 \begin{align}
-  Posterior(H,o;e) \approx \sum_{L=L_{min}}^{L_{max}} Posterior(H,o,L;e)
+  \sum_{L = L_{lo}}^{L_{hi}} Posterior(H,o,L;e) \>= 0.99 \sum_{L =
+    0}^{L_{max}} Posterior(H,o,L;e)
 \end{align}
 
-The next step is to identify the subset of $H$ that comprise a
-majority of the mass of $Posterior(H,o;e)$ seen as a function of
-$H$. Holding the overlap value $v$ fixed, define $\hat{H} \equiv (H_A
-+ 1, H_C -1)$.  Given this scenario, $H_A$ can vary from $v$ to $o_C +
-v - 1$. Note that by varying $H$ in this way and holding $v$ fixed,
-$L$ increases by one.
+or substituting some other mass fraction besides $0.99$. In many
+settings of $o$ and $e$, $(L_{lo} .. L_{hi})$ may comprise only a few
+terms.
 
-We expect that it is a unimodal function of $H$ ($H_A$ or $H_C$), and
-use a ratio technique as follows.  Given a function $F()$ defined over
-a discreet domain of values [0,1,2,...,n], find some value j such that
-$\frac{F(i)}{F(i-1)} > 1 \forall i <= j$ and $\frac{F(i)}{F(i-1)} <
-1 \forall i > j$.  Then, j is a global maximum. In the following, our
-$F()$ is $Posterior(H,o,L;e)$ and the implicit discrete variable is
-$H_A$.
+The next step is to identify the subset of $H$ that comprise a
+majority of the mass of $Posterior(H,o;e)$ as a function of $H$. Again
+using the ratio technique, and holding the overlap value $v$ fixed,
+define $\hat{H} \equiv (H_A + 1, H_C -1)$.  Given this scenario, $H_A$
+can vary from $v$ to $o_C + v - 1$. Note that by varying $H$ in this
+way and holding $v$ fixed, $L$ increases by one.
 
 \begin{align}
   \frac{Posterior(H,o,L;e)}{Posterior(\hat{H},o,L+1;e)} & =
@@ -219,9 +216,10 @@ with
   \frac{H_A + 1 + \alpha_A}{H_C + \alpha_C}
 \end{align}
 
-So we see that the $PriorComp()$ ratio term is the only term that
-varies with respect to $H_A$ and it is monotonically increasing with
-$H_A$.  So with binary search, it is trivial to find the value.
-
+Here, the first two ratios are constant with respect to $H_A$, and the
+third ratio, $\frac{PriorComp(\hat{H};\alpha)}{PriorComp(H;\alpha)}$
+grows as $H_A$ grows. From this we see it is a unimodal function of
+$H_A$ and can establish a range $(H_{A,lo},H_{A,hi})$ of
+non-negligible terms.
 
 \end{document}
