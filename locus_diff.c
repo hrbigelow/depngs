@@ -465,7 +465,7 @@ distance_quantiles_aux(struct managed_buf *out_buf,
                         sumw += ld[i]->dist.weights[j];
                     }
                     unsigned *pa = ld[i]->dist.perm_alpha;
-                    double *w = ld[i]->dist.weights;
+                    /* double *w = ld[i]->dist.weights; */
                     fprintf(stdout, "%10.5g\t%10.5g\t%10.5g\t%10.5g\t%u\t%u\t%u\t%u\n",
                             minw, maxw, sumw, maxw / sumw * (double)ld[i]->dist.n_weights,
                             pa[0], pa[1], pa[2], pa[3]);

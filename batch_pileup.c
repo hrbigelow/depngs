@@ -132,7 +132,7 @@ struct tally_stats {
     khash_t(pbqt_h) *pbqt_hash;
     khash_t(indel_ct_h) *indel_ct_hash;
     khash_t(olap_h) *overlap_hash;
-
+    
     /* summary statistics are compiled for positions < tally_end */
     struct pos_base_count *base_ct, *base_cur, *base_end;
     struct pos_bqs_count *bqs_ct, *bqs_cur, *bqs_end;

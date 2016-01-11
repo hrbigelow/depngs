@@ -1,6 +1,7 @@
 \documentclass{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath}
+\usepackage{amsfonts}
 \pagestyle{empty}
 \begin{document}
 
@@ -74,8 +75,9 @@ from $h$ and not $h$'s specific element ordering.
 
 Now, ultimately we are interested in the likelihood of the set of
 configurations $h$ having a particular symbol composition. Let
-$S_{H,o,L}$ be the set of configurations $h$ where $(h_A,h_C) = H$ and
-$Dist(h, o) = L$.
+$\mathbb{S}$ represent the set of all $2^D$ configurations $h$, and
+$\mathbb{S}_{/H,o,L}$ be the subset of $\mathbb{S}$ where $(h_A,h_C) =
+H$ and $Dist(h, o) = L$.
 
 With the alphabet of two symbols \{A, C\}, there are types of changes
 between $o$ and $h$, which we can depict with the contingency table:
@@ -106,19 +108,19 @@ matrix cells can be derived from these.
 It works out that
 
 \begin{align}
-  |S_{H,o,L}| & = {o_A \choose v} {o_C \choose \bar{v}}
+  |\mathbb{S}_{/H,o,L}| & = {o_A \choose v} {o_C \choose \bar{v}}
 \end{align}
 
-As it turns out, every configuration $h \in S_{H,o,L}$ gives the same
+As it turns out, every configuration $h \in \mathbb{S}_{/H,o,L}$ gives the same
 value for $Pr(h, o; e)$.  This is because components $Prior(h;\alpha)$
 depends only on $(h_A,h_C)$ (not on the specific permutation of the
 elements of $h$), and $Pr(o|h;e)$ depends only on $Dist(h,o) = L$. We
 can then write:
 
 \begin{align}
-  Posterior(H,o,L;e) & \equiv Pr(h \in S_{H,o,L},o;e) \nonumber \\[2ex]
-  & = |S_{H,o,L}| Pr(h,o;e) \nonumber \\[2ex]
-  & = |S_{H,o,L}| Path(L;e) PriorComp(H;\alpha) \nonumber \\[2ex]
+  Posterior(H,o,L;e) & \equiv Pr(h \in \mathbb{S}_{/H,o,L},o;e) \nonumber \\[2ex]
+  & = |\mathbb{S}_{/H,o,L}| Pr(h,o;e) \nonumber \\[2ex]
+  & = |\mathbb{S}_{/H,o,L}| Path(L;e) PriorComp(H;\alpha) \nonumber \\[2ex]
   & = {o_A \choose v}{o_C \choose \bar{v}}
   e^L(1-e)^{D-L}
   \frac{\Gamma(A)}{\Gamma(D+A)}
@@ -141,7 +143,7 @@ the addition. To do this, consider the ratio:
 
 \begin{align}
   \frac{Posterior(H,o,L+2;e)}{Posterior(H,o,L;e)} \equiv
-  \frac{|S_{H,o,L+2}|}{|S_{H,o,L}|}
+  \frac{|\mathbb{S}_{/H,o,L+2}|}{|\mathbb{S}_{/H,o,L}|}
   \frac{Path(L+2;e)}{Path(L;e)}
   \frac{PriorComp(H;\alpha)}{PriorComp(H;\alpha)}
 \end{align}
@@ -149,7 +151,7 @@ the addition. To do this, consider the ratio:
 with
 
 \begin{align}
-  \frac{|S_{H,o,L+2}|}{|S_{H,o,L}|}
+  \frac{|\mathbb{S}_{/H,o,L+2}|}{|\mathbb{S}_{/H,o,L}|}
   & \equiv
   \frac{{o_A \choose {v-1}}}{{o_A \choose v}}
   \frac{{o_C \choose {\bar{v}+1}}}{{o_C \choose {\bar{v}}}}
@@ -185,8 +187,8 @@ can vary from $v$ to $o_C + v - 1$. Note that by varying $H$ in this
 way and holding $v$ fixed, $L$ increases by one.
 
 \begin{align}
-  \frac{Posterior(H,o,L;e)}{Posterior(\hat{H},o,L+1;e)} & =
-  \frac{|S_{\hat{H},o,L+1}|}{|S_{H,o,L}|}
+  \frac{Posterior(\hat{H},o,L+1;e)}{Posterior(H,o,L;e)} & =
+  \frac{|\mathbb{S}_{/\hat{H},o,L+1}|}{|\mathbb{S}_{/H,o,L}|}
   \frac{Path(L+1)}{Path(L)}
   \frac{PriorComp(\hat{H})}{PriorComp(H)} \nonumber  
 \end{align}
@@ -194,7 +196,7 @@ way and holding $v$ fixed, $L$ increases by one.
 with
 
 \begin{align}
-  \frac{|S_{\hat{H},o,L+1}|}{|S_{H,o,L}|}
+  \frac{|\mathbb{S}_{/\hat{H},o,L+1}|}{|\mathbb{S}_{/H,o,L}|}
   & \equiv
   \frac{{o_A \choose v}}{{o_A \choose v}}
   \frac{{o_C \choose {\bar{v}-1}}}{{o_C \choose \bar{v}}}

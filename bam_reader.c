@@ -233,7 +233,7 @@ typedef struct {
 
 KHASH_MAP_INIT_INT(bin, bins_t)
 typedef khash_t(bin) bidx_t;
-
+                     
 typedef struct {
     int32_t n, m;
     uint64_t *offset;

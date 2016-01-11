@@ -54,7 +54,8 @@
     basecall that is not one of A,C,G, or T).  */
  struct base_count {
      unsigned ct_filt[4]; /* # CIGAR match reads by base call, with
-                             qual >= min_quality_score */
+                             qual >= min_quality_score.  Index is
+                             'nt4' type. */
      unsigned n_match_lo_q; /* # CIGAR match reads with qual < min_quality_score */
      unsigned n_match_hi_q; /* # CIGAR match reads with qual >= min_quality_score */
      unsigned n_match_fuzzy; /* # CIGAR match reads with ambiguous base call.   */
@@ -62,8 +63,9 @@
 
 
 struct bqs_count {
-    uint32_t base: 4; /* 4-bit BAM encoding of base.  use hts.h:
-                         seq_nt16_str[base] for the letter-equivalent. */
+    uint32_t base: 4; /* nt16 (BAM) encoding of (possibly ambiguous)
+                         nucleotide.  use hts.h: seq_nt16_str[base]
+                         for the IUPAC letter equivalent. */
     uint32_t qual: 7;
     uint32_t strand: 1;
     uint32_t ct: 20; /* 1,048,576 */
