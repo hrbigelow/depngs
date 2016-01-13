@@ -61,7 +61,7 @@ pstats_usage()
     char *tmp_filter  = bam_flag2str(opts.bam_filter.rflag_filter);
 
     fprintf(stderr,
-            "\nUsage: dep pstats [options] samples.rdb in.fasta > pstats.rdb\n\n"
+            "\nUsage: dep pstats [options] samples.rdb in.fasta pstats.rdb\n\n"
             "Options:\n"
             "-t  INT    number of threads [%d]\n"
             "-R  INT    number of concurrent readers to allow (<= -t option) [%d]\n"
@@ -241,43 +241,6 @@ merge_histogram(bq_h_t *global, bq_h_t *part)
 }
 
 
-/* wrapper for the merge_histogram function */
-struct histo_pair {
-    bq_h_t *global, *part;
-};
-
-void *
-merge_wrapper(void *par)
-{
-    struct histo_pair *pair = par;
-    merge_histogram(pair->global, pair->part);
-    kh_destroy(bq_h, pair->part);
-    return NULL;
-}
-
-
-/* merge all histogram parts into the first part */
-void
-parallel_merge_histogram(bq_h_t **parts, unsigned n_threads)
-{
-    unsigned p, h, nth, n_pairs;
-    struct histo_pair *pairs = malloc(sizeof(struct histo_pair) * n_threads);
-
-    for (nth = 2; nth <= n_threads; nth *= 2) {
-        n_pairs = n_threads / nth;
-        pthread_t *threads = malloc(sizeof(pthread_t) * n_pairs);
-        for (h = 0, p = 0; p != n_pairs; h += nth, p++) {
-            pairs[p] = (struct histo_pair){ parts[h], parts[h + (nth / 2)] };
-            pthread_create(&threads[p], NULL, merge_wrapper, &pairs[p]);
-        }
-        for (p = 0; p != n_pairs; ++p)
-            pthread_join(threads[p], NULL);
-        free(threads);
-    }
-    free(pairs);
-}
-
-
 struct histo_array {
     bq_h_t **parts;
     unsigned n_parts;
@@ -376,10 +339,18 @@ int main_pstats(int argc, char **argv)
     if (! n_max_reading_set)
         opts.n_max_reading = opts.n_threads;
 
-    if (argc - optind != 2) return pstats_usage();
+    if (argc - optind != 3) return pstats_usage();
         
     char *samples_file = argv[optind];
     char *fasta_file = argv[optind + 1];
+    char *stats_file = argv[optind + 2];
+
+    FILE *stats_fh = fopen(stats_file, "w");
+    if (! stats_fh) {
+        fprintf(stderr, "Error: Couldn't open statistics file %s for writing.\n",
+                stats_file);
+        exit(1);
+    }
 
     /* max_mem accounts for compressed bam plus pileup structures plus
        output buffers.  max_input_mem accounts for the compressed bam
@@ -393,6 +364,7 @@ int main_pstats(int argc, char **argv)
     struct thread_queue *tq = 
         pstats_init(samples_file,
                     fasta_file,
+                    stats_file,
                     query_range_file,
                     opts.n_threads,
                     opts.n_max_reading,
@@ -417,12 +389,15 @@ int main_pstats(int argc, char **argv)
     for (itr = kh_begin(g_part_hashes[0]); itr != kh_end(g_part_hashes[0]); ++itr)
         if (kh_exist(g_part_hashes[0], itr)) {
             struct binned_qual_counts bqc = kh_key(g_part_hashes[0], itr);
-            fprintf(stdout, "%Zi", kh_val(g_part_hashes[0], itr));
+            fprintf(stats_fh, "%Zi", kh_val(g_part_hashes[0], itr));
             for (i = 0; i != NBINS; ++i)
-                fprintf(stdout, "\t%i\t%i",
-                        bqc.bins[i].major, bqc.bins[i].minor);
-            fprintf(stdout, "\n");
+                fprintf(stats_fh, "\t%i", bqc.bins[i].major);
+            for (i = 0; i != NBINS; ++i)
+                fprintf(stats_fh, "\t%i", bqc.bins[i].minor);
+
+            fprintf(stats_fh, "\n");
         }
+    fclose(stats_fh);
     
     kh_destroy(bq_h, g_part_hashes[0]);
     
