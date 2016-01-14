@@ -61,7 +61,7 @@ pstats_usage()
     char *tmp_filter  = bam_flag2str(opts.bam_filter.rflag_filter);
 
     fprintf(stderr,
-            "\nUsage: dep pstats [options] samples.rdb in.fasta > pstats.rdb\n\n"
+            "\nUsage: dep pstats [options] samples.rdb in.fasta pstats.rdb\n\n"
             "Options:\n"
             "-t  INT    number of threads [%d]\n"
             "-R  INT    number of concurrent readers to allow (<= -t option) [%d]\n"
@@ -184,11 +184,10 @@ KHASH_INIT(bq_h, binned_qual_counts_t, khint64_t, 1, binned_qual_hash_func,
 /* uncomment this at the end. messes up indentation. */
 typedef khash_t(bq_h) bq_h_t;
                            
-static __thread bq_h_t *tls_binqual_hash;
-
-static bq_h_t *g_binqual_hash;
+static __thread bq_h_t *tls_hash;
 static pthread_mutex_t g_hash_mtx = PTHREAD_MUTEX_INITIALIZER;
-
+static unsigned g_thread_num = 0;
+static bq_h_t **g_part_hashes;
 
 /* See hts.h.  This is the missing conversion table to go with
    seq_nt16_{table,str,int} */
@@ -239,6 +238,46 @@ merge_histogram(bq_h_t *global, bq_h_t *part)
         else
             kh_val(global, g_itr) += kh_val(part, p_itr);
     }
+}
+
+
+struct histo_array {
+    bq_h_t **parts;
+    unsigned n_parts;
+};
+
+
+/* merge all histograms recursively into parts.  recursion rules:
+   n_threads == 1: return
+   n_threads == 2: 
+ */
+void *
+recursive_merge_histogram(void *par)
+{
+    struct histo_array *mpar = par;
+    unsigned n_threads = mpar->n_parts;
+    bq_h_t **hashes = mpar->parts;
+
+    if (n_threads <= 1)
+        return NULL;
+    if (n_threads == 2) {
+        merge_histogram(hashes[0], hashes[1]);
+        kh_destroy(bq_h, hashes[1]);
+        return NULL;
+    }
+    
+    pthread_t threads[2];
+    struct histo_array parts[] = { 
+        { hashes, n_threads / 2 },
+        { hashes + n_threads / 2, n_threads - n_threads / 2 }
+    };
+    
+    pthread_create(&threads[0], NULL, recursive_merge_histogram, &parts[0]);
+    pthread_create(&threads[1], NULL, recursive_merge_histogram, &parts[1]);
+    pthread_join(threads[0], NULL);
+    pthread_join(threads[1], NULL);
+
+    return NULL;
 }
 
 
@@ -300,10 +339,18 @@ int main_pstats(int argc, char **argv)
     if (! n_max_reading_set)
         opts.n_max_reading = opts.n_threads;
 
-    if (argc - optind != 2) return pstats_usage();
+    if (argc - optind != 3) return pstats_usage();
         
     char *samples_file = argv[optind];
     char *fasta_file = argv[optind + 1];
+    char *stats_file = argv[optind + 2];
+
+    FILE *stats_fh = fopen(stats_file, "w");
+    if (! stats_fh) {
+        fprintf(stderr, "Error: Couldn't open statistics file %s for writing.\n",
+                stats_file);
+        exit(1);
+    }
 
     /* max_mem accounts for compressed bam plus pileup structures plus
        output buffers.  max_input_mem accounts for the compressed bam
@@ -312,11 +359,12 @@ int main_pstats(int argc, char **argv)
     unsigned long max_input_mem = (float)opts.max_mem * 0.1;
 
     /* initialize our main structure */
-    g_binqual_hash = kh_init(bq_h);
+    /* g_binqual_hash = kh_init(bq_h); */
     
     struct thread_queue *tq = 
         pstats_init(samples_file,
                     fasta_file,
+                    stats_file,
                     query_range_file,
                     opts.n_threads,
                     opts.n_max_reading,
@@ -330,21 +378,28 @@ int main_pstats(int argc, char **argv)
     thread_queue_run(tq);
     thread_queue_free(tq);
 
+    /* This destroys all but g_part_hashes[0] */
+    struct histo_array ha = { g_part_hashes, opts.n_threads };
+    recursive_merge_histogram(&ha);
+
     unsigned i;
     khiter_t itr;
     
     /* hash has been merged. print it out. */
-    for (itr = kh_begin(g_binqual_hash); itr != kh_end(g_binqual_hash); ++itr)
-        if (kh_exist(g_binqual_hash, itr)) {
-            struct binned_qual_counts bqc = kh_key(g_binqual_hash, itr);
-            fprintf(stdout, "%Zi", kh_val(g_binqual_hash, itr));
+    for (itr = kh_begin(g_part_hashes[0]); itr != kh_end(g_part_hashes[0]); ++itr)
+        if (kh_exist(g_part_hashes[0], itr)) {
+            struct binned_qual_counts bqc = kh_key(g_part_hashes[0], itr);
+            fprintf(stats_fh, "%Zi", kh_val(g_part_hashes[0], itr));
             for (i = 0; i != NBINS; ++i)
-                fprintf(stdout, "\t%i\t%i",
-                        bqc.bins[i].major, bqc.bins[i].minor);
-            fprintf(stdout, "\n");
+                fprintf(stats_fh, "\t%i", bqc.bins[i].major);
+            for (i = 0; i != NBINS; ++i)
+                fprintf(stats_fh, "\t%i", bqc.bins[i].minor);
+
+            fprintf(stats_fh, "\n");
         }
+    fclose(stats_fh);
     
-    kh_destroy(bq_h, g_binqual_hash);
+    kh_destroy(bq_h, g_part_hashes[0]);
     
     printf("Finished.\n");
     
@@ -401,11 +456,11 @@ pstats_worker(struct managed_buf *in_bufs,
             bqc = bqs_count_to_key(bqs_ct, n_bqs_ct, bc);
 
             /* increment hash */
-            itr = kh_put(bq_h, tls_binqual_hash, bqc, &empty);
+            itr = kh_put(bq_h, tls_hash, bqc, &empty);
             if (empty == 1)
-                kh_val(tls_binqual_hash, itr) = 1;
+                kh_val(tls_hash, itr) = 1;
             else
-                ++kh_val(tls_binqual_hash, itr);
+                ++kh_val(tls_hash, itr);
         }
     }   
     if (bqs_ct != NULL) free(bqs_ct);
@@ -428,7 +483,9 @@ pstats_on_create()
 {
     batch_pileup_thread_init(bam_samples.n, 
                              thread_params.fasta_file);
-    tls_binqual_hash = kh_init(bq_h);
+    pthread_mutex_lock(&g_hash_mtx);
+    tls_hash = g_part_hashes[g_thread_num++];
+    pthread_mutex_unlock(&g_hash_mtx);
 }
 
 
@@ -436,11 +493,11 @@ void
 pstats_on_exit()
 {
     batch_pileup_thread_free();
-    pthread_mutex_lock(&g_hash_mtx);
+    /* pthread_mutex_lock(&g_hash_mtx); */
     /* merge the hash */
-    merge_histogram(g_binqual_hash, tls_binqual_hash);
-    pthread_mutex_unlock(&g_hash_mtx);
-    kh_destroy(bq_h, tls_binqual_hash);
+    /* merge_histogram(g_binqual_hash, tls_hash); */
+    /* pthread_mutex_unlock(&g_hash_mtx); */
+    /* kh_destroy(bq_h, tls_hash); */
 }
 
 struct thread_queue *
@@ -512,6 +569,11 @@ pstats_init(const char *samples_file,
                           pstats_on_exit,
                           n_threads, n_extra, n_max_reading, bam_samples.n,
                           n_outputs, max_input_mem);
+
+    g_part_hashes = malloc(sizeof(bq_h_t *) * n_threads);
+    unsigned t;
+    for (t = 0; t != n_threads; ++t)
+        g_part_hashes[t] = kh_init(bq_h);
 
     return tq;
 }

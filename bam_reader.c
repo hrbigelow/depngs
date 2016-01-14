@@ -467,6 +467,7 @@ print_progress(bam_hdr_t *bam_hdr, struct contig_span span)
             span.beg.pos + 1,
             bam_hdr->target_name[span.end.tid],
             span.end.pos);
+    fflush(stdout);
 }
 
 
