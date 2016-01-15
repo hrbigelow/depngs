@@ -7,7 +7,7 @@
 /* number of quality score bins, configured at run-time. */
 unsigned g_n_qual_bins = 8;
 double g_qual_bin_error[MAX_QUAL_BINS];
-
+double g_prior_alpha = 0.1;
 
 /* compute the likelihood of hidden state composition with 'hs'
    secondary symbols, where the obsered configuration has op primary
@@ -129,45 +129,100 @@ KHASH_MAP_INIT_INT(hidden_dist_h, struct cond_dist *);
 static hidden_dist_t g_hidden_dist_hash;
 
 
+/* convolve two distributions. assume *conv is allocated as it claims.
+   reallocate it as necessary to hold the results of the
+   convolution. */
+void
+convolve_pair(struct cond_dist *c1, struct cond_dist *c2,
+              struct cond_dist **conv)
+{
+    unsigned n = c1->n + c2->n;
+    if ((*conv)->n < n)
+        (*conv) = realloc(*conv, sizeof(struct cond_dist) + n * sizeof(double));
+
+    struct cond_dist *cv = *conv;
+    cv->n = n;
+    cv->maj_start = c1->maj_start + c2->maj_start;
+    memset(cv->dist, 0, n * sizeof(double));
+    unsigned c, i, j;
+    for (i = 0; i != c1->n; ++i)
+        for (j = 0, c = i; j != c2->n; ++j, ++c)
+            cv->dist[c] += c1->dist[i] * c2->dist[j];
+}
+
+
 /* combine individual hidden-state conditional probability components
    into one distribution that describes the full conditional across
    the locus data. */
 struct cond_dist *
 combine_components(struct binned_qual_counts bqc)
 {
-    /* pre-allocate a cond_dist of the appropriate size */
-    struct cond_dist *comps[MAX_QUAL_BINS];
-
     /* retrieve or calculate each individual component distribution */
-    unsigned qb;
     double e; /* error probability */
     khiter_t itr;
     struct founder_pair_counts pc;
-    struct cond_dist *comp;
-
-    #define SCRATCH 100
-    double dist_scratch[SCRATCH];
-
-    /* copy the contents of the first */
-    pc = bqc.bins[0];
-    itr = kh_get(hidden_dist_h, g_hidden_dist_hash, pc);
-    if (itr == kh_end(g_hidden_dist_hash)) {
-        comp = hidden_cond_dist(pc.major, pc.minor, e);
-        memcpy();
-    }
-
-    for (qb = 1; qb != g_n_qual_bins; ++qb) {
+    struct cond_dist *tmp, *comp, *trg = NULL;
+    struct cond_dist *src =
+        malloc(sizeof(struct cond_dist) * 10 * sizeof(double));
+    src->n = 10;
+    
+    unsigned qb, first = 1, comp_is_new;
+    for (qb = 0; qb != g_n_qual_bins; ++qb) {
         pc = bqc.bins[qb];
         if (pc.major == 0 && pc.minor == 0) continue;
         e = g_qual_bin_error[qb]; /* lookup table */
         itr = kh_get(hidden_dist_h, g_hidden_dist_hash, pc);
         if (itr == kh_end(g_hidden_dist_hash)) {
             comp = hidden_cond_dist(pc.major, pc.minor, e);
+            comp_is_new = 1;
+        } else
+            comp = kh_val(g_hidden_dist_hash, itr);
 
+        if (first) {
+            size_t trg_sz = sizeof(struct cond_dist) + comp->n * sizeof(double);
+            trg = malloc(trg_sz);
+            memcpy(trg, comp, trg_sz);
+            first = 0;
+        } else
+            convolve_pair(trg, comp, &src);
 
-        comps[qb] = 
+        if (comp_is_new) {
+            free(comp);
+            comp_is_new = 0;
+        }
+        /* swap src and trg */
+        tmp = src, src = trg, trg = tmp;
     }
-
-    struct cond_dist *dist = malloc(
-    /* go through each individual component. */
+    if (trg) free(trg);
+    return src;
 }
+
+
+/* the multinomial-dirichlet prior for producing the posterior
+   distribution of hidden-state configurations. see hidden_state.pdf
+   for details. */
+double
+multinomial_dirichlet_2d(unsigned d, unsigned maj)
+{
+    return
+        gsl_sf_gamma(maj + g_alpha_prior)
+        * gsl_sf_gamma(d - maj + g_alpha_prior)
+        / gsl_sf_gamma(g_alpha_prior);
+}
+
+
+/* incorporate the prior into the conditional distribution
+   in-place. the resulting distribution is the posterior. this runs
+   the risk that the original distribution in dist is not very well
+   overlapping the prior distribution. so far I don't have a solution
+   to this problem. */
+void
+posterior_dist(struct cond_dist *dist, unsigned d)
+{
+    unsigned i, maj;
+    for (i = 0, maj = dist->maj_comp; i != dist->n; ++i, ++maj)
+        dist->dist[i] *= multinomial_dirichlet_2d(d, maj);
+}
+
+
+/* */
