@@ -1,12 +1,11 @@
-The other project I want to discuss is called 'dep' (diversity estimation
-probabilistically), which I implemented while at the Broad Institute and
-further developed at Amgen.  The replicating virus or cancer genome can mutate
-at each division, with the result that a population is non-clonal.  Each
-position in the genome potentially has a different selective or mutational
-pressure.  Taking the population as a whole, we want to measure the fraction of
-the population having A, C, G, and T at each position in the genome.  Knowing
-this allows biologists to measure the effect of a drug on the mutational
-profile, or to spot locations that correlate with survival or death.   
+'dep' (diversity estimation probabilistically), I first implemented while at the
+Broad Institute and further developed at Amgen.  The problem setting is as follows.
+The replicating virus or cancer genome can mutate at each division, with the result
+that a population is non-clonal.  Each position in the genome potentially has a
+different selective or mutational pressure.  Taking the population as a whole, we
+want to measure the fraction of the population having A, C, G, and T at each position
+in the genome.  Knowing this allows biologists to measure the effect of a drug on the
+mutational profile, or to spot locations that correlate with survival or death.   
 
 While cancer cells divide and mutate, the immune system recognizes some of them
 as bad, and is able to kill them off.  Other cells acquire mutations that allow
@@ -97,24 +96,3 @@ that the total memory needed for holding that range in memory for all files is
 within the required total memory.  That requires some form of scanning,
 sampling, or indexing of the input.
 
-
-
-
-
-
-
-It processes very large (TB range) volumes of high
-genome sequence data sequenced from viral or cancer samples.  
-
-that it tries to estimate is
-
-
-
-the population base composition at each position in the viral or cancer genome
-(e.g.  
-
-
- in the
-form of short 'reads' aligned to the genome   The main technical hurdles it
-solves are: 1) filtering very high volumes of data (TB range) given limited
-memory, and 2) efficient use of POSIX threads and mutexes.  The  
