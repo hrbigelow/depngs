@@ -10,14 +10,24 @@ sequence alignment
 
 # Introduction
 
-I first implemented while at the Broad Institute and further developed at Amgen.  The
-problem setting is as follows.  The replicating virus or cancer genome can mutate at
-each division, with the result that a population is non-clonal.  Each position in the
-genome potentially has a different selective or mutational pressure.  Taking the
-population as a whole, we want to measure the fraction of the population having A, C,
-G, and T at each position in the genome.  Knowing this allows biologists to measure
-the effect of a drug on the mutational profile, or to spot locations that correlate
-with survival or death.   
+Dep is a tool that estimates nucleotide base composition of non-clonal samples or
+mutational distance between two non-clonal samples.  For such samples, using a
+traditional diploid genotype caller violates its assumption of a locus being one of
+the 10 possible discrete diploid genotypes AA, CC, GG, TT, AC, AG, AT, CG, CT, GT.
+Making this false assumption is worse if trying to detect changes in the genotype
+between pairs of samples (such as timepoints of the same patient).  This is because
+one of the non-clonal samples may close to a threshold of 25\% X + 75\% Y, which is
+forced to be genotyped as XY or YY, neither of which are very close.  And, if a pair
+of samples fall on either side of this threshold, there may be no significant change
+in the base composition, yet individually genotyping them will flag a change.
+
+Typically, the problem setting is as follows.  The replicating virus or cancer genome
+can mutate at each division, with the result that a population is non-clonal.  Each
+position in the genome potentially has a different selective or mutational pressure.
+Taking the population as a whole, we want to measure the fraction of the population
+having A, C, G, and T at each position in the genome.  Knowing this allows biologists
+to measure the effect of a drug on the mutational profile, or to spot locations that
+correlate with survival or death.   
 
 While cancer cells divide and mutate, the immune system recognizes some of them
 as bad, and is able to kill them off.  Other cells acquire mutations that allow
