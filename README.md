@@ -8,6 +8,11 @@ sequence alignment
     dep dist [options] samples.rdb sample_pairings.rdb ref.fasta
     dep pileup [options] samples.rdb ref.fasta out.pileup
 
+    # full usage
+    man -l dep.1
+    man -l pileup_depth_stats.1
+    man -l pileup_to_bindepth.1
+
 # Introduction
 
 Dep is a tool that estimates nucleotide base composition of non-clonal samples or
@@ -17,9 +22,11 @@ the 10 possible discrete diploid genotypes AA, CC, GG, TT, AC, AG, AT, CG, CT, G
 Making this false assumption is worse if trying to detect changes in the genotype
 between pairs of samples (such as timepoints of the same patient).  This is because
 one of the non-clonal samples may close to a threshold of 25\% X + 75\% Y, which is
-forced to be genotyped as XY or YY, neither of which are very close.  And, if a pair
-of samples fall on either side of this threshold, there may be no significant change
-in the base composition, yet individually genotyping them will flag a change.
+forced to be genotyped as XY or YY, neither of which are very close to the actual
+nucleotide composition.  And, if a pair of samples fall on either side of this
+threshold, there may be no significant change in the base composition, yet
+individually genotyping them will flag a change.  Even though such a situation may be
+rare in absolute terms, it can be common among the pool of flagged changes.
 
 Typically, the problem setting is as follows.  The replicating virus or cancer genome
 can mutate at each division, with the result that a population is non-clonal.  Each
@@ -63,7 +70,9 @@ let's say we can take this confidence score as accurate.
 
 So you get your 5000 measurements of (color, confidence score), and now you
 want to estimate the fraction of different colors in the full urn.  The model I chose
-is a two-stage model in which: 
+is a two-stage model:
+
+
 
 # Implementation
 
@@ -73,6 +82,8 @@ each genomic position in the order given in the inputs.  The analysis can be any
 
 - base composition estimation with confidence intervals
 - mutational distance estimation with confidence intervals
+- indel composition
+- indel mutational distance estimation
 - pileup
 
 At the top level of execution it is a parallel for-loop with fixed memory buffer

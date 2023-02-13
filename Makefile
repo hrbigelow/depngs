@@ -13,7 +13,8 @@ CC = g++
 INSTALL = /usr/bin/install -c
 INSTALLDATA = /usr/bin/install -c -m 644
 OBJDIR = obj
-YEPLIBDIR = $(HOME)/cc/yeppp/library/binaries/x64-linux-sysv-default
+SRCDIR = $(HOME)/src/cc
+YEPLIBDIR = $(SRCDIR)/yeppp/library/binaries/x64-linux-sysv-default
 
 
 GSLDEBUGLIB = /usr/lib
@@ -22,14 +23,13 @@ GSLDEBUGLIB = /usr/lib
 
 # This isn't set up to use 'yeppp/bla.h'.  Instead, the headers are
 # prefixed with 'yep'
-YEPDIR = $(HOME)/cc/yeppp/library/headers
+YEPDIR = $(SRCDIR)/yeppp/library/headers
 
 # These are set so that we can say 'klib/bla.h' or 'htslib/bla.h'
-SDGDIR = $(HOME)/cc/
-HTSDIR = $(HOME)/cc/htslib
+HTSDIR = $(SRCDIR)/htslib
 HTSLIBDIR = $(HTSDIR)
 
-CPPFLAGS = -I. -I$(YEPDIR) -I$(SDGDIR) -I$(HTSDIR) $(EXTRA_CPPFLAGS)
+CPPFLAGS = -I. -I$(YEPDIR) -I$(SRCDIR) -I$(HTSDIR) $(EXTRA_CPPFLAGS)
 OPT = -O0 -ggdb3
 PROF = 
 CXXFLAGS = $(OPT) $(PROF) -Wall -std=gnu++0x
